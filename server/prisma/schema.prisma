@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id           String   @id
+  name         String
+  ownerSubject String?  @map("owner_subject")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  files        File[]
+
+  @@index([ownerSubject, updatedAt])
+  @@map("projects")
+}
+
+model File {
+  id           String   @id
+  projectId    String   @map("project_id")
+  path         String
+  content      String   @default("")
+  ownerSubject String?  @map("owner_subject")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, path])
+  @@index([ownerSubject, projectId, updatedAt])
+  @@map("files")
+}
