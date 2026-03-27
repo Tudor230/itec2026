@@ -47,6 +47,13 @@ export default function Header() {
           >
             Dashboard
           </Link>
+          <Link
+            to="/workspace"
+            className="nav-link"
+            activeProps={{ className: 'nav-link is-active' }}
+          >
+            Workspace
+          </Link>
           <a
             href="https://tanstack.com/start/latest/docs/framework/react/overview"
             className="nav-link"
