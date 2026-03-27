@@ -1,0 +1,14 @@
+.env
+.vscode
+.tenstack
+.cursorrules
+node_modules
+dist
+coverage
+*.log
+*.tsbuildinfo
+.DS_Store
+.idea
+.trae
+.opencode
+.agents
