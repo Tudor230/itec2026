@@ -1,0 +1,33 @@
+{
+  "name": "itec2026-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "prisma generate && tsx watch src/index.ts",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "check": "prisma generate && tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "start": "node dist/index.js",
+    "start:docker": "npm run prisma:migrate:deploy && npm run dev",
+    "socket:test": "node scripts/socket-smoke-test.mjs",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.23",
+    "@types/node": "^22.10.2",
+    "prisma": "^6.5.0",
+    "socket.io-client": "^4.8.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.7.2"
+  }
+}

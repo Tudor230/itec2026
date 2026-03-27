@@ -65,7 +65,7 @@ Build **iTECify**, a Figma-like collaborative coding platform where multiple use
 - [ ] Set up module structure: `modules/auth`, `modules/projects`, `modules/collab`, `modules/runner`, `modules/ai`
 - [ ] REST endpoints: health, project CRUD, file CRUD
 - [ ] Socket.IO gateway for real-time events
-- [ ] Auth0 JWT validation middleware (`express-oauth2-jwt-bearer`)
+- [ ] Auth boundary middleware (optional bearer token parsing now; Auth0 JWT verification deferred)
 - [ ] PostgreSQL connection via Prisma or Drizzle ORM
 - [ ] Docker Compose: `client`, `server`, `postgres`
 - [ ] Wire frontend to backend via environment config
