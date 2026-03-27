@@ -46,3 +46,14 @@ export function createFile(input: {
     accessToken,
   })
 }
+
+export function updateFile(fileId: string, input: {
+  path?: string
+  content?: string
+}, accessToken?: string | null) {
+  return apiRequest<FileDto>(`/api/files/${fileId}`, {
+    method: 'PATCH',
+    body: input,
+    accessToken,
+  })
+}
