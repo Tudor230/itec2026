@@ -1,4 +1,4 @@
-import type { PrismaClient, Project } from '@prisma/client'
+import type { PrismaClient } from '@prisma/client'
 import type { ActorContext } from '../auth/actor-context.js'
 import { createId } from './id.js'
 import type {
@@ -7,7 +7,15 @@ import type {
   ProjectUpdateInput,
 } from './project.types.js'
 
-function toProjectRecord(project: Project): ProjectRecord {
+type ProjectRow = {
+  id: string
+  name: string
+  ownerSubject: string | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+function toProjectRecord(project: ProjectRow): ProjectRecord {
   const createdAt = project.createdAt.toISOString()
   const updatedAt = project.updatedAt.toISOString()
 
@@ -29,7 +37,7 @@ export class ProjectsRepository {
       return []
     }
 
-    const projects = await this.prisma.project.findMany({
+    const projects: ProjectRow[] = await this.prisma.project.findMany({
       where: {
         ownerSubject,
       },
@@ -38,7 +46,7 @@ export class ProjectsRepository {
       },
     })
 
-    return projects.map((project) => toProjectRecord(project))
+    return projects.map((project: ProjectRow) => toProjectRecord(project))
   }
 
   async getById(actor: ActorContext, id: string): Promise<ProjectRecord | null> {

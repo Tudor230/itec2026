@@ -1,9 +1,17 @@
-import type { File, PrismaClient } from '@prisma/client'
+import type { PrismaClient } from '@prisma/client'
 import type { ActorContext } from '../auth/actor-context.js'
 import { createId } from './id.js'
 import type { FileInput, FileRecord } from './file.types.js'
 
-function toFileRecord(file: File): FileRecord {
+function toFileRecord(file: {
+  id: string
+  projectId: string
+  path: string
+  content: string
+  ownerSubject: string | null
+  createdAt: Date
+  updatedAt: Date
+}): FileRecord {
   const createdAt = file.createdAt.toISOString()
   const updatedAt = file.updatedAt.toISOString()
 
@@ -27,7 +35,15 @@ export class FilesRepository {
       return []
     }
 
-    const files = await this.prisma.file.findMany({
+    const files: Array<{
+      id: string
+      projectId: string
+      path: string
+      content: string
+      ownerSubject: string | null
+      createdAt: Date
+      updatedAt: Date
+    }> = await this.prisma.file.findMany({
       where: {
         projectId,
         ownerSubject,
@@ -37,7 +53,15 @@ export class FilesRepository {
       },
     })
 
-    return files.map((file) => toFileRecord(file))
+    return files.map((file: {
+      id: string
+      projectId: string
+      path: string
+      content: string
+      ownerSubject: string | null
+      createdAt: Date
+      updatedAt: Date
+    }) => toFileRecord(file))
   }
 
   async getById(actor: ActorContext, id: string): Promise<FileRecord | null> {
