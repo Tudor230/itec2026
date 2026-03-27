@@ -25,6 +25,7 @@ function AuthenticatedLoginButton({
       },
       authorizationParams: {
         redirect_uri: auth0Config.redirectUri,
+        audience: auth0Config.audience,
       },
     })
   }

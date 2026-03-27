@@ -6,6 +6,7 @@ import ProtectedRoute from '../auth/ProtectedRoute'
 import LogoutButton from '../components/auth/LogoutButton'
 import UserInfo from '../components/auth/UserInfo'
 import { createProject, listProjects } from '../services/projects-api'
+import { auth0Config } from '../lib/auth0-config'
 
 export const Route = createFileRoute('/dashboard')({
   component: Dashboard,
@@ -19,14 +20,22 @@ function Dashboard() {
   const projectsQuery = useQuery({
     queryKey: ['projects'],
     queryFn: async () => {
-      const token = await getAccessTokenSilently().catch(() => null)
+      const token = await getAccessTokenSilently({
+        authorizationParams: {
+          audience: auth0Config.audience,
+        },
+      }).catch(() => null)
       return listProjects(token)
     },
   })
 
   const createProjectMutation = useMutation({
     mutationFn: async (name: string) => {
-      const token = await getAccessTokenSilently().catch(() => null)
+      const token = await getAccessTokenSilently({
+        authorizationParams: {
+          audience: auth0Config.audience,
+        },
+      }).catch(() => null)
       return createProject(name, token)
     },
     onSuccess: async () => {

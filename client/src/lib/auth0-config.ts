@@ -7,6 +7,7 @@ function readEnvValue(value: string | undefined) {
 export const auth0Config = {
   domain: readEnvValue(import.meta.env.VITE_AUTH0_DOMAIN),
   clientId: readEnvValue(import.meta.env.VITE_AUTH0_CLIENT_ID),
+  audience: readEnvValue(import.meta.env.VITE_AUTH0_AUDIENCE),
   redirectUri:
     readEnvValue(import.meta.env.VITE_AUTH0_REDIRECT_URI) || DEFAULT_APP_URL,
   logoutReturnTo:
@@ -17,6 +18,7 @@ export const auth0Config = {
 export const missingAuth0EnvVars = [
   !auth0Config.domain ? 'VITE_AUTH0_DOMAIN' : null,
   !auth0Config.clientId ? 'VITE_AUTH0_CLIENT_ID' : null,
+  !auth0Config.audience ? 'VITE_AUTH0_AUDIENCE' : null,
   !auth0Config.redirectUri ? 'VITE_AUTH0_REDIRECT_URI' : null,
   !auth0Config.logoutReturnTo ? 'VITE_AUTH0_LOGOUT_RETURN_TO' : null,
 ].filter((value): value is string => value !== null)

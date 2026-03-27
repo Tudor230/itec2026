@@ -18,6 +18,29 @@ export interface FileDto {
   updatedAt: string
 }
 
+export interface ProjectInviteDto {
+  id: string
+  projectId: string
+  role: 'editor'
+  createdBySubject: string
+  expiresAt: string
+  consumedAt: string | null
+  consumedBySubject: string | null
+  revokedAt: string | null
+  createdAt: string
+  inviteToken: string
+}
+
+export interface InvitePreviewDto {
+  projectId: string
+  projectName: string
+  role: 'editor'
+  expiresAt: string
+  isExpired: boolean
+  isConsumed: boolean
+  isRevoked: boolean
+}
+
 export function listProjects(accessToken?: string | null) {
   return apiRequest<ProjectDto[]>('/api/projects', { accessToken })
 }
@@ -54,6 +77,29 @@ export function updateFile(fileId: string, input: {
   return apiRequest<FileDto>(`/api/files/${fileId}`, {
     method: 'PATCH',
     body: input,
+    accessToken,
+  })
+}
+
+export function createProjectInvite(projectId: string, accessToken?: string | null) {
+  return apiRequest<ProjectInviteDto>(`/api/projects/${projectId}/invites`, {
+    method: 'POST',
+    body: {
+      role: 'editor',
+    },
+    accessToken,
+  })
+}
+
+export function getInvitePreview(token: string, accessToken?: string | null) {
+  return apiRequest<InvitePreviewDto>(`/api/invites/${token}`, {
+    accessToken,
+  })
+}
+
+export function acceptInvite(token: string, accessToken?: string | null) {
+  return apiRequest<ProjectDto>(`/api/invites/${token}/accept`, {
+    method: 'POST',
     accessToken,
   })
 }

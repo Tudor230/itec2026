@@ -45,6 +45,7 @@ function ProtectedRouteContent({
       },
       authorizationParams: {
         redirect_uri: auth0Config.redirectUri,
+        audience: auth0Config.audience,
       },
     })
   }, [isAuthenticated, isLoading, loginStarted, loginWithRedirect])

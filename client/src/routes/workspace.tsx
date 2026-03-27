@@ -7,12 +7,15 @@ import FilesSidebar from '../components/workspace/FilesSidebar'
 import EditorPane from '../components/workspace/EditorPane'
 import RunButton from '../components/workspace/RunButton'
 import {
+  createProjectInvite,
   createFile,
   listFiles,
   listProjects,
   updateFile,
   type FileDto,
 } from '../services/projects-api'
+import { auth0Config } from '../lib/auth0-config'
+import { useCollabDoc } from '../hooks/use-collab-doc'
 
 export const Route = createFileRoute('/workspace')({
   component: WorkspaceView,
@@ -21,6 +24,14 @@ export const Route = createFileRoute('/workspace')({
 export function WorkspaceView() {
   const { getAccessTokenSilently } = useAuth0()
   const queryClient = useQueryClient()
+
+  async function getApiAccessToken() {
+    return getAccessTokenSilently({
+      authorizationParams: {
+        audience: auth0Config.audience,
+      },
+    }).catch(() => null)
+  }
 
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
@@ -31,11 +42,12 @@ export function WorkspaceView() {
     id: number
     text: string
   } | null>(null)
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null)
 
   const projectsQuery = useQuery({
     queryKey: ['workspace', 'projects'],
     queryFn: async () => {
-      const token = await getAccessTokenSilently().catch(() => null)
+      const token = await getApiAccessToken()
       return listProjects(token)
     },
   })
@@ -43,7 +55,7 @@ export function WorkspaceView() {
   const filesQuery = useQuery({
     queryKey: ['workspace', 'files', activeProjectId],
     queryFn: async () => {
-      const token = await getAccessTokenSilently().catch(() => null)
+      const token = await getApiAccessToken()
 
       if (!activeProjectId) {
         return [] as FileDto[]
@@ -56,7 +68,7 @@ export function WorkspaceView() {
 
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
-      const token = await getAccessTokenSilently().catch(() => null)
+      const token = await getApiAccessToken()
 
       if (!activeProjectId) {
         throw new Error('Select a project before creating files.')
@@ -91,7 +103,7 @@ export function WorkspaceView() {
 
   const saveFileMutation = useMutation({
     mutationFn: async (input: { fileId: string; content: string }) => {
-      const token = await getAccessTokenSilently().catch(() => null)
+      const token = await getApiAccessToken()
       return updateFile(input.fileId, { content: input.content }, token)
     },
     onSuccess: async (updated) => {
@@ -121,6 +133,31 @@ export function WorkspaceView() {
     : false
 
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
+
+  const { collabState, onEditorMount } = useCollabDoc({
+    projectId: activeProjectId,
+    fileId: activeFileId,
+  })
+
+  const createInviteMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      const token = await getApiAccessToken()
+      return createProjectInvite(projectId, token)
+    },
+    onSuccess: async (invite) => {
+      const inviteLink = `${window.location.origin}/invite/${invite.inviteToken}`
+
+      try {
+        await navigator.clipboard.writeText(inviteLink)
+        setInviteNotice('Invite link copied to clipboard')
+      } catch {
+        setInviteNotice(inviteLink)
+      }
+    },
+    onError: (error) => {
+      setInviteNotice(`Could not create invite: ${error.message}`)
+    },
+  })
 
   useEffect(() => {
     if (!projectsQuery.data || projectsQuery.data.length === 0) {
@@ -220,6 +257,21 @@ export function WorkspaceView() {
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!activeProjectId || createInviteMutation.isPending}
+                onClick={() => {
+                  if (!activeProjectId) {
+                    return
+                  }
+
+                  void createInviteMutation.mutateAsync(activeProjectId)
+                }}
+                className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--sea-ink)] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {createInviteMutation.isPending ? 'Creating invite...' : 'Share'}
+              </button>
+
               <label className="rounded-lg border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1.5 text-xs text-[var(--sea-ink-soft)]">
                 <span className="mr-2">Project</span>
                 <select
@@ -248,6 +300,12 @@ export function WorkspaceView() {
               />
             </div>
           </div>
+
+          {inviteNotice ? (
+            <div className="border-b border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2 text-xs text-[var(--sea-ink-soft)]">
+              {inviteNotice}
+            </div>
+          ) : null}
 
           {runNotice ? (
             <div className="mt-4 rounded-xl border border-[rgba(50,143,151,0.25)] bg-[rgba(79,184,178,0.1)] px-4 py-3 text-sm text-[var(--sea-ink)]">
@@ -289,10 +347,12 @@ export function WorkspaceView() {
 
             <EditorPane
               file={activeFile}
-              value={editorValue}
+              initialValue={activeFile?.content ?? ''}
               isDirty={isDirty}
               isSaving={saveFileMutation.isPending}
               saveError={saveError}
+              collabState={collabState}
+              onEditorMount={onEditorMount}
               onChange={(nextValue) => {
                 if (!activeFile) {
                   return

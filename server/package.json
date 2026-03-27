@@ -18,7 +18,9 @@
     "@prisma/client": "^6.5.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "jose": "^6.2.2",
     "socket.io": "^4.8.1",
+    "yjs": "^13.6.30",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -1,23 +1,31 @@
 import MonacoEditor from '@monaco-editor/react'
 import { useMemo } from 'react'
 import type { FileDto } from '../../services/projects-api'
+import type { editor as MonacoEditorTypes } from 'monaco-editor'
 
 interface EditorPaneProps {
   file: FileDto | null
-  value: string
+  initialValue: string
   isDirty: boolean
   isSaving: boolean
   saveError: string | null
+  collabState?: {
+    connectionState: 'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
+    message: string | null
+  }
+  onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor) => void
   onChange: (nextValue: string) => void
   onSave: () => void
 }
 
 export default function EditorPane({
   file,
-  value,
+  initialValue,
   isDirty,
   isSaving,
   saveError,
+  collabState,
+  onEditorMount,
   onChange,
   onSave,
 }: EditorPaneProps) {
@@ -95,6 +103,7 @@ export default function EditorPane({
           {file ? (
             <p className="m-0 text-xs text-[var(--sea-ink-soft)]">
               {isDirty ? 'Unsaved changes' : 'Saved'}
+              {collabState && collabState.connectionState !== 'idle' ? ` | Live: ${collabState.connectionState}` : ''}
             </p>
           ) : null}
         </div>
@@ -115,8 +124,12 @@ export default function EditorPane({
             <MonacoEditor
               height="100%"
               language={language}
-              value={value}
+              key={file.id}
+              defaultValue={initialValue}
               onChange={(nextValue) => onChange(nextValue ?? '')}
+              onMount={(editor) => {
+                onEditorMount?.(editor)
+              }}
               options={{
                 automaticLayout: true,
                 minimap: { enabled: true },
@@ -133,6 +146,12 @@ export default function EditorPane({
           {saveError ? (
             <div className="border-t border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2 text-xs text-[var(--sea-ink-soft)]">
               {saveError}
+            </div>
+          ) : null}
+
+          {collabState?.message ? (
+            <div className="border-t border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2 text-xs text-[var(--sea-ink-soft)]">
+              {collabState.message}
             </div>
           ) : null}
         </div>

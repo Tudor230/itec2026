@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client'
 import type { ActorContext } from '../auth/actor-context.js'
 import { createId } from './id.js'
+import { canEditProject, canReadProject } from './project-access.js'
 import type { FileInput, FileRecord } from './file.types.js'
 
 function toFileRecord(file: {
@@ -35,6 +36,11 @@ export class FilesRepository {
       return []
     }
 
+    const allowed = await canReadProject(this.prisma, actor, projectId)
+    if (!allowed) {
+      return []
+    }
+
     const files: Array<{
       id: string
       projectId: string
@@ -46,7 +52,6 @@ export class FilesRepository {
     }> = await this.prisma.file.findMany({
       where: {
         projectId,
-        ownerSubject,
       },
       orderBy: {
         updatedAt: 'desc',
@@ -65,19 +70,33 @@ export class FilesRepository {
   }
 
   async getById(actor: ActorContext, id: string): Promise<FileRecord | null> {
-    const ownerSubject = actor.subject
-    if (!ownerSubject) {
+    if (!actor.subject) {
       return null
     }
 
     const file = await this.prisma.file.findFirst({
       where: {
         id,
-        ownerSubject,
+      },
+      include: {
+        project: {
+          select: {
+            id: true,
+          },
+        },
       },
     })
 
-    return file ? toFileRecord(file) : null
+    if (!file) {
+      return null
+    }
+
+    const allowed = await canReadProject(this.prisma, actor, file.projectId)
+    if (!allowed) {
+      return null
+    }
+
+    return toFileRecord(file)
   }
 
   async create(actor: ActorContext, input: FileInput): Promise<FileRecord> {
@@ -90,17 +109,8 @@ export class FilesRepository {
       })
     }
 
-    const project = await this.prisma.project.findFirst({
-      where: {
-        id: input.projectId,
-        ownerSubject,
-      },
-      select: {
-        id: true,
-      },
-    })
-
-    if (!project) {
+    const canCreate = await canEditProject(this.prisma, actor, input.projectId)
+    if (!canCreate) {
       throw Object.assign(new Error('Project not found'), {
         code: 'P2025',
       })
@@ -129,13 +139,17 @@ export class FilesRepository {
       return null
     }
 
+    const canUpdate = await canEditProject(this.prisma, actor, current.projectId)
+    if (!canUpdate) {
+      return null
+    }
+
     const nextPath = updates.path ?? current.path
     const nextContent = updates.content ?? current.content
 
     const result = await this.prisma.file.updateMany({
       where: {
         id,
-        ownerSubject: current.ownerSubject,
       },
       data: {
         path: nextPath,
@@ -151,15 +165,19 @@ export class FilesRepository {
   }
 
   async remove(actor: ActorContext, id: string): Promise<boolean> {
-    const ownerSubject = actor.subject
-    if (!ownerSubject) {
+    const current = await this.getById(actor, id)
+    if (!current) {
+      return false
+    }
+
+    const canRemove = await canEditProject(this.prisma, actor, current.projectId)
+    if (!canRemove) {
       return false
     }
 
     const result = await this.prisma.file.deleteMany({
       where: {
         id,
-        ownerSubject,
       },
     })
 
