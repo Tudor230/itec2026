@@ -38,12 +38,13 @@ function InviteRoute() {
 
       return acceptInvite(token, accessToken)
     },
-    onSuccess: async (project) => {
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['projects'] })
       await queryClient.invalidateQueries({ queryKey: ['workspace', 'projects'] })
 
       await navigate({
         to: '/workspace',
+        search: { projectId: undefined },
       })
     },
   })

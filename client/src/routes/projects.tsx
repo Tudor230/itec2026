@@ -1,0 +1,207 @@
+import { useAuth0 } from '@auth0/auth0-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { FolderOpenDot, Plus } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import ProtectedRoute from '../auth/ProtectedRoute'
+import { createProject, listProjects } from '../services/projects-api'
+
+export const Route = createFileRoute('/projects')({
+  component: ProjectsPage,
+})
+
+function formatRelativeTime(value: string) {
+  const timestamp = Date.parse(value)
+
+  if (Number.isNaN(timestamp)) {
+    return 'Updated recently'
+  }
+
+  const minutes = Math.round((Date.now() - timestamp) / 60000)
+
+  if (minutes < 1) {
+    return 'Updated just now'
+  }
+
+  if (minutes < 60) {
+    return `Updated ${minutes}m ago`
+  }
+
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) {
+    return `Updated ${hours}h ago`
+  }
+
+  const days = Math.round(hours / 24)
+  return `Updated ${days}d ago`
+}
+
+function ProjectsPage() {
+  const navigate = useNavigate()
+  const { getAccessTokenSilently } = useAuth0()
+  const queryClient = useQueryClient()
+
+  const [projectName, setProjectName] = useState('')
+  const [query, setQuery] = useState('')
+
+  const projectsQuery = useQuery({
+    queryKey: ['projects'],
+    queryFn: async () => {
+      const token = await getAccessTokenSilently().catch(() => null)
+      return listProjects(token)
+    },
+  })
+
+  const createProjectMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const token = await getAccessTokenSilently().catch(() => null)
+      return createProject(name, token)
+    },
+    onSuccess: async (project) => {
+      await queryClient.invalidateQueries({ queryKey: ['projects'] })
+      setProjectName('')
+      void navigate({
+        to: '/workspace',
+        search: {
+          projectId: project.id,
+        },
+      })
+    },
+  })
+
+  const projects = projectsQuery.data ?? []
+
+  const filteredProjects = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+
+    if (normalized.length === 0) {
+      return projects
+    }
+
+    return projects.filter((project) => project.name.toLowerCase().includes(normalized))
+  }, [projects, query])
+
+  return (
+    <ProtectedRoute>
+      <main className="page-wrap px-4 py-10 sm:py-12">
+        <section className="island-shell rounded-[1.8rem] px-6 py-8 sm:px-8">
+          <p className="island-kicker mb-2">Projects Hub</p>
+          <h1 className="display-title mb-3 text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
+            Pick a project and jump into the editor.
+          </h1>
+          <p className="mb-6 max-w-3xl text-sm leading-7 text-[var(--sea-ink-soft)] sm:text-base">
+            Create, browse, and open projects directly in the editor.
+          </p>
+
+          <form
+            className="projects-create-row"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const nextName = projectName.trim()
+
+              if (!nextName || createProjectMutation.isPending) {
+                return
+              }
+
+              void createProjectMutation.mutateAsync(nextName)
+            }}
+          >
+            <input
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="New project name"
+              className="min-w-[220px] flex-1 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 py-2 text-sm text-[var(--sea-ink)] outline-none"
+              aria-label="New project name"
+            />
+            <button
+              type="submit"
+              disabled={createProjectMutation.isPending}
+              className="inline-flex items-center gap-2 rounded-full border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-4 py-2 text-sm font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Plus size={14} />
+              {createProjectMutation.isPending ? 'Creating...' : 'Create project'}
+            </button>
+          </form>
+
+          {createProjectMutation.isError ? (
+            <p className="mb-0 mt-3 text-sm text-[var(--sea-ink-soft)]">
+              Could not create project: {createProjectMutation.error.message}
+            </p>
+          ) : null}
+        </section>
+
+        <section className="island-shell mt-7 rounded-2xl p-6 sm:p-7">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="island-kicker mb-1">All Projects</p>
+              <h2 className="m-0 text-2xl font-semibold text-[var(--sea-ink)]">Your workspace entries</h2>
+            </div>
+            <div className="projects-metric-pill">
+              <span>{projects.length}</span>
+              <span>{projects.length === 1 ? 'project' : 'projects'}</span>
+            </div>
+          </div>
+
+          <label className="mb-5 flex items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2 text-sm text-[var(--sea-ink-soft)]">
+            <FolderOpenDot size={14} />
+            <input
+              aria-label="Filter projects"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Filter projects by name"
+              className="w-full bg-transparent text-sm text-[var(--sea-ink)] outline-none placeholder:text-[var(--sea-ink-soft)]"
+            />
+          </label>
+
+          {projectsQuery.isLoading ? (
+            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">Loading projects...</p>
+          ) : null}
+
+          {projectsQuery.isError ? (
+            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">
+              Could not load projects: {projectsQuery.error.message}
+            </p>
+          ) : null}
+
+          {!projectsQuery.isLoading && !projectsQuery.isError && filteredProjects.length === 0 ? (
+            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">
+              {projects.length === 0
+                ? 'No projects yet. Create your first one above.'
+                : 'No projects match your search.'}
+            </p>
+          ) : null}
+
+          {!projectsQuery.isLoading && !projectsQuery.isError && filteredProjects.length > 0 ? (
+            <div className="projects-grid">
+              {filteredProjects.map((project) => (
+                <article key={project.id} className="projects-card">
+                  <div>
+                    <h3 className="mb-1 mt-0 text-lg font-semibold text-[var(--sea-ink)]">{project.name}</h3>
+                    <p className="m-0 text-xs text-[var(--sea-ink-soft)]">{formatRelativeTime(project.updatedAt)}</p>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigate({
+                          to: '/workspace',
+                          search: {
+                            projectId: project.id,
+                          },
+                        })
+                      }}
+                      className="rounded-full border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-4 py-2 text-sm font-semibold text-[var(--lagoon-deep)]"
+                    >
+                      Open in editor
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      </main>
+    </ProtectedRoute>
+  )
+}
