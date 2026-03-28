@@ -2,9 +2,14 @@ import { createHash } from 'node:crypto'
 import { PassThrough } from 'node:stream'
 import Dockerode from 'dockerode'
 import type { ProjectWorkspaceStore } from '../../projects/project-workspace-store.js'
+import type { RuntimeTerminalSize } from './terminal-runtime.js'
 
 interface SandboxRef {
   containerName: string
+  interactiveSession?: {
+    execId: string
+    stream: NodeJS.ReadWriteStream
+  }
 }
 
 interface DockerConnectionOptions {
@@ -12,6 +17,12 @@ interface DockerConnectionOptions {
   host?: string
   port?: number
   protocol?: 'http' | 'https'
+}
+
+export interface DockerInteractiveSessionHandle {
+  write: (input: string) => Promise<void>
+  resize: (size: RuntimeTerminalSize) => Promise<void>
+  close: () => Promise<void>
 }
 
 type DockerLogLevel = 'silent' | 'error' | 'info' | 'debug'
@@ -567,6 +578,7 @@ export class DockerSandboxManager {
       return
     }
 
+    await this.closeInteractiveSession(projectId, ownerSubject)
     this.sandboxes.delete(key)
     this.logInfo('disposing sandbox', {
       projectId,
@@ -602,6 +614,12 @@ export class DockerSandboxManager {
     })
 
     try {
+      if (sandbox.interactiveSession) {
+        throw Object.assign(new Error('Interactive terminal session is active'), {
+          code: 'DOCKER_INTERACTIVE_SESSION_ACTIVE',
+        })
+      }
+
       const container = this.docker.getContainer(sandbox.containerName)
       const execInstance = await container.exec({
         Cmd: ['sh', '-lc', command],
@@ -698,6 +716,222 @@ export class DockerSandboxManager {
 
       throw toDockerRuntimeError(error, 'DOCKER_EXEC_FAILED', 'Could not execute terminal command')
     }
+  }
+
+  async openInteractiveSession(
+    projectId: string,
+    ownerSubject: string,
+    cwd: string,
+    callbacks: {
+      env?: Record<string, string>
+      onOutput: (chunk: Buffer) => void
+      initialSize?: RuntimeTerminalSize
+    },
+  ): Promise<DockerInteractiveSessionHandle> {
+    const sandbox = await this.ensureSandbox(projectId, ownerSubject)
+    const key = this.sandboxKey(projectId, ownerSubject)
+
+    if (sandbox.interactiveSession) {
+      throw Object.assign(new Error('Terminal session is already open'), {
+        code: 'DOCKER_INTERACTIVE_SESSION_EXISTS',
+      })
+    }
+
+    this.logDebug('starting docker interactive exec', {
+      projectId,
+      ownerSubject,
+      containerName: sandbox.containerName,
+      cwd,
+      cols: callbacks.initialSize?.cols,
+      rows: callbacks.initialSize?.rows,
+    })
+
+    try {
+      const container = this.docker.getContainer(sandbox.containerName)
+      const execInstance = await container.exec({
+        Cmd: ['sh'],
+        AttachStdin: true,
+        AttachStdout: true,
+        AttachStderr: true,
+        Env: Object.entries(callbacks.env ?? {}).map(([key, value]) => `${key}=${value}`),
+        WorkingDir: cwd,
+        Tty: true,
+      })
+
+      const stream = await execInstance.start({
+        hijack: true,
+        stdin: true,
+      })
+
+      const execInfo = await execInstance.inspect()
+      const execId = (execInstance as { id?: string }).id
+        ?? (execInfo as { ID?: string; Id?: string }).ID
+        ?? (execInfo as { ID?: string; Id?: string }).Id
+      if (!execId) {
+        stream.destroy()
+        throw new Error('Docker interactive exec id missing')
+      }
+
+      stream.on('data', (chunk: Buffer) => {
+        callbacks.onOutput(chunk)
+      })
+
+      stream.on('close', () => {
+        const current = this.sandboxes.get(key)
+        if (!current || current.interactiveSession?.execId !== execId) {
+          return
+        }
+
+        this.sandboxes.set(key, {
+          ...current,
+          interactiveSession: undefined,
+        })
+      })
+
+      this.sandboxes.set(key, {
+        ...sandbox,
+        interactiveSession: {
+          execId,
+          stream,
+        },
+      })
+
+      if (callbacks.initialSize) {
+        try {
+          await execInstance.resize({
+            h: Math.max(1, Math.floor(callbacks.initialSize.rows)),
+            w: Math.max(1, Math.floor(callbacks.initialSize.cols)),
+          })
+        } catch {
+          // Ignore resize failures for environments that do not support it.
+        }
+      }
+
+      return {
+        write: async (input: string) => {
+          const current = this.sandboxes.get(key)
+          if (!current?.interactiveSession || current.interactiveSession.execId !== execId) {
+            throw new Error('Terminal session is not open')
+          }
+
+          await new Promise<void>((resolve, reject) => {
+            try {
+              const writable = current.interactiveSession!.stream as NodeJS.WritableStream
+              const onError = (error: unknown) => {
+                cleanup()
+                reject(error)
+              }
+              const onDrain = () => {
+                cleanup()
+                resolve()
+              }
+              const cleanup = () => {
+                current.interactiveSession?.stream.off('error', onError)
+                current.interactiveSession?.stream.off('drain', onDrain)
+              }
+
+              current.interactiveSession!.stream.once('error', onError)
+              const flushed = writable.write(input)
+              if (flushed) {
+                cleanup()
+                resolve()
+                return
+              }
+
+              current.interactiveSession!.stream.once('drain', onDrain)
+            } catch (error) {
+              reject(error)
+            }
+          })
+        },
+        resize: async (size: RuntimeTerminalSize) => {
+          const current = this.sandboxes.get(key)
+          if (!current?.interactiveSession || current.interactiveSession.execId !== execId) {
+            throw new Error('Terminal session is not open')
+          }
+
+          const exec = this.docker.getExec(execId)
+          await exec.resize({
+            h: Math.max(1, Math.floor(size.rows)),
+            w: Math.max(1, Math.floor(size.cols)),
+          })
+        },
+        close: async () => {
+          const current = this.sandboxes.get(key)
+          if (!current?.interactiveSession || current.interactiveSession.execId !== execId) {
+            return
+          }
+
+          await this.closeInteractiveSession(projectId, ownerSubject)
+        },
+      }
+    } catch (error) {
+      this.logError('docker interactive exec failed', {
+        projectId,
+        ownerSubject,
+        containerName: sandbox.containerName,
+        ...describeError(error),
+      })
+
+      throw toDockerRuntimeError(error, 'DOCKER_INTERACTIVE_EXEC_FAILED', 'Could not open interactive terminal session')
+    }
+  }
+
+  async closeInteractiveSession(projectId: string, ownerSubject: string): Promise<void> {
+    const key = this.sandboxKey(projectId, ownerSubject)
+    const sandbox = this.sandboxes.get(key)
+    if (!sandbox?.interactiveSession) {
+      return
+    }
+
+    const { stream, execId } = sandbox.interactiveSession
+    this.logDebug('closing docker interactive exec', {
+      projectId,
+      ownerSubject,
+      containerName: sandbox.containerName,
+      execId,
+    })
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const done = () => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        resolve()
+      }
+
+      stream.once('close', done)
+
+      try {
+        stream.end()
+      } catch {
+        done()
+      }
+
+      setTimeout(() => {
+        if (!settled) {
+          try {
+            ;(stream as NodeJS.ReadWriteStream & { destroy: () => void }).destroy()
+          } catch {
+            // ignore
+          }
+          done()
+        }
+      }, 250)
+    })
+
+    const current = this.sandboxes.get(key)
+    if (!current) {
+      return
+    }
+
+    this.sandboxes.set(key, {
+      ...current,
+      interactiveSession: undefined,
+    })
   }
 
   private async isRunning(containerName: string) {

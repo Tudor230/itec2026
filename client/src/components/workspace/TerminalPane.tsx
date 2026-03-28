@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
+import '@xterm/xterm/css/xterm.css'
 import { cn } from '../../lib/utils'
 import { useCollabTerminal } from '../../hooks/use-collab-terminal'
 
@@ -31,13 +32,20 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
     message,
     setActiveOwnerSubject,
     clearActiveOutput,
-    sendCommand,
+    sendInput,
+    openActiveTerminal,
+    resizeActiveTerminal,
     requestAccess,
     decideAccess,
     revokeControl,
   } = useCollabTerminal({ projectId })
 
-  const [command, setCommand] = useState('')
+  const xtermContainerRef = useRef<HTMLDivElement | null>(null)
+  const xtermRef = useRef<any>(null)
+  const lastWrittenCountRef = useRef(0)
+  const sendInputRef = useRef(sendInput)
+  const openActiveTerminalRef = useRef(openActiveTerminal)
+  const resizeActiveTerminalRef = useRef(resizeActiveTerminal)
 
   const isOwnerOfActiveTerminal = useMemo(() => {
     return Boolean(activeOwnerSubject && currentSubject && activeOwnerSubject === currentSubject)
@@ -60,6 +68,118 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
   )
 
   const pendingRequests = activeTerminalState?.pendingRequests ?? []
+
+  useEffect(() => {
+    sendInputRef.current = sendInput
+    openActiveTerminalRef.current = openActiveTerminal
+    resizeActiveTerminalRef.current = resizeActiveTerminal
+  }, [openActiveTerminal, resizeActiveTerminal, sendInput])
+
+  useEffect(() => {
+    const container = xtermContainerRef.current
+    if (!container) {
+      return
+    }
+    let cancelled = false
+    let cleanup: (() => void) | null = null
+
+    void (async () => {
+      const xtermModule = await import('@xterm/xterm')
+      const addonModule = await import('@xterm/addon-fit')
+
+      const TerminalCtor = (xtermModule as { Terminal?: new (...args: any[]) => any }).Terminal
+        ?? (xtermModule as { default?: { Terminal?: new (...args: any[]) => any } }).default?.Terminal
+      const FitAddonCtor = (addonModule as { FitAddon?: new (...args: any[]) => any }).FitAddon
+        ?? (addonModule as { default?: { FitAddon?: new (...args: any[]) => any } }).default?.FitAddon
+
+      if (!TerminalCtor || !FitAddonCtor || cancelled) {
+        return
+      }
+
+      const term = new TerminalCtor({
+        convertEol: false,
+        cursorBlink: true,
+        fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
+        fontSize: 13,
+        lineHeight: 1.3,
+        theme: {
+          background: '#08161c',
+          foreground: '#d2f3ee',
+          cursor: '#8ce0d4',
+        },
+      })
+
+      const fit = new FitAddonCtor()
+      term.loadAddon(fit)
+      term.open(container)
+      fit.fit()
+
+      const disposable = term.onData((input: string) => {
+        if (!isController) {
+          return
+        }
+
+        sendInputRef.current(input)
+      })
+
+      const handleResize = () => {
+        fit.fit()
+
+        if (!activeOwnerSubject) {
+          return
+        }
+
+        const cols = Math.max(1, term.cols)
+        const rows = Math.max(1, term.rows)
+
+        if (!activeTerminalState?.isSessionOpen && isController) {
+          openActiveTerminalRef.current(cols, rows)
+          return
+        }
+
+        if (activeTerminalState?.isSessionOpen) {
+          resizeActiveTerminalRef.current(cols, rows)
+        }
+      }
+
+      window.addEventListener('resize', handleResize)
+
+      xtermRef.current = term
+
+      handleResize()
+
+      cleanup = () => {
+        window.removeEventListener('resize', handleResize)
+        disposable.dispose()
+        term.dispose()
+        xtermRef.current = null
+        lastWrittenCountRef.current = 0
+      }
+    })().catch(() => undefined)
+
+    return () => {
+      cancelled = true
+      cleanup?.()
+    }
+  }, [activeOwnerSubject, activeTerminalState?.isSessionOpen, isController])
+
+  useEffect(() => {
+    const term = xtermRef.current
+    if (!term) {
+      return
+    }
+
+    if (lastWrittenCountRef.current > activeOutput.length) {
+      term.reset()
+      lastWrittenCountRef.current = 0
+    }
+
+    for (let index = lastWrittenCountRef.current; index < activeOutput.length; index += 1) {
+      term.write(activeOutput[index].chunk)
+    }
+
+    lastWrittenCountRef.current = activeOutput.length
+  }, [activeOutput])
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-[rgba(7,16,20,0.92)] text-[#d2f3ee]">
@@ -112,7 +232,7 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
       <div className="flex items-center justify-between border-b border-[rgba(130,225,212,0.1)] px-4 py-2 text-xs">
         <div className="text-[#9ed5cc]">
           {activeOwnerSubject
-            ? `Owner: ${formatSubject(activeOwnerSubject)} | Controller: ${formatSubject(activeTerminalState?.activeControllerSubject ?? null)}`
+            ? `Owner: ${formatSubject(activeOwnerSubject)} | Controller: ${formatSubject(activeTerminalState?.activeControllerSubject ?? null)} | Session: ${activeTerminalState?.isSessionOpen ? 'open' : 'closed'}`
             : 'Select a terminal to start'}
         </div>
         <div className="flex items-center gap-2">
@@ -177,55 +297,13 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3 font-mono text-xs leading-6 sm:text-sm">
-        {activeOutput.length === 0 ? (
-          <p className="m-0 text-[#89b7b1]">No terminal output yet.</p>
-        ) : (
-          activeOutput.map((line, index) => (
-            <p
-              key={`${line.timestamp}-${index}`}
-              className={cn(
-                'm-0 whitespace-pre-wrap break-words',
-                line.stream === 'stderr'
-                  ? 'text-[#f4b3b3]'
-                  : line.stream === 'system'
-                    ? 'text-[#b4dad4]'
-                    : 'text-[#d2f3ee]',
-              )}
-            >
-              {line.chunk}
-            </p>
-          ))
-        )}
+      <div className="min-h-0 flex-1 px-4 py-3">
+        <div ref={xtermContainerRef} className="h-full w-full rounded-md border border-[rgba(130,225,212,0.16)]" />
       </div>
 
-      <form
-        className="border-t border-[rgba(130,225,212,0.18)] px-4 py-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!isController) {
-            return
-          }
-
-          if (!command.trim()) {
-            return
-          }
-
-          sendCommand(command)
-          setCommand('')
-        }}
-      >
-        <input
-          value={command}
-          onChange={(event) => setCommand(event.target.value)}
-          disabled={!isController}
-          placeholder={isController ? 'Type a command and press Enter' : 'Read-only terminal'}
-          className="w-full rounded-md border border-[rgba(130,225,212,0.22)] bg-[rgba(8,22,28,0.8)] px-3 py-2 font-mono text-xs text-[#d2f3ee] outline-none placeholder:text-[#7da9a3] disabled:cursor-not-allowed disabled:opacity-60"
-        />
-        {message ? (
-          <p className="m-0 mt-2 text-xs text-[#f2b7b7]">{message}</p>
-        ) : null}
-      </form>
+      {message ? (
+        <p className="m-0 border-t border-[rgba(130,225,212,0.18)] px-4 py-2 text-xs text-[#f2b7b7]">{message}</p>
+      ) : null}
     </section>
   )
 }

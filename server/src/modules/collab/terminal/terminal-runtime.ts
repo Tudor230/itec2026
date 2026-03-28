@@ -6,12 +6,26 @@ export interface RuntimeOutputChunk {
   timestamp: string
 }
 
+export interface RuntimeTerminalSize {
+  cols: number
+  rows: number
+}
+
 export interface TerminalRuntime {
   prewarm?(context: { cwd: string; projectId: string; ownerSubject: string }): Promise<void>
-  execute(
-    command: string,
+  openSession(
     context: { cwd: string; projectId: string; ownerSubject: string },
     onOutput: (chunk: RuntimeOutputChunk) => void,
-  ): Promise<{ nextCwd: string }>
+    initialSize?: RuntimeTerminalSize,
+  ): Promise<void>
+  writeInput(
+    input: string,
+    context: { cwd: string; projectId: string; ownerSubject: string },
+  ): Promise<void>
+  resizeSession(
+    size: RuntimeTerminalSize,
+    context: { cwd: string; projectId: string; ownerSubject: string },
+  ): Promise<void>
+  closeSession(context: { cwd: string; projectId: string; ownerSubject: string }): Promise<void>
   dispose(): void
 }

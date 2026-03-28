@@ -310,9 +310,15 @@ export class LocalProjectWorkspaceStore implements ProjectWorkspaceStore {
   async replaceProjectFiles(projectId: string, files: Array<{ path: string; content: string }>) {
     const projectRoot = this.getProjectWorkspacePath(projectId)
 
-    await rm(projectRoot, { recursive: true, force: true })
     await mkdir(projectRoot, { recursive: true, mode: 0o770 })
+    await this.assertRealPathInsideProjectRoot(projectId, projectRoot)
     await this.applySandboxOwnership(projectRoot, true)
+
+    const existingEntries = await readdir(projectRoot, { withFileTypes: true })
+    for (const entry of existingEntries) {
+      const entryPath = path.resolve(projectRoot, entry.name)
+      await rm(entryPath, { recursive: true, force: true })
+    }
 
     for (const file of files) {
       const { resolvedPath } = this.resolveProjectFilePath(projectId, file.path)

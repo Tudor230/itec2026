@@ -100,6 +100,7 @@ type TerminalStatePayload = {
   projectId: string
   ownerSubject: string
   activeControllerSubject: string
+  isSessionOpen: boolean
   pendingRequests: Array<{
     requesterSubject: string
     requestedAt: string
@@ -1378,7 +1379,7 @@ describe('collab gateway', () => {
     viewer.emit('collab:terminal:input', {
       projectId,
       ownerSubject,
-      command: 'echo denied',
+      input: 'echo denied\n',
     })
 
     const error = await errorPayload
@@ -1461,6 +1462,21 @@ describe('collab gateway', () => {
     const decisionPayload = await decisionSeenByViewer
     assert.equal(decisionPayload.status, 'approved')
 
+    const openedStateSeenByViewer = waitForEvent<TerminalStatePayload>(
+      viewer,
+      'collab:terminal:state',
+      (payload) => payload.ownerSubject === ownerSubject && payload.isSessionOpen,
+    )
+
+    viewer.emit('collab:terminal:open', {
+      projectId,
+      ownerSubject,
+      cols: 120,
+      rows: 40,
+    })
+
+    await openedStateSeenByViewer
+
     const outputSeenByOwner = waitForEvent<TerminalOutputPayload>(
       owner,
       'collab:terminal:output',
@@ -1471,7 +1487,7 @@ describe('collab gateway', () => {
     viewer.emit('collab:terminal:input', {
       projectId,
       ownerSubject,
-      command: 'echo test-from-viewer',
+      input: 'echo test-from-viewer\n',
     })
 
     const outputPayload = await outputSeenByOwner
