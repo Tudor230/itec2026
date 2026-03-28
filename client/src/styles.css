@@ -29,7 +29,6 @@
   --bg-rgb: 231, 243, 236;
   --chip-bg-rgb: 255, 255, 255;
   --lagoon-rgb: 79, 184, 178;
-
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -662,9 +661,146 @@ a {
   border-top: 1px solid var(--line);
   background: color-mix(in oklab, var(--header-bg) 84%, transparent 16%);
 }
-
 .workspace-shell {
   position: relative;
+}
+
+.workspace-atlas {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(1200px 540px at -8% -18%, color-mix(in oklab, var(--lagoon) 34%, transparent), transparent 62%),
+    radial-gradient(980px 420px at 108% -12%, color-mix(in oklab, var(--palm) 28%, transparent), transparent 64%),
+    linear-gradient(
+      160deg,
+      color-mix(in oklab, var(--bg-base) 88%, var(--foam) 12%) 0%,
+      color-mix(in oklab, var(--bg-base) 92%, black 8%) 100%
+    );
+}
+
+.workspace-atlas::before,
+.workspace-atlas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.workspace-atlas::before {
+  z-index: -2;
+  opacity: 0.34;
+  background:
+    radial-gradient(circle at 14% 16%, rgba(255, 255, 255, 0.58), transparent 34%),
+    radial-gradient(circle at 84% 24%, color-mix(in oklab, var(--lagoon) 38%, transparent), transparent 42%),
+    radial-gradient(circle at 48% 84%, color-mix(in oklab, var(--palm) 28%, transparent), transparent 46%);
+}
+
+.workspace-atlas::after {
+  z-index: -1;
+  opacity: 0.12;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(circle at 50% 30%, black, transparent 78%);
+}
+
+.workspace-topbar {
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 82%, var(--lagoon) 18%);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--surface-strong) 78%, transparent),
+      color-mix(in oklab, var(--surface) 76%, transparent)
+    );
+  box-shadow:
+    0 1px 0 color-mix(in oklab, var(--inset-glint) 74%, transparent) inset,
+    0 8px 20px rgba(12, 28, 34, 0.14);
+  backdrop-filter: blur(16px) saturate(120%);
+}
+
+.workspace-control-button {
+  border: 1px solid color-mix(in oklab, var(--chip-line) 76%, var(--line) 24%);
+  background: color-mix(in oklab, var(--chip-bg) 80%, transparent 20%);
+  color: var(--sea-ink-soft);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) inset;
+}
+
+.workspace-control-button:hover {
+  color: var(--sea-ink);
+  border-color: color-mix(in oklab, var(--lagoon-deep) 34%, var(--chip-line));
+  transform: translateY(-1px);
+}
+
+.workspace-hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--chip-line) 82%, transparent);
+  background: color-mix(in oklab, var(--chip-bg) 86%, transparent);
+  padding: 0.24rem 0.54rem;
+  font-size: 0.64rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sea-ink-soft);
+}
+
+.workspace-panel-surface {
+  background: color-mix(in oklab, var(--surface) 74%, transparent 26%);
+  border-top: 1px solid color-mix(in oklab, var(--line) 76%, transparent);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.34) inset;
+  backdrop-filter: blur(12px);
+}
+
+.workspace-main-surface {
+  position: relative;
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in oklab, var(--surface) 66%, transparent 34%) 0%,
+      color-mix(in oklab, var(--surface-strong) 52%, transparent 48%) 100%
+    );
+}
+
+.workspace-main-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.18;
+  background:
+    radial-gradient(circle at 16% 14%, color-mix(in oklab, var(--lagoon) 34%, transparent), transparent 30%),
+    radial-gradient(circle at 86% 18%, color-mix(in oklab, var(--palm) 30%, transparent), transparent 34%);
+}
+
+.workspace-edge-toggle {
+  border: 1px solid color-mix(in oklab, var(--line) 68%, var(--chip-line) 32%);
+  background: color-mix(in oklab, var(--surface-strong) 82%, transparent);
+  color: var(--sea-ink-soft);
+  box-shadow: 0 12px 28px rgba(8, 22, 28, 0.22);
+}
+
+.workspace-edge-toggle:hover {
+  color: var(--sea-ink);
+  border-color: color-mix(in oklab, var(--lagoon-deep) 34%, var(--line));
+}
+
+.workspace-edge-toggle.is-active {
+  border-color: color-mix(in oklab, var(--lagoon-deep) 48%, transparent);
+  background: color-mix(in oklab, var(--lagoon) 24%, var(--surface-strong));
+  color: var(--sea-ink);
+}
+
+.workspace-edge-toggle-closed {
+  border-color: color-mix(in oklab, var(--line) 46%, var(--lagoon-deep) 54%);
+  background: color-mix(in oklab, var(--surface-strong) 95%, var(--bg-base) 5%);
+  color: var(--sea-ink);
+  box-shadow:
+    0 1px 0 color-mix(in oklab, var(--inset-glint) 88%, transparent) inset,
+    0 10px 22px rgba(7, 20, 26, 0.2);
 }
 
 .workspace-fullscreen-shell {

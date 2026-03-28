@@ -9,6 +9,9 @@ import {
   Terminal as TerminalIcon,
   Search,
   Bell,
+  GitBranch,
+  Layers3,
+  Activity,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
@@ -21,9 +24,9 @@ import EditorPane from '../components/workspace/EditorPane'
 import QuickOpenModal from '../components/workspace/QuickOpenModal'
 import TerminalPane from '../components/workspace/TerminalPane'
 import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
-import BottomDrawers from '../components/workspace/BottomDrawers'
+import BottomDrawers, { type DrawerTab } from '../components/workspace/BottomDrawers'
 import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
-import UserInfo from '../components/auth/UserInfo'
+import ProfileButton from '../components/profile/ProfileButton'
 import { useToast } from '../components/ToastProvider'
 import { getWorkspaceShortcut } from '../components/workspace/workspace-shortcuts'
 import WorkspaceAuthOverlay, {
@@ -65,13 +68,13 @@ const SIDEBAR_LAYOUT = {
   collapseThresholdPercent: 1,
   expandThresholdPercent: 2,
   left: {
-    defaultSize: '24%',
-    minSize: '18%',
+    defaultSize: '16%',
+    minSize: '16%',
     maxSize: '38%',
   },
   right: {
-    defaultSize: '24%',
-    minSize: '18%',
+    defaultSize: '16%',
+    minSize: '16%',
     maxSize: '40%',
   },
 }
@@ -107,7 +110,7 @@ function WorkspaceWithHostedAuth() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false)
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true)
   const [rightSidebarTab, setRightSidebarTab] = useState<SidebarTab>('ai')
   const [centerView, setCenterView] = useState<'editor' | 'terminal'>('editor')
   const [isQuickOpenVisible, setIsQuickOpenVisible] = useState(false)
@@ -115,11 +118,12 @@ function WorkspaceWithHostedAuth() {
   const [authTab, setAuthTab] = useState<AuthTab>('login')
   const [authActionPending, setAuthActionPending] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
+  const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
+  const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
   const autosaveTimeoutRef = useRef<number | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
-  const lastLeftSizeRef = useRef<string>(SIDEBAR_LAYOUT.left.defaultSize)
-  const lastRightSizeRef = useRef<string>(SIDEBAR_LAYOUT.right.defaultSize)
 
   const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
 
@@ -290,7 +294,6 @@ function WorkspaceWithHostedAuth() {
       setSaveError(null)
       upsertFileInCache(updated)
       markSaved(updated.projectId, updated.id)
-      success(`Saved ${updated.path.split('/').pop()}`)
       setDraftsByFileId((previous) => {
         const latestDraft = previous[updated.id]
         if (latestDraft !== undefined && latestDraft !== updated.content) {
@@ -371,14 +374,14 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
-
   const { collabState, onEditorMount, markSaved } = useCollabDoc({
     projectId: activeProjectId,
     fileId: activeFileId,
     onFileCreated: onCollabFileCreated,
     onDirtyStateChanged: onCollabDirtyStateChanged,
   })
+
+  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
 
   const dirtyFileIds = files
     .filter((file) => {
@@ -387,6 +390,8 @@ function WorkspaceWithHostedAuth() {
       return locallyDirty || Boolean(collabDirtyByFileId[file.id])
     })
     .map((file) => file.id)
+  const dirtyFileCount = dirtyFileIds.length
+  const virtualFolders = activeProjectId ? (virtualFoldersByProjectId[activeProjectId] ?? []) : []
 
   useMutation({
     mutationFn: async (projectId: string) => {
@@ -446,6 +451,7 @@ function WorkspaceWithHostedAuth() {
   useEffect(() => {
     setActiveFileId(null)
     setOpenFileIds([])
+    setHasClosedAllTabs(false)
     setDraftsByFileId({})
     setCollabDirtyByFileId({})
     setSaveError(null)
@@ -470,6 +476,10 @@ function WorkspaceWithHostedAuth() {
     }
 
     if (!activeFileId) {
+      if (hasClosedAllTabs) {
+        return
+      }
+
       const firstFileId = filesQuery.data[0].id
       setActiveFileId(firstFileId)
       setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
@@ -482,7 +492,7 @@ function WorkspaceWithHostedAuth() {
       setActiveFileId(firstFileId)
       setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
     }
-  }, [activeFileId, filesQuery.data, isAuthenticated])
+  }, [activeFileId, filesQuery.data, hasClosedAllTabs, isAuthenticated])
 
   useEffect(() => {
     if (!filesQuery.data) {
@@ -572,7 +582,6 @@ function WorkspaceWithHostedAuth() {
 
     const leftSize = leftPanel.getSize().asPercentage
     if (leftSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
-      lastLeftSizeRef.current = `${leftSize}%`
       leftPanel.resize(0)
     }
   }, [isLeftSidebarCollapsed, leftPanelRef])
@@ -590,7 +599,7 @@ function WorkspaceWithHostedAuth() {
 
     const leftSize = leftPanel.getSize().asPercentage
     if (leftSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
-      leftPanel.resize(lastLeftSizeRef.current)
+      leftPanel.resize(SIDEBAR_LAYOUT.left.minSize)
     }
   }, [isLeftSidebarCollapsed, leftPanelRef])
 
@@ -604,7 +613,6 @@ function WorkspaceWithHostedAuth() {
     if (!isRightSidebarOpen) {
       const rightSize = rightPanel.getSize().asPercentage
       if (rightSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
-        lastRightSizeRef.current = `${rightSize}%`
         rightPanel.resize(0)
       }
       return
@@ -612,11 +620,12 @@ function WorkspaceWithHostedAuth() {
 
     const rightSize = rightPanel.getSize().asPercentage
     if (rightSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
-      rightPanel.resize(lastRightSizeRef.current)
+      rightPanel.resize(SIDEBAR_LAYOUT.right.minSize)
     }
   }, [isRightSidebarOpen, rightPanelRef])
 
   const openFileById = (fileId: string) => {
+    setHasClosedAllTabs(false)
     setActiveFileId(fileId)
     setSaveError(null)
     setCenterView('editor')
@@ -632,6 +641,10 @@ function WorkspaceWithHostedAuth() {
   const closeTabById = (fileId: string) => {
     setOpenFileIds((previous) => {
       const next = previous.filter((candidate) => candidate !== fileId)
+
+      if (next.length === 0) {
+        setHasClosedAllTabs(true)
+      }
 
       if (activeFileId === fileId) {
         const closedIndex = previous.indexOf(fileId)
@@ -654,6 +667,7 @@ function WorkspaceWithHostedAuth() {
   }
 
   const closeOthers = (fileId: string) => {
+    setHasClosedAllTabs(false)
     setOpenFileIds([fileId])
     setActiveFileId(fileId)
     setDraftsByFileId((previous) => {
@@ -664,6 +678,7 @@ function WorkspaceWithHostedAuth() {
   }
 
   const closeAll = () => {
+    setHasClosedAllTabs(true)
     setOpenFileIds([])
     setActiveFileId(null)
     setDraftsByFileId({})
@@ -681,8 +696,16 @@ function WorkspaceWithHostedAuth() {
     : {}
 
   return (
-    <main className="m-0 h-dvh w-screen p-0">
+    <main className="workspace-atlas m-0 h-dvh w-screen p-0">
       <section className="relative flex h-full min-h-0 flex-col">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-[rgba(var(--lagoon-rgb),0.2)] blur-[110px]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-24 -top-16 h-64 w-64 rounded-full bg-[rgba(47,106,74,0.16)] blur-[100px]"
+        />
         <div
           className={cn(
             'relative flex min-h-0 flex-1 flex-col overflow-hidden',
@@ -690,28 +713,40 @@ function WorkspaceWithHostedAuth() {
           )}
           {...lockedContentProps}
         >
-          {/* Top Bar Refined */}
-          <div className="grid items-center gap-3 border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.6)] px-4 py-2 backdrop-blur-md md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-            <div className="flex min-w-0 items-center gap-4">
+          <div className="workspace-topbar grid items-center gap-3 px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
                 onClick={() => navigate({ to: '/projects' })}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--line)] bg-[rgba(255,255,255,0.05)] text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] transition-colors"
+                className="workspace-control-button inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
                 title="Back to projects"
               >
                 <ArrowLeft size={14} />
               </button>
 
-              <div className="min-w-0 flex flex-col">
-                <span className="text-[10px] uppercase tracking-widest font-bold text-[var(--sea-ink-soft)]">Workspace</span>
-                <h1 className="m-0 truncate text-sm font-extrabold text-[var(--sea-ink)] leading-none">
-                  {selectedProject ? selectedProject.name : 'iTECify IDE'}
-                </h1>
+              <div className="relative min-w-0 overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.64)] px-3 py-2">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -right-8 -top-8 h-16 w-16 rounded-full bg-[rgba(var(--lagoon-rgb),0.16)] blur-2xl"
+                />
+                <div className="relative flex min-w-0 items-center gap-2">
+                  <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.66)] text-[var(--lagoon-deep)]">
+                    <Layers3 size={13} />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+                      Command Deck
+                    </span>
+                    <h1 className="m-0 truncate text-sm font-extrabold leading-none text-[var(--sea-ink)]">
+                      {selectedProject ? selectedProject.name : 'iTECify IDE'}
+                    </h1>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div className="flex items-center justify-center">
-              <div className="relative flex rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] p-1 backdrop-blur-md">
+              <div className="relative flex rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.62)] p-1 shadow-[0_6px_18px_rgba(8,22,28,0.16)] backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => setCenterView('editor')}
@@ -755,16 +790,33 @@ function WorkspaceWithHostedAuth() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3">
-              <div className="flex items-center gap-2 px-2 py-1 bg-[rgba(255,255,255,0.05)] border border-[var(--line)] rounded-lg">
-                <button className="p-1.5 text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] transition-colors">
+            <div className="flex items-center justify-end gap-2">
+              <div className="hidden items-center gap-1.5 lg:flex">
+                <span className="workspace-hud-chip">
+                  <GitBranch size={11} /> main
+                </span>
+                <span className="workspace-hud-chip">
+                  <Activity size={11} /> {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.58)] p-1.5 shadow-[0_5px_14px_rgba(9,25,30,0.12)] backdrop-blur-sm">
+                <button
+                  type="button"
+                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  title="Search"
+                >
                   <Search size={14} />
                 </button>
-                <button className="p-1.5 text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] transition-colors">
+                <button
+                  type="button"
+                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  title="Notifications"
+                >
                   <Bell size={14} />
                 </button>
                 <div className="w-[1px] h-4 bg-[var(--line)]" />
-                <UserInfo 
+                <ProfileButton 
                   onLogout={() => {
                     void logout({ logoutParams: { returnTo: window.location.origin } })
                   }} 
@@ -789,8 +841,10 @@ function WorkspaceWithHostedAuth() {
             onSelectTab={openFileById}
             onCloseTab={closeTabById}
             onCloseOthers={closeOthers}
-            onCloseAll={closeAll}
-          />
+  onCloseAll={closeAll}
+  collaborators={['JD', 'AS']}
+  onOpenCollaboration={() => setBottomDrawerTab('collab')}
+/>
 
           <Group
             id="workspace-layout-panels"
@@ -808,7 +862,7 @@ function WorkspaceWithHostedAuth() {
               }
 
               if (!isLeftCollapsedNext) {
-                lastLeftSizeRef.current = `${nextLeftSize}%`
+                // noop: sidebar opens at min size by design
               }
 
               if (isRightSidebarOpen === isRightCollapsedNext) {
@@ -816,7 +870,7 @@ function WorkspaceWithHostedAuth() {
               }
 
               if (!isRightCollapsedNext) {
-                lastRightSizeRef.current = `${nextRightSize}%`
+                // noop: sidebar opens at min size by design
               }
             }}
           >
@@ -829,10 +883,11 @@ function WorkspaceWithHostedAuth() {
               defaultSize={SIDEBAR_LAYOUT.left.defaultSize}
               minSize={SIDEBAR_LAYOUT.left.minSize}
               maxSize={SIDEBAR_LAYOUT.left.maxSize}
-              className="flex min-h-0 min-w-0 flex-col"
+              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
             >
               <FilesSidebar
                 files={files}
+                virtualFolders={virtualFolders}
                 activeFileId={activeFileId}
                 dirtyFileIds={dirtyFileIds}
                 isLoading={filesQuery.isLoading || projectsQuery.isLoading}
@@ -844,50 +899,69 @@ function WorkspaceWithHostedAuth() {
                       : createError
                 }
                 onOpenFile={openFileById}
-                onCreateFile={(path) => {
-                  void createFileMutation.mutateAsync(path)
+                onCreateFile={async (path, type) => {
+                  if (type === 'folder') {
+                    if (!activeProjectId) {
+                      return
+                    }
+
+                    setCreateError(null)
+                    setVirtualFoldersByProjectId((previous) => {
+                      const current = previous[activeProjectId] ?? []
+                      if (current.includes(path)) {
+                        return previous
+                      }
+
+                      return {
+                        ...previous,
+                        [activeProjectId]: [...current, path],
+                      }
+                    })
+                    return
+                  }
+
+                  await createFileMutation.mutateAsync(path)
                 }}
+                onClose={() => setIsLeftSidebarCollapsed(true)}
               />
             </Panel>
             <Separator
               disabled={isLeftSidebarCollapsed}
               className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
             >
-              <div className="h-full w-[1px] bg-[var(--line)] transition-all group-hover:w-[3px] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:w-[1px] data-[disabled]:opacity-30" />
+              <div className="h-full w-[0.5px] bg-[color-mix(in_oklab,var(--line)_88%,transparent)] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:opacity-30" />
             </Separator>
 
             {/* Central Editor/Terminal Panel */}
-            <Panel id="main-editor" className="flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
+            <Panel id="main-editor" className="workspace-main-surface flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
                <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
                   {/* Sidebar Toggle Handle for Left */}
-                  <button
-                    onClick={() => setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
-                    className={cn(
-                      "absolute left-0 top-1/2 -translate-y-1/2 z-30 px-2 py-6 bg-[var(--surface-strong)] border border-[var(--line)] border-l-0 rounded-r-xl text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-lg",
-                      isLeftSidebarCollapsed && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
-                    )}
-                  >
-                    {isLeftSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-                  </button>
+                   {isLeftSidebarCollapsed ? (
+                    <button
+                     onClick={() => setIsLeftSidebarCollapsed(false)}
+                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border-l-0 px-2 py-5 transition-colors"
+                     title="Open files panel"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                   ) : null}
 
                   {/* Sidebar Toggle Handle for Right */}
-                  <button
-                    onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
-                    className={cn(
-                      "absolute right-0 top-1/2 -translate-y-1/2 z-30 px-2 py-6 bg-[var(--surface-strong)] border border-[var(--line)] border-r-0 rounded-l-xl text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-lg",
-                      !isRightSidebarOpen && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
-                    )}
-                  >
-                    {!isRightSidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
-                  </button>
+                   {!isRightSidebarOpen ? (
+                    <button
+                     onClick={() => setIsRightSidebarOpen(true)}
+                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border-r-0 px-2 py-5 transition-colors"
+                     title="Open assistant panel"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                   ) : null}
 
                   {centerView === 'editor' ? (
                     <EditorPane
                       file={activeFile}
                       initialValue={editorValue}
                       isDirty={isDirty}
-                      canSave={localIsDirty}
-                      isSaving={saveFileMutation.isPending}
                       saveError={saveError}
                       collabState={collabState}
                       onEditorMount={onEditorMount}
@@ -903,13 +977,6 @@ function WorkspaceWithHostedAuth() {
                           }
                         })
                       }}
-                      onSave={() => {
-                        if (!activeFile || !localIsDirty) {
-                          return
-                        }
-
-                        triggerSave(activeFile.id, editorValue)
-                      }}
                     />
                   ) : (
                     <TerminalPane />
@@ -922,17 +989,17 @@ function WorkspaceWithHostedAuth() {
               disabled={!isRightSidebarOpen}
               className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
             >
-              <div className="h-full w-[1px] bg-[var(--line)] transition-all group-hover:w-[3px] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:w-[1px] data-[disabled]:opacity-30" />
+              <div className="h-full w-[0.5px] bg-[color-mix(in_oklab,var(--line)_88%,transparent)] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:opacity-30" />
             </Separator>
             <Panel
               id="right-sidebar"
               panelRef={rightPanelRef}
               collapsible
               collapsedSize="0%"
-              defaultSize="0%"
+              defaultSize={SIDEBAR_LAYOUT.right.defaultSize}
               minSize={SIDEBAR_LAYOUT.right.minSize}
               maxSize={SIDEBAR_LAYOUT.right.maxSize}
-              className="flex min-h-0 min-w-0 flex-col"
+              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
             >
               <RightSidebar
                 isOpen={isRightSidebarOpen}
@@ -944,7 +1011,10 @@ function WorkspaceWithHostedAuth() {
           </Group>
 
           {/* Bottom Drawers */}
-          <BottomDrawers />
+          <BottomDrawers
+            activeTab={bottomDrawerTab}
+            onActiveTabChange={setBottomDrawerTab}
+          />
         </div>
 
         <QuickOpenModal
