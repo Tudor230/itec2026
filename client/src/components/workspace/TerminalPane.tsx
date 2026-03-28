@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import { cn } from '../../lib/utils'
 import { useCollabTerminal } from '../../hooks/use-collab-terminal'
+import type { QueuedTerminalCommand } from './run-current-file-command'
+import { shouldSendQueuedCommand } from './terminal-queued-command'
 
 interface TerminalPaneProps {
   projectId: string | null
+  queuedCommand: QueuedTerminalCommand | null
+  onQueuedCommandSent?: (commandId: number) => void
 }
 
 function formatSubject(subject: string | null) {
@@ -20,7 +24,7 @@ function formatSubject(subject: string | null) {
   return short || subject
 }
 
-export default function TerminalPane({ projectId }: TerminalPaneProps) {
+export default function TerminalPane({ projectId, queuedCommand, onQueuedCommandSent }: TerminalPaneProps) {
   const {
     terminals,
     currentSubject,
@@ -43,6 +47,7 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
   const xtermContainerRef = useRef<HTMLDivElement | null>(null)
   const xtermRef = useRef<any>(null)
   const lastWrittenCountRef = useRef(0)
+  const lastExecutedQueuedCommandIdRef = useRef<number>(0)
   const activeOutputRef = useRef(activeOutput)
   const sendInputRef = useRef(sendInput)
   const openActiveTerminalRef = useRef(openActiveTerminal)
@@ -188,6 +193,21 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
   useEffect(() => {
     replayBufferedOutput()
   }, [activeOutput, replayBufferedOutput])
+
+  useEffect(() => {
+    if (!shouldSendQueuedCommand({
+      queuedCommand,
+      lastExecutedCommandId: lastExecutedQueuedCommandIdRef.current,
+      canWriteToActiveTerminal,
+      isSessionOpen: Boolean(activeTerminalState?.isSessionOpen),
+    })) {
+      return
+    }
+
+    sendInputRef.current(`${queuedCommand.command}\n`)
+    lastExecutedQueuedCommandIdRef.current = queuedCommand.id
+    onQueuedCommandSent?.(queuedCommand.id)
+  }, [activeTerminalState?.isSessionOpen, canWriteToActiveTerminal, onQueuedCommandSent, queuedCommand])
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-[rgba(7,16,20,0.92)] text-[#d2f3ee]">

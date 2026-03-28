@@ -23,6 +23,7 @@ import FilesSidebar from '../components/workspace/FilesSidebar'
 import EditorPane from '../components/workspace/EditorPane'
 import QuickOpenModal from '../components/workspace/QuickOpenModal'
 import TerminalPane from '../components/workspace/TerminalPane'
+import RunButton from '../components/workspace/RunButton'
 import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
 import BottomDrawers, { type DrawerTab } from '../components/workspace/BottomDrawers'
 import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
@@ -48,6 +49,7 @@ import {
   type CollabFileUpdatedPayload,
 } from '../lib/collab-client'
 import { useCollabDoc } from '../hooks/use-collab-doc'
+import { useRunCurrentFile } from '../hooks/use-run-current-file'
 import { cn } from '../lib/utils'
 
 const AUTOSAVE_DELAY_MS = 200
@@ -385,6 +387,19 @@ function WorkspaceWithHostedAuth() {
     ? (draftsByFileId[activeFile.id] ?? activeFile.content) !== activeFile.content
     : false
   const isDirty = activeFile ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id]) : false
+  const {
+    queuedTerminalCommand,
+    runCurrentFile,
+    clearQueuedTerminalCommand,
+    resetQueuedTerminalCommand,
+  } = useRunCurrentFile({
+    activeFilePath: activeFile?.path ?? null,
+    onRunStart: () => {
+      setCenterView('terminal')
+      setBottomDrawerTab('run')
+    },
+    onRunError: toastError,
+  })
 
   useEffect(() => {
     clearAutosaveTimeout()
@@ -491,13 +506,14 @@ function WorkspaceWithHostedAuth() {
   useEffect(() => {
     setActiveFileId(null)
     setOpenFileIds([])
+    resetQueuedTerminalCommand()
     setHasClosedAllTabs(false)
     setDraftsByFileId({})
     setCollabDirtyByFileId({})
     setSaveError(null)
     setCreateError(null)
     clearAutosaveTimeout()
-  }, [activeProjectId, clearAutosaveTimeout])
+  }, [activeProjectId, clearAutosaveTimeout, resetQueuedTerminalCommand])
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -840,6 +856,11 @@ function WorkspaceWithHostedAuth() {
                 </span>
               </div>
 
+              <RunButton
+                onRunRequest={runCurrentFile}
+                label="Run current file"
+              />
+
               <div className="flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.58)] p-1.5 shadow-[0_5px_14px_rgba(9,25,30,0.12)] backdrop-blur-sm">
                 <button
                   type="button"
@@ -1019,7 +1040,11 @@ function WorkspaceWithHostedAuth() {
                       }}
                     />
                   ) : (
-                    <TerminalPane projectId={activeProjectId} />
+                    <TerminalPane
+                      projectId={activeProjectId}
+                      queuedCommand={queuedTerminalCommand}
+                      onQueuedCommandSent={clearQueuedTerminalCommand}
+                    />
                   )}
                </div>
             </Panel>
