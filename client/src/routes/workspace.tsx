@@ -9,7 +9,7 @@ import {
   Monitor,
   SquareTerminal,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuthRuntime } from '../auth/AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
 import FileTabs from '../components/workspace/FileTabs'
@@ -31,6 +31,10 @@ import {
   updateFile,
   type FileDto,
 } from '../services/projects-api'
+import {
+  type CollabDocDirtyStatePayload,
+  type CollabFileCreatedPayload,
+} from '../lib/collab-client'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 
 export const Route = createFileRoute('/workspace')({
@@ -72,6 +76,7 @@ function WorkspaceWithHostedAuth() {
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [openFileIds, setOpenFileIds] = useState<string[]>([])
   const [draftsByFileId, setDraftsByFileId] = useState<Record<string, string>>({})
+  const [collabDirtyByFileId, setCollabDirtyByFileId] = useState<Record<string, boolean>>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
@@ -142,6 +147,63 @@ function WorkspaceWithHostedAuth() {
     enabled: isAuthenticated && activeProjectId !== null,
   })
 
+  const upsertFileInCache = useCallback((incomingFile: FileDto) => {
+    queryClient.setQueryData<FileDto[]>(
+      ['workspace', 'files', true, incomingFile.projectId],
+      (previous) => {
+        const current = previous ?? []
+        const exists = current.some((file) => file.id === incomingFile.id)
+
+        const next = exists
+          ? current.map((file) => (file.id === incomingFile.id ? incomingFile : file))
+          : [incomingFile, ...current]
+
+        return [...next].sort((left, right) => {
+          return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+        })
+      },
+    )
+  }, [queryClient])
+
+  const onCollabFileCreated = useCallback((payload: CollabFileCreatedPayload) => {
+    upsertFileInCache({
+      ...payload,
+      content: '',
+      ownerSubject: null,
+    })
+  }, [upsertFileInCache])
+
+  const onCollabDirtyStateChanged = useCallback((payload: CollabDocDirtyStatePayload) => {
+    setCollabDirtyByFileId((previous) => {
+      if (payload.isDirty) {
+        if (previous[payload.fileId]) {
+          return previous
+        }
+
+        return {
+          ...previous,
+          [payload.fileId]: true,
+        }
+      }
+
+      if (!(payload.fileId in previous)) {
+        return previous
+      }
+
+      const next = { ...previous }
+      delete next[payload.fileId]
+      return next
+    })
+
+    if (!payload.isDirty) {
+      queryClient.invalidateQueries({
+        queryKey: ['workspace', 'files', true, payload.projectId],
+      }).catch(() => {
+        return undefined
+      })
+    }
+  }, [queryClient])
+
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
       const token = await getApiAccessToken()
@@ -165,6 +227,7 @@ function WorkspaceWithHostedAuth() {
     },
     onSuccess: async (createdFile) => {
       setCreateError(null)
+      upsertFileInCache(createdFile)
       setActiveFileId(createdFile.id)
       setOpenFileIds((previous) =>
         previous.includes(createdFile.id) ? previous : [...previous, createdFile.id],
@@ -194,6 +257,8 @@ function WorkspaceWithHostedAuth() {
     },
     onSuccess: async (updated) => {
       setSaveError(null)
+      upsertFileInCache(updated)
+      markSaved(updated.projectId, updated.id)
       setDraftsByFileId((previous) => {
         const next = { ...previous }
         delete next[updated.id]
@@ -215,9 +280,10 @@ function WorkspaceWithHostedAuth() {
   const editorValue = activeFile
     ? draftsByFileId[activeFile.id] ?? activeFile.content
     : ''
-  const isDirty = activeFile
+  const localIsDirty = activeFile
     ? (draftsByFileId[activeFile.id] ?? activeFile.content) !== activeFile.content
     : false
+  const isDirty = activeFile ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id]) : false
 
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
   const requestedProjectMissing =
@@ -225,10 +291,20 @@ function WorkspaceWithHostedAuth() {
     Boolean(projectsQuery.data) &&
     !(projectsQuery.data ?? []).some((project) => project.id === search.projectId)
 
-  const { collabState, onEditorMount } = useCollabDoc({
+  const { collabState, onEditorMount, markSaved } = useCollabDoc({
     projectId: activeProjectId,
     fileId: activeFileId,
+    onFileCreated: onCollabFileCreated,
+    onDirtyStateChanged: onCollabDirtyStateChanged,
   })
+
+  const dirtyFileIds = files
+    .filter((file) => {
+      const draftValue = draftsByFileId[file.id]
+      const locallyDirty = draftValue !== undefined ? draftValue !== file.content : false
+      return locallyDirty || Boolean(collabDirtyByFileId[file.id])
+    })
+    .map((file) => file.id)
 
   const createInviteMutation = useMutation({
     mutationFn: async (projectId: string) => {
@@ -289,6 +365,7 @@ function WorkspaceWithHostedAuth() {
     setActiveFileId(null)
     setOpenFileIds([])
     setDraftsByFileId({})
+    setCollabDirtyByFileId({})
     setSaveError(null)
     setCreateError(null)
   }, [activeProjectId])
@@ -379,7 +456,7 @@ function WorkspaceWithHostedAuth() {
 
       event.preventDefault()
 
-      if (!activeFile || !isDirty || saveFileMutation.isPending) {
+      if (!activeFile || !localIsDirty || saveFileMutation.isPending) {
         return
       }
 
@@ -393,7 +470,7 @@ function WorkspaceWithHostedAuth() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [activeFile, editorValue, isAuthenticated, isDirty, saveFileMutation])
+  }, [activeFile, editorValue, isAuthenticated, localIsDirty, saveFileMutation])
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -568,7 +645,8 @@ function WorkspaceWithHostedAuth() {
           <FileTabs
             tabs={openTabs.map((file) => {
               const draftValue = draftsByFileId[file.id]
-              const dirty = draftValue !== undefined ? draftValue !== file.content : false
+              const localDirty = draftValue !== undefined ? draftValue !== file.content : false
+              const dirty = localDirty || Boolean(collabDirtyByFileId[file.id])
 
               return {
                 id: file.id,
@@ -620,6 +698,7 @@ function WorkspaceWithHostedAuth() {
                 <FilesSidebar
                   files={files}
                   activeFileId={activeFileId}
+                  dirtyFileIds={dirtyFileIds}
                   isLoading={filesQuery.isLoading || projectsQuery.isLoading}
                   errorMessage={
                     projectsQuery.isError
@@ -641,6 +720,7 @@ function WorkspaceWithHostedAuth() {
                 file={activeFile}
                 initialValue={editorValue}
                 isDirty={isDirty}
+                canSave={localIsDirty}
                 isSaving={saveFileMutation.isPending}
                 saveError={saveError}
                 collabState={collabState}
@@ -658,7 +738,7 @@ function WorkspaceWithHostedAuth() {
                   })
                 }}
                 onSave={() => {
-                  if (!activeFile || !isDirty) {
+                  if (!activeFile || !localIsDirty) {
                     return
                   }
 

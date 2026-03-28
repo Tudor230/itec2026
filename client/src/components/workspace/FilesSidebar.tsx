@@ -6,6 +6,7 @@ import { buildFileTree, filterFileTree, type FileTreeNode } from './files-tree'
 interface FilesSidebarProps {
   files: FileDto[]
   activeFileId: string | null
+  dirtyFileIds?: string[]
   isLoading: boolean
   errorMessage: string | null
   onOpenFile: (fileId: string) => void
@@ -37,16 +38,19 @@ function NodeRow({
   node,
   depth,
   activeFileId,
+  dirtyFileIds,
   onOpenFile,
 }: {
   node: FileTreeNode
   depth: number
   activeFileId: string | null
+  dirtyFileIds: Set<string>
   onOpenFile: (fileId: string) => void
 }) {
   const [isOpen, setIsOpen] = useState(true)
   const isFile = node.type === 'file'
   const isActive = isFile && node.fileId === activeFileId
+  const isDirty = isFile && !!node.fileId && dirtyFileIds.has(node.fileId)
 
   return (
     <div>
@@ -69,6 +73,7 @@ function NodeRow({
       >
         {isFile ? <FileText size={14} /> : isOpen ? <FolderOpen size={14} /> : <Folder size={14} />}
         <span className="truncate">{node.name}</span>
+        {isDirty ? <span className="ml-auto text-[10px] font-semibold text-[var(--lagoon-deep)]">*</span> : null}
       </button>
 
       {!isFile && isOpen
@@ -78,6 +83,7 @@ function NodeRow({
               node={child}
               depth={depth + 1}
               activeFileId={activeFileId}
+              dirtyFileIds={dirtyFileIds}
               onOpenFile={onOpenFile}
             />
           ))
@@ -89,12 +95,14 @@ function NodeRow({
 export default function FilesSidebar({
   files,
   activeFileId,
+  dirtyFileIds,
   isLoading,
   errorMessage,
   onOpenFile,
   onCreateFile,
 }: FilesSidebarProps) {
   const [query, setQuery] = useState('')
+  const dirtyIds = useMemo(() => new Set(dirtyFileIds ?? []), [dirtyFileIds])
 
   const filteredTree = useMemo(() => {
     const fullTree = buildFileTree(files)
@@ -162,6 +170,7 @@ export default function FilesSidebar({
                 node={child}
                 depth={0}
                 activeFileId={activeFileId}
+                dirtyFileIds={dirtyIds}
                 onOpenFile={onOpenFile}
               />
             ))

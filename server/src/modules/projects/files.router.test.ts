@@ -7,6 +7,7 @@ import type { PrismaClient } from '@prisma/client'
 import express from 'express'
 import { errorHandler } from '../../http/error-handler.js'
 import { authBoundaryMiddleware } from '../auth/auth-boundary.middleware.js'
+import { registerCollabFileCreatedListener } from '../collab/collab-events.js'
 import { createFilesRouter } from './files.router.js'
 
 const TEST_JWT_SECRET = 'test-jwt-secret'
@@ -273,8 +274,15 @@ describe('files router', () => {
   let baseUrl = ''
   let closeServer: (() => Promise<void>) | undefined
   let seedProject: ((projectId: string, ownerSubject: string) => void) | undefined
+  const createdEvents: Array<{ projectId: string; path: string }> = []
+  let unregisterFileCreatedListener: (() => void) | null = null
 
   beforeEach(async () => {
+    createdEvents.length = 0
+    unregisterFileCreatedListener = registerCollabFileCreatedListener((file) => {
+      createdEvents.push({ projectId: file.projectId, path: file.path })
+    })
+
     const testDb = createPrismaDouble()
     const started = await startServer(testDb.prisma)
     baseUrl = started.baseUrl
@@ -283,6 +291,11 @@ describe('files router', () => {
   })
 
   afterEach(async () => {
+    if (unregisterFileCreatedListener) {
+      unregisterFileCreatedListener()
+      unregisterFileCreatedListener = null
+    }
+
     if (closeServer) {
       await closeServer()
       closeServer = undefined
@@ -366,6 +379,11 @@ describe('files router', () => {
     assert.equal(deletedPayload.data.deleted, true)
     assert.equal(afterDelete.status, 404)
     assert.equal(afterDeletePayload.error.code, 'FILE_NOT_FOUND')
+    assert.equal(createdEvents.length, 1)
+    assert.deepEqual(createdEvents[0], {
+      projectId,
+      path: 'src/main.ts',
+    })
   })
 
   it('isolates file access by subject owner', async () => {

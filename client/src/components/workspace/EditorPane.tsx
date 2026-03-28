@@ -7,6 +7,7 @@ interface EditorPaneProps {
   file: FileDto | null
   initialValue: string
   isDirty: boolean
+  canSave?: boolean
   isSaving: boolean
   saveError: string | null
   collabState?: {
@@ -22,6 +23,7 @@ export default function EditorPane({
   file,
   initialValue,
   isDirty,
+  canSave,
   isSaving,
   saveError,
   collabState,
@@ -111,7 +113,7 @@ export default function EditorPane({
         <button
           type="button"
           onClick={onSave}
-          disabled={!file || !isDirty || isSaving}
+          disabled={!file || !(canSave ?? isDirty) || isSaving}
           className="rounded-full border border-[rgba(50,143,151,0.3)] bg-[rgba(79,184,178,0.14)] px-4 py-1.5 text-xs font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isSaving ? 'Saving...' : 'Save'}

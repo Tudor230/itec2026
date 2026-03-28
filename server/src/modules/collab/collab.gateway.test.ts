@@ -51,6 +51,21 @@ type DocPresencePayload = {
   actorType?: 'anonymous' | 'token_present' | 'authenticated'
 }
 
+type DocDirtyStatePayload = {
+  projectId: string
+  fileId: string
+  isDirty: boolean
+  updatedAt: string
+}
+
+type FileCreatedPayload = {
+  id: string
+  projectId: string
+  path: string
+  createdAt: string
+  updatedAt: string
+}
+
 function makeTimeoutError(message: string) {
   return new Error(message)
 }
@@ -658,5 +673,315 @@ describe('collab gateway', () => {
 
     const joinedB = await joinBSeenByA
     assert.equal(joinedB.actorType, 'token_present')
+
+    const leftBSeenByA = waitForEvent<PresencePayload>(
+      clientA,
+      'collab:presence',
+      (payload) => payload.type === 'left' && payload.projectId === projectId && payload.socketId === clientB.id,
+    )
+
+    clientB.emit('collab:leave-project', projectId)
+    await leftBSeenByA
+
+    const joinBAgainSeenByA = waitForEvent<PresencePayload>(
+      clientA,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId && payload.socketId === clientB.id,
+    )
+
+    clientB.emit('collab:join-project', projectId)
+    await joinBAgainSeenByA
+  })
+
+  it('broadcasts dirty state transitions to project room peers', async () => {
+    const projectId = 'project-123'
+    const fileId = 'file-1'
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-a', 'jwt-dirty-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-b', 'jwt-dirty-b') },
+    })
+
+    clients.push(clientA, clientB)
+
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:join-project', projectId)
+    clientB.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(
+        clientA,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+      waitForEvent<PresencePayload>(
+        clientB,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+    ])
+
+    clientA.emit('collab:doc:join', { projectId, fileId })
+    clientB.emit('collab:doc:join', { projectId, fileId })
+
+    await Promise.all([
+      waitForEvent<DocSyncPayload>(
+        clientA,
+        'collab:doc:sync',
+        (payload) => payload.projectId === projectId && payload.fileId === fileId,
+      ),
+      waitForEvent<DocSyncPayload>(
+        clientB,
+        'collab:doc:sync',
+        (payload) => payload.projectId === projectId && payload.fileId === fileId,
+      ),
+    ])
+
+    const dirtyOnUpdate = waitForEvent<DocDirtyStatePayload>(
+      clientB,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && payload.isDirty,
+    )
+
+    clientA.emit('collab:doc:update', {
+      projectId,
+      fileId,
+      update: encodeYUpdate('dirty content'),
+    })
+
+    const dirtyPayload = await dirtyOnUpdate
+    assert.equal(dirtyPayload.isDirty, true)
+
+    const dirtyOnSave = waitForEvent<DocDirtyStatePayload>(
+      clientB,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && !payload.isDirty,
+    )
+
+    clientA.emit('collab:doc:saved', { projectId, fileId })
+
+    const savedPayload = await dirtyOnSave
+    assert.equal(savedPayload.isDirty, false)
+  })
+
+  it('clears global dirty state for all participants when one client saves', async () => {
+    const projectId = 'project-123'
+    const fileId = 'file-1'
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-a', 'jwt-global-save-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-b', 'jwt-global-save-b') },
+    })
+
+    clients.push(clientA, clientB)
+
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:join-project', projectId)
+    clientB.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(
+        clientA,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+      waitForEvent<PresencePayload>(
+        clientB,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+    ])
+
+    clientA.emit('collab:doc:join', { projectId, fileId })
+    clientB.emit('collab:doc:join', { projectId, fileId })
+
+    await Promise.all([
+      waitForEvent<DocSyncPayload>(
+        clientA,
+        'collab:doc:sync',
+        (payload) => payload.projectId === projectId && payload.fileId === fileId,
+      ),
+      waitForEvent<DocSyncPayload>(
+        clientB,
+        'collab:doc:sync',
+        (payload) => payload.projectId === projectId && payload.fileId === fileId,
+      ),
+    ])
+
+    const dirtyOnUpdateA = waitForEvent<DocDirtyStatePayload>(
+      clientA,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && payload.isDirty,
+    )
+    const dirtyOnUpdateB = waitForEvent<DocDirtyStatePayload>(
+      clientB,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && payload.isDirty,
+    )
+
+    clientA.emit('collab:doc:update', {
+      projectId,
+      fileId,
+      update: encodeYUpdate('shared dirty content'),
+    })
+
+    await Promise.all([dirtyOnUpdateA, dirtyOnUpdateB])
+
+    const dirtyOnSaveA = waitForEvent<DocDirtyStatePayload>(
+      clientA,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && !payload.isDirty,
+    )
+    const dirtyOnSaveB = waitForEvent<DocDirtyStatePayload>(
+      clientB,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && !payload.isDirty,
+    )
+
+    clientA.emit('collab:doc:saved', { projectId, fileId })
+
+    await Promise.all([dirtyOnSaveA, dirtyOnSaveB])
+  })
+
+  it('broadcasts file created events to project room peers', async () => {
+    const projectId = 'project-123'
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-a', 'jwt-file-created-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-b', 'jwt-file-created-b') },
+    })
+
+    clients.push(clientA, clientB)
+
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:join-project', projectId)
+    clientB.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(
+        clientA,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+      waitForEvent<PresencePayload>(
+        clientB,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+    ])
+
+    const eventSeenByB = waitForEvent<FileCreatedPayload>(
+      clientB,
+      'collab:file:created',
+      (payload) => payload.projectId === projectId && payload.path === 'src/live.ts',
+    )
+
+    const fakeFile: FileCreatedPayload = {
+      id: 'file-live-1',
+      projectId,
+      path: 'src/live.ts',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    const { emitCollabFileCreated } = await import('./collab-events.js')
+    emitCollabFileCreated(fakeFile)
+
+    const seenPayload = await eventSeenByB
+    assert.equal(seenPayload.path, 'src/live.ts')
+  })
+
+  it('sends current dirty snapshot on project join', async () => {
+    const projectId = 'project-123'
+    const fileId = 'file-1'
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-a', 'jwt-dirty-snapshot-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-b', 'jwt-dirty-snapshot-b') },
+    })
+
+    clients.push(clientA, clientB)
+
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      clientA,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    clientA.emit('collab:doc:join', { projectId, fileId })
+    await waitForEvent<DocSyncPayload>(
+      clientA,
+      'collab:doc:sync',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId,
+    )
+
+    clientA.emit('collab:doc:update', {
+      projectId,
+      fileId,
+      update: encodeYUpdate('dirty snapshot content'),
+    })
+
+    const snapshotSeenByB = waitForEvent<DocDirtyStatePayload>(
+      clientB,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && payload.isDirty,
+    )
+
+    clientB.emit('collab:join-project', projectId)
+    await snapshotSeenByB
   })
 })
