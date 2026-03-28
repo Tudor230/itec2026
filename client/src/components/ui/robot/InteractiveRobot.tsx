@@ -11,15 +11,20 @@ interface InteractiveRobotProps {
   className?: string
   section: RobotSection
   zoom?: number
-  progress?: number
+  shouldAnimate?: boolean
 }
 
-export function InteractiveRobot({ className, section, zoom = 1, progress }: InteractiveRobotProps) {
-  const { isTransitioning, style } = useRobotHeadMotion(section, zoom)
+export function InteractiveRobot({ className, section, zoom = 1, shouldAnimate = true }: InteractiveRobotProps) {
+  const { isTransitioning, isFocusLocked, eyeTarget, style } = useRobotHeadMotion(section, zoom, shouldAnimate)
   const [eyeAim, setEyeAim] = useState({ x: '0px', y: '0px' })
   const [phase, setPhase] = useState(0)
 
   useEffect(() => {
+    if (!shouldAnimate) {
+      setEyeAim({ x: '0px', y: '0px' })
+      return
+    }
+
     const onPointerMove = (event: PointerEvent) => {
       const xRatio = event.clientX / Math.max(window.innerWidth, 1) - 0.5
       const yRatio = event.clientY / Math.max(window.innerHeight, 1) - 0.5
@@ -33,10 +38,10 @@ export function InteractiveRobot({ className, section, zoom = 1, progress }: Int
     return () => {
       window.removeEventListener('pointermove', onPointerMove)
     }
-  }, [])
+  }, [shouldAnimate])
 
   useEffect(() => {
-    if (typeof progress === 'number') {
+    if (!shouldAnimate) {
       return
     }
 
@@ -60,9 +65,9 @@ export function InteractiveRobot({ className, section, zoom = 1, progress }: Int
     return () => {
       window.cancelAnimationFrame(rafId)
     }
-  }, [])
+  }, [shouldAnimate])
 
-  const effectivePhase = typeof progress === 'number' ? progress : phase
+  const effectivePhase = shouldAnimate ? phase : 0
   const headWave = Math.sin(effectivePhase * Math.PI * 2)
   const bob = Number.parseFloat(style['--robot-head-bob'].replace('px', ''))
   const bobOffset = -headWave * bob
@@ -77,7 +82,9 @@ export function InteractiveRobot({ className, section, zoom = 1, progress }: Int
   } as CSSProperties
 
   const eyeStyle = {
-    transform: `translate3d(calc(${eyeAim.x} * 0.65), calc(${eyeAim.y} * 0.65), 0)`,
+    transform: isFocusLocked
+      ? `translate3d(${eyeTarget.x.toFixed(2)}px, ${eyeTarget.y.toFixed(2)}px, 0)`
+      : `translate3d(calc(${eyeAim.x} * 0.65), calc(${eyeAim.y} * 0.65), 0)`,
   } as CSSProperties
 
   const neckStackStyle = {

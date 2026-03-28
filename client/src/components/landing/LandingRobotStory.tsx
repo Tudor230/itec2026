@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAuthRuntime } from '../../auth/AuthProvider'
 import { InteractiveRobot } from '../ui/robot/InteractiveRobot'
-import { clamp01, deriveLandingTimeline } from './landingTimeline'
+import { deriveLandingTimeline } from './landingTimeline'
 
 type SectionKey = 'hero' | 'split' | 'auth'
 type LandingActionVariant = 'guest' | 'loading' | 'authenticated'
@@ -20,6 +20,8 @@ const INTRO_SCROLL_SCALE = 0.00032
 const MAX_DELTA = 180
 const KEYBOARD_DELTA = 96
 const TOP_RELOCK_THRESHOLD = 2
+const INTRO_VISUAL_PROGRESS_MAX = 1
+const INTRO_UNLOCK_PROGRESS = 1.18
 
 function clampDelta(value: number) {
   return Math.max(-MAX_DELTA, Math.min(MAX_DELTA, value))
@@ -39,6 +41,18 @@ function normalizeWheelDelta(event: WheelEvent) {
 
 export function shouldRelockIntro(isLocked: boolean, isAtTop: boolean, delta: number) {
   return !isLocked && isAtTop && delta < 0
+}
+
+export function clampIntroProgress(value: number) {
+  return Math.max(0, Math.min(INTRO_UNLOCK_PROGRESS, value))
+}
+
+export function resolveVisualProgress(progress: number) {
+  return Math.min(progress, INTRO_VISUAL_PROGRESS_MAX)
+}
+
+export function shouldUnlockIntro(progress: number) {
+  return progress >= INTRO_UNLOCK_PROGRESS
 }
 
 export function resolveLandingActionVariant(state: LandingActionState): LandingActionVariant {
@@ -158,19 +172,20 @@ export default function LandingRobotStory() {
   const [isIntroLocked, setIsIntroLocked] = useState(true)
 
   const applyProgress = (nextProgress: number) => {
-    const clamped = clamp01(nextProgress)
+    const clamped = clampIntroProgress(nextProgress)
+    const visualProgress = resolveVisualProgress(clamped)
     progressRef.current = clamped
     setProgress(clamped)
-    setActiveSection(resolveSection(clamped))
+    setActiveSection(resolveSection(visualProgress))
 
-    if (clamped >= 1 && isLockedRef.current) {
+    if (shouldUnlockIntro(clamped) && isLockedRef.current) {
       isLockedRef.current = false
       setIsIntroLocked(false)
     }
   }
 
   const unlockIntro = () => {
-    applyProgress(1)
+    applyProgress(INTRO_UNLOCK_PROGRESS)
     isLockedRef.current = false
     setIsIntroLocked(false)
   }
@@ -362,7 +377,7 @@ export default function LandingRobotStory() {
     }
   }, [isReducedMotion])
 
-  const timeline = useMemo(() => deriveLandingTimeline(progress), [progress])
+  const timeline = useMemo(() => deriveLandingTimeline(resolveVisualProgress(progress)), [progress])
   const isHeroInteractive = timeline.heroOpacity > 0.24
   const isPhilosophyInteractive = timeline.philosophyOpacity > 0.24
   const isScopeInteractive = timeline.scopeOpacity > 0.24
@@ -388,12 +403,12 @@ export default function LandingRobotStory() {
           className="pointer-events-none absolute inset-0 z-0 mx-auto h-full [width:min(1000px,88vw)]"
           aria-hidden="true"
           style={{
-            transform: `translate3d(${timeline.robotX}%, ${timeline.robotY}px, 0)`,
+            transform: `translate3d(${timeline.robotX}%, 0, 0)`,
             opacity: timeline.robotOpacity,
             transition: isReducedMotion ? 'none' : 'transform 70ms linear, opacity 120ms linear',
           }}
         >
-          <InteractiveRobot className="h-full w-full" section={activeSection} zoom={timeline.robotZoom} progress={progress} />
+          <InteractiveRobot className="h-full w-full" section={activeSection} zoom={timeline.robotZoom} shouldAnimate={!isReducedMotion} />
         </div>
 
         <section
