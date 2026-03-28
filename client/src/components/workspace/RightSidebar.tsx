@@ -20,6 +20,7 @@ import {
   type AiEditResponse,
   type StructuredDiffLine,
 } from '../../services/ai-api'
+import { workspaceHudChipClass } from './ui-classes'
 
 export type SidebarTab = 'ai' | 'history'
 
@@ -241,6 +242,7 @@ export default function RightSidebar({
               setMessages((previous) => previous.slice(0, 1))
               console.log('[ai][sidebar] interaction:new-thread')
             }}
+            aria-label="Start new assistant thread"
             className="rounded-lg p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
             title="New thread"
           >
@@ -249,6 +251,7 @@ export default function RightSidebar({
           <button
             type="button"
             onClick={onToggle}
+            aria-label="Close assistant panel"
             className="rounded-lg p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
             title="Close assistant panel"
           >
@@ -274,10 +277,10 @@ export default function RightSidebar({
                   </div>
                 </div>
 
-                <span className="workspace-hud-chip">
-                  <Clock3 size={11} /> online
-                </span>
-              </div>
+                    <span className={workspaceHudChipClass}>
+                      <Clock3 size={11} /> online
+                    </span>
+                  </div>
 
               <p className="m-0 text-xs text-[var(--sea-ink-soft)]">
                 {activeFileContext

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { 
+import {
   History, 
   Play, 
   Settings, 
@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { workspaceHudChipClass } from './ui-classes'
 
 export type DrawerTab = 'timeline' | 'run' | 'env' | 'collab'
 
@@ -185,13 +186,14 @@ export default function BottomDrawers({ activeTab: controlledActiveTab, onActive
               </div>
 
               <div className="flex items-center gap-1">
-                <span className="workspace-hud-chip hidden md:inline-flex">
+                <span className={`${workspaceHudChipClass} hidden md:inline-flex`}>
                   <Clock3 size={11} /> live
                 </span>
 
                 <button
                   type="button"
                   onClick={() => setIsExpanded(!isExpanded)}
+                  aria-label={isExpanded ? 'Shrink panel' : 'Expand panel'}
                   className="rounded-md p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
                   title={isExpanded ? 'Shrink panel' : 'Expand panel'}
                 >
@@ -202,6 +204,7 @@ export default function BottomDrawers({ activeTab: controlledActiveTab, onActive
                   onClick={() => {
                     closeDrawer()
                   }}
+                  aria-label="Close panel"
                   className="rounded-md p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
                   title="Close panel"
                 >

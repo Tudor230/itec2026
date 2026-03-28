@@ -1,8 +1,11 @@
 import { FileText, Folder, FolderOpen, FolderPlus, Plus, Search, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { FileDto } from '../../services/projects-api'
 import { buildFileTree, filterFileTree, type FileTreeNode } from './files-tree'
 import { cn } from '../../lib/utils'
+import { getFileIconComponent } from './file-icon-components'
+import { getFileIconMeta } from './file-icon-map'
 
 interface FilesSidebarProps {
   files: FileDto[]
@@ -13,6 +16,10 @@ interface FilesSidebarProps {
   errorMessage: string | null
   onOpenFile: (fileId: string) => void
   onCreateFile: (path: string, type: 'file' | 'folder') => Promise<void> | void
+  onRenameFile?: (fileId: string, nextPath: string) => Promise<void> | void
+  onDeleteFile?: (fileId: string) => Promise<void> | void
+  onRenameFolder?: (fromPath: string, toPath: string) => Promise<void> | void
+  onDeleteFolder?: (path: string) => Promise<void> | void
   onClose?: () => void
 }
 
@@ -60,16 +67,16 @@ function getInitialCreatePath(
     if (activeFile) {
       const segments = activeFile.path.split('/')
       const parentPath = segments.slice(0, -1).join('/')
-      return toJoinedPath(parentPath, createType === 'file' ? '' : 'new-folder')
+      return toJoinedPath(parentPath, '')
     }
   }
 
   const firstFolder = tree?.children.find((child) => child.type === 'folder')
   if (firstFolder) {
-    return toJoinedPath(firstFolder.path, createType === 'file' ? '' : 'new-folder')
+    return toJoinedPath(firstFolder.path, '')
   }
 
-  return createType === 'file' ? '' : 'new-folder'
+  return ''
 }
 
 function getParentPath(path: string) {
@@ -96,6 +103,25 @@ function getLeafName(path: string) {
   return parts[parts.length - 1] ?? ''
 }
 
+function FileNodeIcon({ fileName, className }: { fileName: string; className: string }) {
+  const iconMeta = getFileIconMeta(fileName)
+  const Icon = getFileIconComponent(iconMeta.iconKey)
+
+  if (!Icon || !iconMeta.iconKey) {
+    return (
+      <span data-file-icon-key="default" className="inline-flex items-center">
+        <FileText size={14} className={className} />
+      </span>
+    )
+  }
+
+  return (
+    <span data-file-icon-key={iconMeta.iconKey} className="inline-flex items-center">
+      <Icon size={14} className={className} style={iconMeta.color ? { color: iconMeta.color } : undefined} />
+    </span>
+  )
+}
+
 function NodeRow({
   node,
   depth,
@@ -107,9 +133,17 @@ function NodeRow({
   onOpenFile,
   onSelectFolder,
   onStartCreate,
+  onStartRename,
+  onDeleteNode,
   onPendingPathChange,
   onConfirmCreate,
   onCancelCreate,
+  renameTargetPath,
+  renameValue,
+  isRenamePending,
+  onRenameValueChange,
+  onConfirmRename,
+  onCancelRename,
 }: {
   node: FileTreeNode
   depth: number
@@ -121,11 +155,24 @@ function NodeRow({
   onOpenFile: (fileId: string) => void
   onSelectFolder: (folderPath: string | null) => void
   onStartCreate: (type: 'file' | 'folder', basePath: string) => void
+  onStartRename: (node: FileTreeNode) => void
+  onDeleteNode: (node: FileTreeNode) => void
   onPendingPathChange: (nextPath: string) => void
   onConfirmCreate: () => void
   onCancelCreate: () => void
+  renameTargetPath: string | null
+  renameValue: string
+  isRenamePending: boolean
+  onRenameValueChange: (nextValue: string) => void
+  onConfirmRename: () => void
+  onCancelRename: () => void
 }) {
   const [isOpen, setIsOpen] = useState(true)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const holdTimerRef = useRef<number | null>(null)
+  const holdTriggeredRef = useRef(false)
   const isFile = node.type === 'file'
   const isActive = isFile && node.fileId === activeFileId
   const isSelectedFolder = !isFile && selectedFolderPath === node.path
@@ -143,6 +190,60 @@ function NodeRow({
     : 'text-[color-mix(in_oklab,var(--palm)_62%,var(--sea-ink)_38%)]'
 
   const renderInlineCreate = !isFile && isOpen && pendingParentPath === node.path
+  const isRenaming = renameTargetPath === node.path
+
+  const clearHoldTimer = () => {
+    if (holdTimerRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(holdTimerRef.current)
+    holdTimerRef.current = null
+  }
+
+  const closeMenu = () => {
+    setMenuOpen(false)
+    setMenuPosition(null)
+  }
+
+  const openMenu = (left: number, top: number) => {
+    setMenuPosition({ left, top })
+    setMenuOpen(true)
+  }
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) {
+        closeMenu()
+        return
+      }
+
+      if (menuRef.current?.contains(target)) {
+        return
+      }
+
+      closeMenu()
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu()
+      }
+    }
+
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpen])
 
   return (
     <div className="relative">
@@ -158,6 +259,15 @@ function NodeRow({
         role="button"
         tabIndex={0}
         onClick={() => {
+          if (isRenaming) {
+            return
+          }
+
+          if (holdTriggeredRef.current) {
+            holdTriggeredRef.current = false
+            return
+          }
+
           if (isFile && node.fileId) {
             onSelectFolder(null)
             onOpenFile(node.fileId)
@@ -167,8 +277,44 @@ function NodeRow({
           onSelectFolder(node.path)
           setIsOpen((current) => !current)
         }}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          clearHoldTimer()
+          openMenu(event.clientX, event.clientY)
+        }}
+        onPointerDown={(event) => {
+          if (event.button !== 0) {
+            return
+          }
+
+          const rect = event.currentTarget.getBoundingClientRect()
+          clearHoldTimer()
+          holdTimerRef.current = window.setTimeout(() => {
+            holdTriggeredRef.current = true
+            openMenu(rect.left + 6, rect.bottom + 6)
+          }, 500)
+        }}
+        onPointerUp={() => {
+          clearHoldTimer()
+        }}
+        onPointerLeave={() => {
+          clearHoldTimer()
+        }}
+        onPointerCancel={() => {
+          clearHoldTimer()
+        }}
         onKeyDown={(event) => {
+          if (isRenaming) {
+            return
+          }
+
           if (event.key !== 'Enter' && event.key !== ' ') {
+            if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+              event.preventDefault()
+              const rect = event.currentTarget.getBoundingClientRect()
+              openMenu(rect.left + 6, rect.bottom + 6)
+            }
+
             return
           }
 
@@ -200,13 +346,37 @@ function NodeRow({
           />
         ) : null}
         {isFile ? (
-          <FileText size={14} className={iconColor} />
+          <FileNodeIcon fileName={node.name} className={iconColor} />
         ) : isOpen ? (
           <FolderOpen size={14} className={iconColor} />
         ) : (
           <Folder size={14} className={iconColor} />
         )}
-        <span className="truncate text-[12px] font-medium">{node.name}</span>
+        {isRenaming ? (
+          <input
+            autoFocus
+            value={renameValue}
+            disabled={isRenamePending}
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+            onChange={(event) => onRenameValueChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void onConfirmRename()
+              }
+
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                onCancelRename()
+              }
+            }}
+            className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-[var(--sea-ink)] outline-none"
+          />
+        ) : (
+          <span className="truncate text-[12px] font-medium">{node.name}</span>
+        )}
         {isDirty ? (
           <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[color-mix(in_oklab,var(--lagoon)_48%,transparent)] bg-[rgba(var(--lagoon-rgb),0.16)] px-1 text-[9px] font-bold leading-none text-[var(--lagoon-deep)]">
             *
@@ -265,9 +435,17 @@ function NodeRow({
               onOpenFile={onOpenFile}
               onSelectFolder={onSelectFolder}
               onStartCreate={onStartCreate}
+              onStartRename={onStartRename}
+              onDeleteNode={onDeleteNode}
               onPendingPathChange={onPendingPathChange}
               onConfirmCreate={onConfirmCreate}
               onCancelCreate={onCancelCreate}
+              renameTargetPath={renameTargetPath}
+              renameValue={renameValue}
+              isRenamePending={isRenamePending}
+              onRenameValueChange={onRenameValueChange}
+              onConfirmRename={onConfirmRename}
+              onCancelRename={onCancelRename}
             />
           ))
         : null}
@@ -303,6 +481,71 @@ function NodeRow({
           </label>
         </div>
       ) : null}
+
+      {menuOpen && menuPosition
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              aria-label={`${isFile ? 'File' : 'Folder'} actions`}
+              style={{ left: `${menuPosition.left}px`, top: `${menuPosition.top}px` }}
+              className="fixed z-[120] min-w-[180px] rounded-xl border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.92)] p-1 backdrop-blur-xl shadow-2xl"
+            >
+              {!isFile ? (
+                <>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(true)
+                      onStartCreate('file', node.path)
+                      closeMenu()
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+                  >
+                    Add file
+                  </button>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(true)
+                      onStartCreate('folder', node.path)
+                      closeMenu()
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+                  >
+                    Add subfolder
+                  </button>
+                </>
+              ) : null}
+
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  onStartRename(node)
+                  closeMenu()
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+              >
+                Rename
+              </button>
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  onDeleteNode(node)
+                  closeMenu()
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+              >
+                {isFile ? 'Delete' : 'Delete folder'}
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -316,6 +559,10 @@ export default function FilesSidebar({
   errorMessage,
   onOpenFile,
   onCreateFile,
+  onRenameFile,
+  onDeleteFile,
+  onRenameFolder,
+  onDeleteFolder,
   onClose,
 }: FilesSidebarProps) {
   const [query, setQuery] = useState('')
@@ -325,6 +572,9 @@ export default function FilesSidebar({
   const [pendingCreateType, setPendingCreateType] = useState<'file' | 'folder' | null>(null)
   const [inlineError, setInlineError] = useState<string | null>(null)
   const [isCreatePending, setIsCreatePending] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<FileTreeNode | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [isRenamePending, setIsRenamePending] = useState(false)
 
   const tree = useMemo(() => buildFileTree(files, virtualFolders), [files, virtualFolders])
 
@@ -333,8 +583,7 @@ export default function FilesSidebar({
   }, [tree, query])
 
   const handleStartCreate = (type: 'file' | 'folder', basePath: string) => {
-    const defaultName = type === 'file' ? '' : 'new-folder'
-    const nextPath = toJoinedPath(basePath, defaultName)
+    const nextPath = toJoinedPath(basePath, '')
     setSelectedFolderPath(basePath)
     setPendingCreateType(type)
     setPendingCreatePath(nextPath)
@@ -357,6 +606,14 @@ export default function FilesSidebar({
     }
 
     const nextPath = pendingCreatePath.trim()
+    const nextLeafName = nextPath.split('/').pop()?.trim() ?? ''
+
+    if (nextLeafName.length === 0) {
+      setPendingCreatePath(null)
+      setPendingCreateType(null)
+      setInlineError(null)
+      return
+    }
 
     if (!isValidFilePath(nextPath)) {
       setInlineError('Please provide a valid relative path.')
@@ -375,6 +632,90 @@ export default function FilesSidebar({
     }
   }
 
+  const handleStartRename = (node: FileTreeNode) => {
+    setRenameTarget(node)
+    setRenameValue(getLeafName(node.path))
+    setInlineError(null)
+  }
+
+  const handleCancelRename = () => {
+    setRenameTarget(null)
+    setRenameValue('')
+    setInlineError(null)
+    setIsRenamePending(false)
+  }
+
+  const handleConfirmRename = async () => {
+    if (!renameTarget || isRenamePending) {
+      return
+    }
+
+    const nextLeafName = renameValue.trim()
+    if (!nextLeafName) {
+      setInlineError('Name cannot be empty.')
+      return
+    }
+
+    const parentPath = getParentPath(renameTarget.path)
+    const nextPath = parentPath ? `${parentPath}/${nextLeafName}` : nextLeafName
+
+    if (nextPath === renameTarget.path) {
+      handleCancelRename()
+      return
+    }
+
+    if (!isValidFilePath(nextPath)) {
+      setInlineError('Please provide a valid relative path.')
+      return
+    }
+
+    if (renameTarget.type === 'file' && renameTarget.fileId && onRenameFile) {
+      setIsRenamePending(true)
+      try {
+        await onRenameFile(renameTarget.fileId, nextPath)
+        handleCancelRename()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not rename file.'
+        setInlineError(message)
+      } finally {
+        setIsRenamePending(false)
+      }
+      return
+    }
+
+    if (renameTarget.type === 'folder' && onRenameFolder) {
+      setIsRenamePending(true)
+      try {
+        await onRenameFolder(renameTarget.path, nextPath)
+        handleCancelRename()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not rename folder.'
+        setInlineError(message)
+      } finally {
+        setIsRenamePending(false)
+      }
+      return
+    }
+  }
+
+  const handleDeleteNode = async (node: FileTreeNode) => {
+    try {
+      if (node.type === 'file' && node.fileId && onDeleteFile) {
+        await onDeleteFile(node.fileId)
+        return
+      }
+
+      if (node.type === 'folder' && onDeleteFolder) {
+        await onDeleteFolder(node.path)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not delete item.'
+      setInlineError(message)
+    }
+  }
+
+  const isBusy = isCreatePending || isRenamePending
+
   return (
     <aside className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))]">
       <div
@@ -390,6 +731,7 @@ export default function FilesSidebar({
             <button
               type="button"
               onClick={() => handleTopLevelCreate('file')}
+              aria-label="New file"
               className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
               title="New file"
             >
@@ -399,6 +741,7 @@ export default function FilesSidebar({
             <button
               type="button"
               onClick={() => handleTopLevelCreate('folder')}
+              aria-label="New folder"
               className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
               title="New folder"
             >
@@ -409,6 +752,7 @@ export default function FilesSidebar({
               <button
                 type="button"
                 onClick={onClose}
+                aria-label="Close files panel"
                 className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
                 title="Close files panel"
               >
@@ -488,6 +832,14 @@ export default function FilesSidebar({
                 onOpenFile={onOpenFile}
                 onSelectFolder={setSelectedFolderPath}
                 onStartCreate={handleStartCreate}
+                onStartRename={handleStartRename}
+                onDeleteNode={(node) => {
+                  if (isBusy) {
+                    return
+                  }
+
+                  void handleDeleteNode(node)
+                }}
                 onPendingPathChange={setPendingCreatePath}
                 onConfirmCreate={handleConfirmCreate}
                 onCancelCreate={() => {
@@ -496,6 +848,12 @@ export default function FilesSidebar({
                   setInlineError(null)
                   setIsCreatePending(false)
                 }}
+                renameTargetPath={renameTarget?.path ?? null}
+                renameValue={renameValue}
+                isRenamePending={isRenamePending}
+                onRenameValueChange={setRenameValue}
+                onConfirmRename={handleConfirmRename}
+                onCancelRename={handleCancelRename}
               />
             ))
           : null}
