@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import Dockerode from 'dockerode'
 import type { ProjectWorkspaceStore } from '../../projects/project-workspace-store.js'
 import type { RuntimeTerminalSize } from './terminal-runtime.js'
+import { DockerTtyOutputParser } from './docker-tty-stream.js'
 
 interface SandboxRef {
   containerName: string
@@ -762,6 +763,7 @@ export class DockerSandboxManager {
         hijack: true,
         stdin: true,
       })
+      const outputParser = new DockerTtyOutputParser()
 
       const execInfo = await execInstance.inspect()
       const execId = (execInstance as { id?: string }).id
@@ -773,10 +775,18 @@ export class DockerSandboxManager {
       }
 
       stream.on('data', (chunk: Buffer) => {
-        callbacks.onOutput(chunk)
+        const payloads = outputParser.consume(chunk)
+        payloads.forEach((payload) => {
+          callbacks.onOutput(payload)
+        })
       })
 
       stream.on('close', () => {
+        const trailing = outputParser.flush()
+        trailing.forEach((payload) => {
+          callbacks.onOutput(payload)
+        })
+
         const current = this.sandboxes.get(key)
         if (!current || current.interactiveSession?.execId !== execId) {
           return
