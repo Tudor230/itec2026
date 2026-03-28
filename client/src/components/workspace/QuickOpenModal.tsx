@@ -53,24 +53,24 @@ export default function QuickOpenModal({
 
   return (
     <div
-      className="workspace-quickopen-overlay"
+      className="absolute inset-0 z-[18] grid place-items-center bg-[rgba(7,17,23,0.36)] p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="workspace-quick-open-title"
       onClick={onClose}
     >
       <div
-        className="workspace-quickopen-shell"
+        className="w-[min(690px,calc(100%-2rem))] rounded-2xl border border-[color-mix(in_oklab,var(--line)_72%,var(--lagoon)_28%)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-[0.8rem] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(10,22,27,0.28)]"
         onClick={(event) => {
           event.stopPropagation()
         }}
       >
-        <div className="workspace-quickopen-head">
-          <p id="workspace-quick-open-title" className="island-kicker m-0">Quick Open</p>
+        <div className="mb-[0.5rem] flex items-center justify-between">
+          <p id="workspace-quick-open-title" className="m-0 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Quick Open</p>
           <button
             type="button"
             onClick={onClose}
-            className="workspace-auth-help"
+            className="grid h-8 w-8 place-items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]"
             aria-label="Close quick open"
             title="Close quick open"
           >
@@ -84,10 +84,10 @@ export default function QuickOpenModal({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Type file name or path"
-          className="workspace-quickopen-input"
+          className="w-full rounded-[0.7rem] border border-[var(--chip-line)] bg-[var(--chip-bg)] px-[0.7rem] py-[0.56rem] text-[0.85rem] text-[var(--sea-ink)] outline-none focus:border-[color-mix(in_oklab,var(--lagoon-deep)_45%,var(--chip-line))]"
         />
 
-        <div className="workspace-quickopen-list">
+        <div className="mt-[0.55rem] grid max-h-[360px] gap-[0.3rem] overflow-y-auto">
           {filtered.length === 0 ? (
             <p className="m-0 px-2 py-2 text-sm text-[var(--sea-ink-soft)]">
               No files found.
@@ -101,7 +101,7 @@ export default function QuickOpenModal({
                   onOpenFile(item.id)
                   onClose()
                 }}
-                className="workspace-quickopen-item"
+                className="w-full rounded-[0.65rem] border border-[var(--chip-line)] bg-[var(--chip-bg)] px-[0.62rem] py-[0.5rem] text-left text-[0.8rem] font-semibold text-[var(--sea-ink)] transition-colors hover:border-[color-mix(in_oklab,var(--lagoon-deep)_35%,var(--chip-line))] hover:bg-[color-mix(in_oklab,var(--chip-bg)_72%,rgba(79,184,178,0.22)_28%)]"
               >
                 <span>{item.path}</span>
               </button>

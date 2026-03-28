@@ -2,12 +2,14 @@ import MonacoEditor from '@monaco-editor/react'
 import { useMemo } from 'react'
 import type { FileDto } from '../../services/projects-api'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
+import { Sparkles, FileCode2 } from 'lucide-react'
+import { useThemePreset } from '../../theme/ThemeProvider'
+import { defineMonacoThemes, getMonacoThemeForPreset } from '../../lib/workspace-monaco-theme'
 
 interface EditorPaneProps {
   file: FileDto | null
   initialValue: string
   isDirty: boolean
-  isSaving: boolean
   saveError: string | null
   collabState?: {
     connectionState: 'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
@@ -15,156 +17,128 @@ interface EditorPaneProps {
   }
   onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor) => void
   onChange: (nextValue: string) => void
-  onSave: () => void
 }
 
 export default function EditorPane({
   file,
   initialValue,
   isDirty,
-  isSaving,
   saveError,
   collabState,
   onEditorMount,
   onChange,
-  onSave,
 }: EditorPaneProps) {
+  const { preset } = useThemePreset()
+  const monacoTheme = getMonacoThemeForPreset(preset)
+  
   const language = useMemo(() => {
-    if (!file) {
-      return 'plaintext'
-    }
-
+    if (!file) return 'plaintext'
     const extension = file.path.split('.').pop()?.toLowerCase() ?? ''
-
-    if (extension === 'ts' || extension === 'tsx') {
-      if (extension === 'tsx') {
-        return 'typescriptreact'
-      }
-
-      return 'typescript'
+    const mapping: Record<string, string> = {
+      ts: 'typescript', tsx: 'typescriptreact',
+      js: 'javascript', jsx: 'javascriptreact',
+      json: 'json', css: 'css', html: 'html',
+      md: 'markdown', py: 'python', rs: 'rust',
+      go: 'go', java: 'java'
     }
-
-    if (extension === 'js' || extension === 'jsx') {
-      if (extension === 'jsx') {
-        return 'javascriptreact'
-      }
-
-      return 'javascript'
-    }
-
-    if (extension === 'json') {
-      return 'json'
-    }
-
-    if (extension === 'css') {
-      return 'css'
-    }
-
-    if (extension === 'html') {
-      return 'html'
-    }
-
-    if (extension === 'md') {
-      return 'markdown'
-    }
-
-    if (extension === 'py') {
-      return 'python'
-    }
-
-    if (extension === 'rs') {
-      return 'rust'
-    }
-
-    if (extension === 'go') {
-      return 'go'
-    }
-
-    if (extension === 'java') {
-      return 'java'
-    }
-
-    return 'plaintext'
+    return mapping[extension] ?? 'plaintext'
   }, [file])
 
-  const title = useMemo(() => {
-    if (!file) {
-      return 'No file selected'
-    }
-
-    return file.path
-  }, [file])
+  const extension = file?.path.split('.').pop()?.toUpperCase() ?? 'TXT'
 
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col">
-      <div className="flex items-center justify-between border-b border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2">
-        <div className="min-w-0">
-          <p className="m-0 truncate text-sm font-semibold text-[var(--sea-ink)]">{title}</p>
-          {file ? (
-            <p className="m-0 text-xs text-[var(--sea-ink-soft)]">
-              {isDirty ? 'Unsaved changes' : 'Saved'}
-              {collabState && collabState.connectionState !== 'idle' ? ` | Live: ${collabState.connectionState}` : ''}
-            </p>
-          ) : null}
-        </div>
+    <section className="flex h-full min-w-0 flex-1 flex-col relative">
+      <div className="relative border-b border-[var(--line)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_84%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))] px-4 py-2 backdrop-blur-md">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-0 right-0 top-0 h-[1px] bg-[linear-gradient(90deg,transparent,rgba(var(--lagoon-rgb),0.44),transparent)]"
+        />
 
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={!file || !isDirty || isSaving}
-          className="rounded-full border border-[rgba(50,143,151,0.3)] bg-[rgba(79,184,178,0.14)] px-4 py-1.5 text-xs font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isSaving ? 'Saving...' : 'Save'}
-        </button>
+        <div className="flex items-center justify-between gap-3">
+        {file ? (
+          <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+            <span className="workspace-hud-chip">
+              {isDirty ? 'Unsaved changes' : 'Saved'}
+            </span>
+            {collabState && collabState.connectionState !== 'idle' ? (
+              <span className="workspace-hud-chip">Live: {collabState.connectionState}</span>
+            ) : null}
+          </div>
+        ) : (
+          <p className="m-0 text-xs font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">No file opened</p>
+        )}
+      </div>
       </div>
 
-      {file ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 bg-[rgba(255,255,255,0.4)]">
-            <MonacoEditor
-              height="100%"
-              language={language}
-              key={file.id}
-              defaultValue={initialValue}
-              onChange={(nextValue) => onChange(nextValue ?? '')}
-              onMount={(editor) => {
-                onEditorMount?.(editor)
-              }}
-              options={{
-                automaticLayout: true,
-                minimap: { enabled: true },
-                lineNumbers: 'on',
-                wordWrap: 'on',
-                fontSize: 14,
-                fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
-                fontLigatures: true,
-                scrollBeyondLastLine: false,
-              }}
-            />
-          </div>
-
-          {saveError ? (
-            <div className="border-t border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2 text-xs text-[var(--sea-ink-soft)]">
-              {saveError}
-            </div>
-          ) : null}
-
-          {collabState?.message ? (
-            <div className="border-t border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2 text-xs text-[var(--sea-ink-soft)]">
-              {collabState.message}
-            </div>
-          ) : null}
+      {saveError ? (
+        <div className="border-b border-red-200 bg-red-50 px-4 py-1 text-[10px] font-semibold text-red-700">
+          Save failed: {saveError}
         </div>
-      ) : (
-        <div className="grid min-h-0 flex-1 place-items-center bg-[rgba(255,255,255,0.35)] p-6 text-center">
-          <div>
-            <p className="m-0 text-base font-semibold text-[var(--sea-ink)]">Welcome to Workspace</p>
-            <p className="mt-2 mb-0 text-sm text-[var(--sea-ink-soft)]">
-              Pick a file from the sidebar to start editing.
-            </p>
+      ) : null}
+
+      <div className="relative min-h-0 flex-1">
+        {file ? (
+          <div className="flex h-full flex-col">
+            <div className="relative flex-1 bg-[rgba(var(--bg-rgb),0.1)]">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface)_64%,transparent),transparent)]"
+              />
+              <MonacoEditor
+                height="100%"
+                language={language}
+                key={file.id}
+                defaultValue={initialValue}
+                onChange={(nextValue) => onChange(nextValue ?? '')}
+                onMount={(editor) => {
+                  onEditorMount?.(editor)
+                }}
+                beforeMount={(monaco) => {
+                  defineMonacoThemes(monaco)
+                }}
+                theme={monacoTheme}
+                options={{
+                  automaticLayout: true,
+                  minimap: { enabled: true },
+                  lineNumbers: 'on',
+                  wordWrap: 'on',
+                  fontSize: 14,
+                  fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
+                  fontLigatures: true,
+                  scrollBeyondLastLine: false,
+                  renderLineHighlight: 'all',
+                  scrollbar: {
+                    vertical: 'visible',
+                    horizontal: 'visible',
+                    useShadows: false,
+                    verticalScrollbarSize: 10,
+                    horizontalScrollbarSize: 10,
+                  },
+                  padding: { top: 16 },
+                  smoothScrolling: true,
+                  cursorBlinking: 'smooth',
+                  cursorSmoothCaretAnimation: 'on',
+                }}
+              />
+            </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="grid h-full place-items-center bg-[rgba(var(--bg-rgb),0.2)] p-6 text-center">
+            <div className="max-w-sm space-y-4 rounded-2xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.52)] p-5 shadow-[0_18px_30px_rgba(9,24,30,0.14)]">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-[rgba(var(--lagoon-rgb),0.1)] text-[var(--lagoon)]">
+                <Sparkles size={32} />
+              </div>
+              <div>
+                <h2 className="text-lg font-extrabold text-[var(--sea-ink)]">No open files</h2>
+                <p className="mt-2 text-sm text-[var(--sea-ink-soft)] font-medium">
+                  Open a file from the explorer or Quick Open to start editing.
+                  Press <kbd className="px-1.5 py-0.5 bg-[var(--line)] rounded text-xs font-mono font-bold italic">Ctrl+P</kbd> for quick search.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

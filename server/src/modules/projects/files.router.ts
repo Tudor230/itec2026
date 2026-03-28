@@ -3,13 +3,21 @@ import type { PrismaClient } from '@prisma/client'
 import { asyncHandler } from '../../http/async-handler.js'
 import { actorFromRequest } from '../auth/request-actor.js'
 import { requireTokenPresent } from '../auth/require-token-present.middleware.js'
+import { emitCollabFileCreated } from '../collab/collab-events.js'
 import { createFileSchema, updateFileSchema } from './file.schema.js'
+import { LocalFileBlobStore, resolveFilesStorageRoot, type FileBlobStore } from './file-blob-store.js'
 import { FilesRepository } from './files.repository.js'
 import { FilesService } from './files.service.js'
 
-export function createFilesRouter({ prisma }: { prisma: PrismaClient }) {
+export function createFilesRouter({
+  prisma,
+  blobStore = new LocalFileBlobStore(resolveFilesStorageRoot()),
+}: {
+  prisma: PrismaClient
+  blobStore?: FileBlobStore
+}) {
   const router = Router()
-  const service = new FilesService(new FilesRepository(prisma))
+  const service = new FilesService(new FilesRepository(prisma, blobStore))
 
   router.get('/', requireTokenPresent, asyncHandler(async (request, response) => {
     const projectId = request.query.projectId
@@ -60,6 +68,13 @@ export function createFilesRouter({ prisma }: { prisma: PrismaClient }) {
 
     const actor = actorFromRequest(request)
     const file = await service.create(actor, parsed.data)
+    emitCollabFileCreated({
+      id: file.id,
+      projectId: file.projectId,
+      path: file.path,
+      createdAt: file.createdAt,
+      updatedAt: file.updatedAt,
+    })
 
     response.status(201).json({
       ok: true,

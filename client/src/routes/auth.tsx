@@ -23,7 +23,7 @@ function AuthRoute() {
 
   if (!isConfigured) {
     return (
-      <main className="page-wrap px-4 py-12">
+      <main className="mx-auto w-full max-w-[1080px] px-4 py-12">
         <AuthSetupNotice />
       </main>
     )
@@ -86,9 +86,9 @@ function AuthRouteWithHostedAuth() {
   }
 
   return (
-    <main className="auth-page-shell px-4 py-12">
-      <section className="workspace-auth-card mx-auto w-full max-w-[560px]">
-        <p className="island-kicker mb-2">iTECify Access</p>
+    <main className="mx-auto w-full max-w-[1080px] px-4 py-12">
+      <section className="relative mx-auto w-full max-w-[560px] rounded-2xl border border-[color-mix(in_oklab,var(--line)_78%,var(--lagoon)_22%)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-[1.15rem] shadow-[inset_0_1px_0_var(--inset-glint),0_24px_45px_rgba(10,25,31,0.28)]">
+        <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">iTECify Access</p>
         <h1 className="mb-3 text-3xl font-bold text-[var(--sea-ink)]">
           Sign in to continue to your projects
         </h1>

@@ -6,10 +6,10 @@ export const Route = createFileRoute('/about')({
 
 function About() {
   return (
-    <main className="page-wrap px-4 py-12">
-      <section className="island-shell rounded-2xl p-6 sm:p-8">
-        <p className="island-kicker mb-2">About</p>
-        <h1 className="display-title mb-3 text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
+    <main className="mx-auto w-full max-w-[1080px] px-4 py-12">
+      <section className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] sm:p-8">
+        <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">About</p>
+        <h1 className="mb-3 font-[Fraunces,Georgia,serif] text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
           Built to reduce friction between idea and code.
         </h1>
         <div className="max-w-3xl space-y-4 text-base leading-8 text-[var(--sea-ink-soft)]">

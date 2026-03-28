@@ -5,19 +5,29 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  Lock,
-  Monitor,
-  SquareTerminal,
+  Code,
+  Terminal as TerminalIcon,
+  Search,
+  Bell,
+  GitBranch,
+  Layers3,
+  Activity,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
+import { motion } from 'framer-motion'
 import { useAuthRuntime } from '../auth/AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
 import FileTabs from '../components/workspace/FileTabs'
 import FilesSidebar from '../components/workspace/FilesSidebar'
 import EditorPane from '../components/workspace/EditorPane'
 import QuickOpenModal from '../components/workspace/QuickOpenModal'
-import RunButton from '../components/workspace/RunButton'
 import TerminalPane from '../components/workspace/TerminalPane'
+import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
+import BottomDrawers, { type DrawerTab } from '../components/workspace/BottomDrawers'
+import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
+import ProfileButton from '../components/profile/ProfileButton'
+import { useToast } from '../components/ToastProvider'
 import { getWorkspaceShortcut } from '../components/workspace/workspace-shortcuts'
 import WorkspaceAuthOverlay, {
   type AuthTab,
@@ -31,7 +41,14 @@ import {
   updateFile,
   type FileDto,
 } from '../services/projects-api'
+import {
+  type CollabDocDirtyStatePayload,
+  type CollabFileCreatedPayload,
+} from '../lib/collab-client'
 import { useCollabDoc } from '../hooks/use-collab-doc'
+import { cn } from '../lib/utils'
+
+const AUTOSAVE_DELAY_MS = 200
 
 export const Route = createFileRoute('/workspace')({
   validateSearch: (search: Record<string, unknown>) => {
@@ -47,14 +64,31 @@ export const Route = createFileRoute('/workspace')({
   component: WorkspaceView,
 })
 
+const SIDEBAR_LAYOUT = {
+  collapseThresholdPercent: 1,
+  expandThresholdPercent: 2,
+  left: {
+    defaultSize: '16%',
+    minSize: '16%',
+    maxSize: '38%',
+  },
+  right: {
+    defaultSize: '16%',
+    minSize: '16%',
+    maxSize: '40%',
+  },
+}
+
 function WorkspaceWithHostedAuth() {
   const navigate = useNavigate()
   const search = Route.useSearch()
+  const { toast, success, error: toastError } = useToast()
   const {
     getAccessTokenSilently,
     isAuthenticated,
     isLoading,
     loginWithRedirect,
+    logout,
     error,
   } = useAuth0()
   const queryClient = useQueryClient()
@@ -72,20 +106,24 @@ function WorkspaceWithHostedAuth() {
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [openFileIds, setOpenFileIds] = useState<string[]>([])
   const [draftsByFileId, setDraftsByFileId] = useState<Record<string, string>>({})
+  const [collabDirtyByFileId, setCollabDirtyByFileId] = useState<Record<string, boolean>>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true)
+  const [rightSidebarTab, setRightSidebarTab] = useState<SidebarTab>('ai')
   const [centerView, setCenterView] = useState<'editor' | 'terminal'>('editor')
   const [isQuickOpenVisible, setIsQuickOpenVisible] = useState(false)
   const [authPanelOpen, setAuthPanelOpen] = useState(true)
   const [authTab, setAuthTab] = useState<AuthTab>('login')
   const [authActionPending, setAuthActionPending] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
-  const [runNotice, setRunNotice] = useState<{
-    id: number
-    text: string
-  } | null>(null)
-  const [inviteNotice, setInviteNotice] = useState<string | null>(null)
+  const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
+  const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
+  const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
+  const autosaveTimeoutRef = useRef<number | null>(null)
+  const leftPanelRef = usePanelRef()
+  const rightPanelRef = usePanelRef()
 
   const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
 
@@ -99,7 +137,7 @@ function WorkspaceWithHostedAuth() {
     try {
       await loginWithRedirect({
         appState: {
-          returnTo: '/projects',
+          returnTo: window.location.pathname + window.location.search,
         },
         authorizationParams: {
           redirect_uri: auth0Config.redirectUri,
@@ -142,6 +180,63 @@ function WorkspaceWithHostedAuth() {
     enabled: isAuthenticated && activeProjectId !== null,
   })
 
+  const upsertFileInCache = useCallback((incomingFile: FileDto) => {
+    queryClient.setQueryData<FileDto[]>(
+      ['workspace', 'files', true, incomingFile.projectId],
+      (previous) => {
+        const current = previous ?? []
+        const exists = current.some((file) => file.id === incomingFile.id)
+
+        const next = exists
+          ? current.map((file) => (file.id === incomingFile.id ? incomingFile : file))
+          : [incomingFile, ...current]
+
+        return [...next].sort((left, right) => {
+          return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+        })
+      },
+    )
+  }, [queryClient])
+
+  const onCollabFileCreated = useCallback((payload: CollabFileCreatedPayload) => {
+    upsertFileInCache({
+      ...payload,
+      content: '',
+      ownerSubject: null,
+    })
+  }, [upsertFileInCache])
+
+  const onCollabDirtyStateChanged = useCallback((payload: CollabDocDirtyStatePayload) => {
+    setCollabDirtyByFileId((previous) => {
+      if (payload.isDirty) {
+        if (previous[payload.fileId]) {
+          return previous
+        }
+
+        return {
+          ...previous,
+          [payload.fileId]: true,
+        }
+      }
+
+      if (!(payload.fileId in previous)) {
+        return previous
+      }
+
+      const next = { ...previous }
+      delete next[payload.fileId]
+      return next
+    })
+
+    if (!payload.isDirty) {
+      queryClient.invalidateQueries({
+        queryKey: ['workspace', 'files', true, payload.projectId],
+      }).catch(() => {
+        return undefined
+      })
+    }
+  }, [queryClient])
+
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
       const token = await getApiAccessToken()
@@ -165,6 +260,8 @@ function WorkspaceWithHostedAuth() {
     },
     onSuccess: async (createdFile) => {
       setCreateError(null)
+      upsertFileInCache(createdFile)
+      success(`File created: ${createdFile.path.split('/').pop()}`)
       setActiveFileId(createdFile.id)
       setOpenFileIds((previous) =>
         previous.includes(createdFile.id) ? previous : [...previous, createdFile.id],
@@ -179,6 +276,7 @@ function WorkspaceWithHostedAuth() {
     },
     onError: (error) => {
       setCreateError(error.message)
+      toastError(`Could not create file: ${error.message}`)
     },
   })
 
@@ -194,7 +292,14 @@ function WorkspaceWithHostedAuth() {
     },
     onSuccess: async (updated) => {
       setSaveError(null)
+      upsertFileInCache(updated)
+      markSaved(updated.projectId, updated.id)
       setDraftsByFileId((previous) => {
+        const latestDraft = previous[updated.id]
+        if (latestDraft !== undefined && latestDraft !== updated.content) {
+          return previous
+        }
+
         const next = { ...previous }
         delete next[updated.id]
         return next
@@ -204,8 +309,31 @@ function WorkspaceWithHostedAuth() {
     },
     onError: (error) => {
       setSaveError(error.message)
+      toastError(`Save failed: ${error.message}`)
     },
   })
+
+  const clearAutosaveTimeout = useCallback(() => {
+    if (autosaveTimeoutRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(autosaveTimeoutRef.current)
+    autosaveTimeoutRef.current = null
+  }, [])
+
+  const triggerSave = useCallback((fileId: string, content: string) => {
+    clearAutosaveTimeout()
+
+    if (saveFileMutation.isPending) {
+      return
+    }
+
+    void saveFileMutation.mutateAsync({
+      fileId,
+      content,
+    })
+  }, [clearAutosaveTimeout, saveFileMutation])
 
   const files = filesQuery.data ?? []
   const activeFile = files.find((file) => file.id === activeFileId) ?? null
@@ -215,22 +343,57 @@ function WorkspaceWithHostedAuth() {
   const editorValue = activeFile
     ? draftsByFileId[activeFile.id] ?? activeFile.content
     : ''
-  const isDirty = activeFile
+  const localIsDirty = activeFile
     ? (draftsByFileId[activeFile.id] ?? activeFile.content) !== activeFile.content
     : false
+  const isDirty = activeFile ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id]) : false
 
-  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
-  const requestedProjectMissing =
-    Boolean(search.projectId) &&
-    Boolean(projectsQuery.data) &&
-    !(projectsQuery.data ?? []).some((project) => project.id === search.projectId)
+  useEffect(() => {
+    clearAutosaveTimeout()
 
-  const { collabState, onEditorMount } = useCollabDoc({
+    if (!isAuthenticated || !activeFile || !localIsDirty) {
+      return
+    }
+
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      if (saveFileMutation.isPending) {
+        return
+      }
+
+      triggerSave(activeFile.id, editorValue)
+    }, AUTOSAVE_DELAY_MS)
+
+    return clearAutosaveTimeout
+  }, [
+    activeFile,
+    clearAutosaveTimeout,
+    editorValue,
+    isAuthenticated,
+    localIsDirty,
+    saveFileMutation.isPending,
+    triggerSave,
+  ])
+
+  const { collabState, onEditorMount, markSaved } = useCollabDoc({
     projectId: activeProjectId,
     fileId: activeFileId,
+    onFileCreated: onCollabFileCreated,
+    onDirtyStateChanged: onCollabDirtyStateChanged,
   })
 
-  const createInviteMutation = useMutation({
+  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
+
+  const dirtyFileIds = files
+    .filter((file) => {
+      const draftValue = draftsByFileId[file.id]
+      const locallyDirty = draftValue !== undefined ? draftValue !== file.content : false
+      return locallyDirty || Boolean(collabDirtyByFileId[file.id])
+    })
+    .map((file) => file.id)
+  const dirtyFileCount = dirtyFileIds.length
+  const virtualFolders = activeProjectId ? (virtualFoldersByProjectId[activeProjectId] ?? []) : []
+
+  useMutation({
     mutationFn: async (projectId: string) => {
       const token = await getApiAccessToken()
       return createProjectInvite(projectId, token)
@@ -240,13 +403,13 @@ function WorkspaceWithHostedAuth() {
 
       try {
         await navigator.clipboard.writeText(inviteLink)
-        setInviteNotice('Invite link copied to clipboard')
+        success('Invite link copied to clipboard')
       } catch {
-        setInviteNotice(inviteLink)
+        toast(`Invite link: ${inviteLink}`, 'info', 10000)
       }
     },
     onError: (error) => {
-      setInviteNotice(`Could not create invite: ${error.message}`)
+      toastError(`Could not create invite: ${error.message}`)
     },
   })
 
@@ -288,10 +451,13 @@ function WorkspaceWithHostedAuth() {
   useEffect(() => {
     setActiveFileId(null)
     setOpenFileIds([])
+    setHasClosedAllTabs(false)
     setDraftsByFileId({})
+    setCollabDirtyByFileId({})
     setSaveError(null)
     setCreateError(null)
-  }, [activeProjectId])
+    clearAutosaveTimeout()
+  }, [activeProjectId, clearAutosaveTimeout])
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -310,6 +476,10 @@ function WorkspaceWithHostedAuth() {
     }
 
     if (!activeFileId) {
+      if (hasClosedAllTabs) {
+        return
+      }
+
       const firstFileId = filesQuery.data[0].id
       setActiveFileId(firstFileId)
       setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
@@ -322,7 +492,7 @@ function WorkspaceWithHostedAuth() {
       setActiveFileId(firstFileId)
       setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
     }
-  }, [activeFileId, filesQuery.data, isAuthenticated])
+  }, [activeFileId, filesQuery.data, hasClosedAllTabs, isAuthenticated])
 
   useEffect(() => {
     if (!filesQuery.data) {
@@ -357,7 +527,7 @@ function WorkspaceWithHostedAuth() {
 
       if (shortcut === 'toggle-sidebar') {
         event.preventDefault()
-        setIsSidebarCollapsed((current) => !current)
+        setIsLeftSidebarCollapsed((current) => !current)
         return
       }
 
@@ -379,21 +549,18 @@ function WorkspaceWithHostedAuth() {
 
       event.preventDefault()
 
-      if (!activeFile || !isDirty || saveFileMutation.isPending) {
+      if (!activeFile || !localIsDirty || saveFileMutation.isPending) {
         return
       }
 
-      void saveFileMutation.mutateAsync({
-        fileId: activeFile.id,
-        content: editorValue,
-      })
+      triggerSave(activeFile.id, editorValue)
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [activeFile, editorValue, isAuthenticated, isDirty, saveFileMutation])
+  }, [activeFile, editorValue, isAuthenticated, localIsDirty, saveFileMutation.isPending, triggerSave])
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -403,20 +570,62 @@ function WorkspaceWithHostedAuth() {
   }, [isAuthenticated])
 
   useEffect(() => {
-    if (runNotice === null) {
+    if (!isLeftSidebarCollapsed) {
       return
     }
 
-    const timeout = window.setTimeout(() => {
-      setRunNotice(null)
-    }, 2800)
+    const leftPanel = leftPanelRef.current
 
-    return () => {
-      window.clearTimeout(timeout)
+    if (!leftPanel) {
+      return
     }
-  }, [runNotice])
+
+    const leftSize = leftPanel.getSize().asPercentage
+    if (leftSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
+      leftPanel.resize(0)
+    }
+  }, [isLeftSidebarCollapsed, leftPanelRef])
+
+  useEffect(() => {
+    const leftPanel = leftPanelRef.current
+
+    if (!leftPanel) {
+      return
+    }
+
+    if (isLeftSidebarCollapsed) {
+      return
+    }
+
+    const leftSize = leftPanel.getSize().asPercentage
+    if (leftSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
+      leftPanel.resize(SIDEBAR_LAYOUT.left.minSize)
+    }
+  }, [isLeftSidebarCollapsed, leftPanelRef])
+
+  useEffect(() => {
+    const rightPanel = rightPanelRef.current
+
+    if (!rightPanel) {
+      return
+    }
+
+    if (!isRightSidebarOpen) {
+      const rightSize = rightPanel.getSize().asPercentage
+      if (rightSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
+        rightPanel.resize(0)
+      }
+      return
+    }
+
+    const rightSize = rightPanel.getSize().asPercentage
+    if (rightSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
+      rightPanel.resize(SIDEBAR_LAYOUT.right.minSize)
+    }
+  }, [isRightSidebarOpen, rightPanelRef])
 
   const openFileById = (fileId: string) => {
+    setHasClosedAllTabs(false)
     setActiveFileId(fileId)
     setSaveError(null)
     setCenterView('editor')
@@ -432,6 +641,10 @@ function WorkspaceWithHostedAuth() {
   const closeTabById = (fileId: string) => {
     setOpenFileIds((previous) => {
       const next = previous.filter((candidate) => candidate !== fileId)
+
+      if (next.length === 0) {
+        setHasClosedAllTabs(true)
+      }
 
       if (activeFileId === fileId) {
         const closedIndex = previous.indexOf(fileId)
@@ -453,6 +666,28 @@ function WorkspaceWithHostedAuth() {
     })
   }
 
+  const closeOthers = (fileId: string) => {
+    setHasClosedAllTabs(false)
+    setOpenFileIds([fileId])
+    setActiveFileId(fileId)
+    setDraftsByFileId((previous) => {
+      const next: Record<string, string> = {}
+      if (fileId in previous) next[fileId] = previous[fileId]
+      return next
+    })
+  }
+
+  const closeAll = () => {
+    setHasClosedAllTabs(true)
+    setOpenFileIds([])
+    setActiveFileId(null)
+    setDraftsByFileId({})
+  }
+
+  if (isLoading && isAuthenticated) {
+    return <WorkspaceSkeleton />
+  }
+
   const lockedContentProps = isLocked
     ? ({
         'aria-hidden': true,
@@ -461,114 +696,140 @@ function WorkspaceWithHostedAuth() {
     : {}
 
   return (
-    <main className="workspace-fullscreen-shell">
-      <section className="workspace-shell flex h-full w-full min-h-0 min-w-[1280px] flex-col overflow-hidden">
+    <main className="workspace-atlas m-0 h-dvh w-screen p-0">
+      <section className="relative flex h-full min-h-0 flex-col">
         <div
-          className={`workspace-content relative flex min-h-0 flex-1 flex-col ${isLocked ? 'workspace-content--locked' : ''}`}
+          aria-hidden
+          className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-[rgba(var(--lagoon-rgb),0.2)] blur-[110px]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-24 -top-16 h-64 w-64 rounded-full bg-[rgba(47,106,74,0.16)] blur-[100px]"
+        />
+        <div
+          className={cn(
+            'relative flex min-h-0 flex-1 flex-col overflow-hidden',
+            isLocked && 'pointer-events-none select-none [transform:scale(0.998)]'
+          )}
           {...lockedContentProps}
         >
-          <div className="workspace-toolbar grid items-center gap-3 border-b border-[var(--line)] bg-[rgba(255,255,255,0.58)] px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-            <div className="flex min-w-0 items-center gap-2">
+          <div className="workspace-topbar grid items-center gap-3 px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  void navigate({ to: '/projects' })
-                }}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink)]"
-                aria-label="Back to projects"
+                onClick={() => navigate({ to: '/projects' })}
+                className="workspace-control-button inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
                 title="Back to projects"
               >
                 <ArrowLeft size={14} />
               </button>
 
-              <div className="min-w-0">
-                <p className="island-kicker mb-1">Workspace</p>
-                <h1 className="m-0 truncate text-lg font-bold text-[var(--sea-ink)] sm:text-xl">
-                  {selectedProject ? selectedProject.name : 'iTECify IDE'}
-                </h1>
+              <div className="relative min-w-0 overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.64)] px-3 py-2">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -right-8 -top-8 h-16 w-16 rounded-full bg-[rgba(var(--lagoon-rgb),0.16)] blur-2xl"
+                />
+                <div className="relative flex min-w-0 items-center gap-2">
+                  <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.66)] text-[var(--lagoon-deep)]">
+                    <Layers3 size={13} />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+                      Command Deck
+                    </span>
+                    <h1 className="m-0 truncate text-sm font-extrabold leading-none text-[var(--sea-ink)]">
+                      {selectedProject ? selectedProject.name : 'iTECify IDE'}
+                    </h1>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div className="flex items-center justify-center">
-              <div className="workspace-segmented-control">
+              <div className="relative flex rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.62)] p-1 shadow-[0_6px_18px_rgba(8,22,28,0.16)] backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => setCenterView('editor')}
-                  className={`workspace-segmented-option ${centerView === 'editor' ? 'is-active' : ''}`}
-                  title="Show editor"
+                  className={cn(
+                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
+                    centerView === 'editor' 
+                      ? "text-white" 
+                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                  )}
                 >
-                  <Monitor size={14} />
+                  <Code size={14} />
                   <span>Editor</span>
+                  {centerView === 'editor' && (
+                    <motion.div 
+                      layoutId="workspace-view-toggle"
+                      className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  )}
                 </button>
                 <button
                   type="button"
                   onClick={() => setCenterView('terminal')}
-                  className={`workspace-segmented-option ${centerView === 'terminal' ? 'is-active' : ''}`}
-                  title="Show terminal (Ctrl+`)"
+                  className={cn(
+                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
+                    centerView === 'terminal' 
+                      ? "text-white" 
+                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                  )}
                 >
-                  <SquareTerminal size={14} />
+                  <TerminalIcon size={14} />
                   <span>Terminal</span>
+                  {centerView === 'terminal' && (
+                    <motion.div 
+                      layoutId="workspace-view-toggle"
+                      className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  )}
                 </button>
               </div>
             </div>
 
-            <div className="flex items-center justify-end">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-end gap-2">
+              <div className="hidden items-center gap-1.5 lg:flex">
+                <span className="workspace-hud-chip">
+                  <GitBranch size={11} /> main
+                </span>
+                <span className="workspace-hud-chip">
+                  <Activity size={11} /> {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.58)] p-1.5 shadow-[0_5px_14px_rgba(9,25,30,0.12)] backdrop-blur-sm">
                 <button
                   type="button"
-                  disabled={!activeProjectId || createInviteMutation.isPending}
-                  onClick={() => {
-                    if (!activeProjectId) {
-                      return
-                    }
-
-                    void createInviteMutation.mutateAsync(activeProjectId)
-                  }}
-                  className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--sea-ink)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  title="Search"
                 >
-                  {createInviteMutation.isPending ? 'Creating invite...' : 'Share'}
+                  <Search size={14} />
                 </button>
-
-                <label className="rounded-lg border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1.5 text-xs text-[var(--sea-ink-soft)]">
-                  <span className="mr-2">Project</span>
-                  <select
-                    value={activeProjectId ?? ''}
-                    onChange={(event) => {
-                      const next = event.target.value.trim()
-                      setActiveProjectId(next.length > 0 ? next : null)
-                    }}
-                    className="bg-transparent text-xs font-semibold text-[var(--sea-ink)] outline-none"
-                  >
-                    {(projectsQuery.data ?? []).map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <RunButton
-                  onRunRequest={() => {
-                    setRunNotice({
-                      id: Date.now(),
-                      text: 'Run is not available yet.',
-                    })
-                  }}
+                <button
+                  type="button"
+                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  title="Notifications"
+                >
+                  <Bell size={14} />
+                </button>
+                <div className="w-[1px] h-4 bg-[var(--line)]" />
+                <ProfileButton 
+                  onLogout={() => {
+                    void logout({ logoutParams: { returnTo: window.location.origin } })
+                  }} 
                 />
               </div>
             </div>
           </div>
 
-          {inviteNotice ? (
-            <div className="border-b border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2 text-xs text-[var(--sea-ink-soft)]">
-              {inviteNotice}
-            </div>
-          ) : null}
-
           <FileTabs
             tabs={openTabs.map((file) => {
               const draftValue = draftsByFileId[file.id]
-              const dirty = draftValue !== undefined ? draftValue !== file.content : false
+              const localDirty = draftValue !== undefined ? draftValue !== file.content : false
+              const dirty = localDirty || Boolean(collabDirtyByFileId[file.id])
 
               return {
                 id: file.id,
@@ -579,99 +840,181 @@ function WorkspaceWithHostedAuth() {
             })}
             onSelectTab={openFileById}
             onCloseTab={closeTabById}
-          />
+            onCloseOthers={closeOthers}
+  onCloseAll={closeAll}
+  collaborators={['JD', 'AS']}
+  onOpenCollaboration={() => setBottomDrawerTab('collab')}
+/>
 
-          {runNotice ? (
-            <div className="workspace-run-notice rounded-xl border border-[rgba(50,143,151,0.25)] bg-[rgba(79,184,178,0.1)] px-4 py-3 text-sm text-[var(--sea-ink)]">
-              <div className="flex items-center justify-between gap-3">
-                <span key={runNotice.id} role="status" aria-live="polite">
-                  {runNotice.text}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setRunNotice(null)}
-                  className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1 text-xs font-semibold text-[var(--sea-ink)]"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ) : null}
+          <Group
+            id="workspace-layout-panels"
+            orientation="horizontal"
+            className="flex-1 min-h-0 min-w-0"
+            resizeTargetMinimumSize={{ coarse: 28, fine: 16 }}
+            onLayoutChanged={(nextLayout) => {
+              const nextLeftSize = nextLayout['left-sidebar'] ?? 0
+              const nextRightSize = nextLayout['right-sidebar'] ?? 0
+              const isLeftCollapsedNext = nextLeftSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
+              const isRightCollapsedNext = nextRightSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
 
-          {requestedProjectMissing ? (
-            <div className="mx-4 mt-3 rounded-xl border border-[rgba(210,140,60,0.35)] bg-[rgba(244,196,112,0.18)] px-4 py-3 text-sm text-[var(--sea-ink)]">
-              The requested project is not available. Showing the first available project instead.
-            </div>
-          ) : null}
+              if (isLeftSidebarCollapsed !== isLeftCollapsedNext) {
+                setIsLeftSidebarCollapsed(isLeftCollapsedNext)
+              }
 
-          <div className="workspace-main-panel flex min-h-0 flex-1 border-t border-[var(--line)]">
-            <div className={`workspace-sidebar-region ${isSidebarCollapsed ? 'is-collapsed' : ''}`}>
-              <button
-                type="button"
-                onClick={() => setIsSidebarCollapsed((current) => !current)}
-                className={`workspace-sidebar-toggle ${isSidebarCollapsed ? 'is-collapsed' : ''}`}
-                aria-label={isSidebarCollapsed ? 'Expand files sidebar' : 'Collapse files sidebar'}
-                title={isSidebarCollapsed ? 'Expand files sidebar (Ctrl+B)' : 'Collapse files sidebar (Ctrl+B)'}
-              >
-                {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-              </button>
+              if (!isLeftCollapsedNext) {
+                // noop: sidebar opens at min size by design
+              }
 
-              {!isSidebarCollapsed ? (
-                <FilesSidebar
-                  files={files}
-                  activeFileId={activeFileId}
-                  isLoading={filesQuery.isLoading || projectsQuery.isLoading}
-                  errorMessage={
-                    projectsQuery.isError
-                      ? 'Could not load projects.'
-                      : filesQuery.isError
-                        ? 'Could not load files.'
-                        : createError
-                  }
-                  onOpenFile={openFileById}
-                  onCreateFile={(path) => {
-                    void createFileMutation.mutateAsync(path)
-                  }}
-                />
-              ) : null}
-            </div>
+              if (isRightSidebarOpen === isRightCollapsedNext) {
+                setIsRightSidebarOpen(!isRightCollapsedNext)
+              }
 
-            {centerView === 'editor' ? (
-              <EditorPane
-                file={activeFile}
-                initialValue={editorValue}
-                isDirty={isDirty}
-                isSaving={saveFileMutation.isPending}
-                saveError={saveError}
-                collabState={collabState}
-                onEditorMount={onEditorMount}
-                onChange={(nextValue) => {
-                  if (!activeFile) {
-                    return
-                  }
-
-                  setDraftsByFileId((previous) => {
-                    return {
-                      ...previous,
-                      [activeFile.id]: nextValue,
+              if (!isRightCollapsedNext) {
+                // noop: sidebar opens at min size by design
+              }
+            }}
+          >
+            {/* Left Sidebar Panel */}
+            <Panel
+              id="left-sidebar"
+              panelRef={leftPanelRef}
+              collapsible
+              collapsedSize="0%"
+              defaultSize={SIDEBAR_LAYOUT.left.defaultSize}
+              minSize={SIDEBAR_LAYOUT.left.minSize}
+              maxSize={SIDEBAR_LAYOUT.left.maxSize}
+              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
+            >
+              <FilesSidebar
+                files={files}
+                virtualFolders={virtualFolders}
+                activeFileId={activeFileId}
+                dirtyFileIds={dirtyFileIds}
+                isLoading={filesQuery.isLoading || projectsQuery.isLoading}
+                errorMessage={
+                  projectsQuery.isError
+                    ? 'Could not load projects.'
+                    : filesQuery.isError
+                      ? 'Could not load files.'
+                      : createError
+                }
+                onOpenFile={openFileById}
+                onCreateFile={async (path, type) => {
+                  if (type === 'folder') {
+                    if (!activeProjectId) {
+                      return
                     }
-                  })
-                }}
-                onSave={() => {
-                  if (!activeFile || !isDirty) {
+
+                    setCreateError(null)
+                    setVirtualFoldersByProjectId((previous) => {
+                      const current = previous[activeProjectId] ?? []
+                      if (current.includes(path)) {
+                        return previous
+                      }
+
+                      return {
+                        ...previous,
+                        [activeProjectId]: [...current, path],
+                      }
+                    })
                     return
                   }
 
-                  void saveFileMutation.mutateAsync({
-                    fileId: activeFile.id,
-                    content: editorValue,
-                  })
+                  await createFileMutation.mutateAsync(path)
                 }}
+                onClose={() => setIsLeftSidebarCollapsed(true)}
               />
-            ) : (
-              <TerminalPane />
-            )}
-          </div>
+            </Panel>
+            <Separator
+              disabled={isLeftSidebarCollapsed}
+              className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
+            >
+              <div className="h-full w-[0.5px] bg-[color-mix(in_oklab,var(--line)_88%,transparent)] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:opacity-30" />
+            </Separator>
+
+            {/* Central Editor/Terminal Panel */}
+            <Panel id="main-editor" className="workspace-main-surface flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
+               <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
+                  {/* Sidebar Toggle Handle for Left */}
+                   {isLeftSidebarCollapsed ? (
+                    <button
+                     onClick={() => setIsLeftSidebarCollapsed(false)}
+                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border-l-0 px-2 py-5 transition-colors"
+                     title="Open files panel"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                   ) : null}
+
+                  {/* Sidebar Toggle Handle for Right */}
+                   {!isRightSidebarOpen ? (
+                    <button
+                     onClick={() => setIsRightSidebarOpen(true)}
+                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border-r-0 px-2 py-5 transition-colors"
+                     title="Open assistant panel"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                   ) : null}
+
+                  {centerView === 'editor' ? (
+                    <EditorPane
+                      file={activeFile}
+                      initialValue={editorValue}
+                      isDirty={isDirty}
+                      saveError={saveError}
+                      collabState={collabState}
+                      onEditorMount={onEditorMount}
+                      onChange={(nextValue) => {
+                        if (!activeFile) {
+                          return
+                        }
+
+                        setDraftsByFileId((previous) => {
+                          return {
+                            ...previous,
+                            [activeFile.id]: nextValue,
+                          }
+                        })
+                      }}
+                    />
+                  ) : (
+                    <TerminalPane />
+                  )}
+               </div>
+            </Panel>
+
+            {/* Right Sidebar Panel */}
+            <Separator
+              disabled={!isRightSidebarOpen}
+              className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
+            >
+              <div className="h-full w-[0.5px] bg-[color-mix(in_oklab,var(--line)_88%,transparent)] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:opacity-30" />
+            </Separator>
+            <Panel
+              id="right-sidebar"
+              panelRef={rightPanelRef}
+              collapsible
+              collapsedSize="0%"
+              defaultSize={SIDEBAR_LAYOUT.right.defaultSize}
+              minSize={SIDEBAR_LAYOUT.right.minSize}
+              maxSize={SIDEBAR_LAYOUT.right.maxSize}
+              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
+            >
+              <RightSidebar
+                isOpen={isRightSidebarOpen}
+                onToggle={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
+                activeTab={rightSidebarTab}
+                setActiveTab={setRightSidebarTab}
+              />
+            </Panel>
+          </Group>
+
+          {/* Bottom Drawers */}
+          <BottomDrawers
+            activeTab={bottomDrawerTab}
+            onActiveTabChange={setBottomDrawerTab}
+          />
         </div>
 
         <QuickOpenModal
@@ -699,13 +1042,6 @@ function WorkspaceWithHostedAuth() {
             }}
           />
         ) : null}
-
-        {isLoading ? (
-          <div className="workspace-auth-loading">
-            <Lock size={14} />
-            <span>Checking session...</span>
-          </div>
-        ) : null}
       </section>
     </main>
   )
@@ -716,7 +1052,7 @@ export function WorkspaceView() {
 
   if (!isConfigured) {
     return (
-      <main className="page-wrap px-4 py-12">
+      <main className="mx-auto w-full max-w-[1080px] px-4 py-12">
         <AuthSetupNotice />
       </main>
     )

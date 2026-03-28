@@ -83,10 +83,10 @@ function ProjectsPage() {
 
   return (
     <ProtectedRoute>
-      <main className="page-wrap px-4 py-10 sm:py-12">
-        <section className="island-shell rounded-[1.8rem] px-6 py-8 sm:px-8">
-          <p className="island-kicker mb-2">Projects Hub</p>
-          <h1 className="display-title mb-3 text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
+      <main className="mx-auto w-full max-w-[1080px] px-4 py-10 sm:py-12">
+        <section className="rounded-[1.8rem] border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] px-6 py-8 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] sm:px-8">
+          <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Projects Hub</p>
+          <h1 className="mb-3 font-[Fraunces,Georgia,serif] text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
             Pick a project and jump into the editor.
           </h1>
           <p className="mb-6 max-w-3xl text-sm leading-7 text-[var(--sea-ink-soft)] sm:text-base">
@@ -94,7 +94,7 @@ function ProjectsPage() {
           </p>
 
           <form
-            className="projects-create-row"
+            className="flex flex-wrap items-center gap-2"
             onSubmit={(event) => {
               event.preventDefault()
               const nextName = projectName.trim()
@@ -130,13 +130,13 @@ function ProjectsPage() {
           ) : null}
         </section>
 
-        <section className="island-shell mt-7 rounded-2xl p-6 sm:p-7">
+        <section className="mt-7 rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] sm:p-7">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="island-kicker mb-1">All Projects</p>
+              <p className="mb-1 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">All Projects</p>
               <h2 className="m-0 text-2xl font-semibold text-[var(--sea-ink)]">Your workspace entries</h2>
             </div>
-            <div className="projects-metric-pill">
+            <div className="inline-flex items-center gap-[0.35rem] rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-[0.8rem] py-[0.42rem] text-xs text-[var(--sea-ink-soft)]">
               <span>{projects.length}</span>
               <span>{projects.length === 1 ? 'project' : 'projects'}</span>
             </div>
@@ -172,9 +172,12 @@ function ProjectsPage() {
           ) : null}
 
           {!projectsQuery.isLoading && !projectsQuery.isError && filteredProjects.length > 0 ? (
-            <div className="projects-grid">
+            <div className="grid gap-[0.85rem] lg:grid-cols-2">
               {filteredProjects.map((project) => (
-                <article key={project.id} className="projects-card">
+                <article
+                  key={project.id}
+                  className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-4 shadow-[inset_0_1px_0_var(--inset-glint),0_10px_24px_rgba(23,58,64,0.08)] transition-transform duration-180 hover:-translate-y-px hover:border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--line))]"
+                >
                   <div>
                     <h3 className="mb-1 mt-0 text-lg font-semibold text-[var(--sea-ink)]">{project.name}</h3>
                     <p className="m-0 text-xs text-[var(--sea-ink-soft)]">{formatRelativeTime(project.updatedAt)}</p>

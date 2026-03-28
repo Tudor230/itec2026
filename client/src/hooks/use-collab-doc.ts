@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
-import { CollabClient } from '../lib/collab-client'
+import {
+  CollabClient,
+  type CollabDocDirtyStatePayload,
+  type CollabFileCreatedPayload,
+  type WatchProjectCallbacks,
+} from '../lib/collab-client'
 import { auth0Config } from '../lib/auth0-config'
 
 interface CollabDocState {
@@ -12,6 +17,8 @@ interface CollabDocState {
 interface CollabDocParams {
   projectId: string | null
   fileId: string | null
+  onFileCreated?: (payload: CollabFileCreatedPayload) => void
+  onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
 }
 
 interface CollabDocModelBinding {
@@ -23,7 +30,12 @@ interface MonacoBindingInstance {
   destroy: () => void
 }
 
-export function useCollabDoc({ projectId, fileId }: CollabDocParams) {
+export function useCollabDoc({
+  projectId,
+  fileId,
+  onFileCreated,
+  onDirtyStateChanged,
+}: CollabDocParams) {
   const { getAccessTokenSilently } = useAuth0()
   const [bindingTargets, setBindingTargets] = useState<CollabDocModelBinding>({
     editor: null,
@@ -32,6 +44,7 @@ export function useCollabDoc({ projectId, fileId }: CollabDocParams) {
 
   const bindingRef = useRef<MonacoBindingInstance | null>(null)
   const sessionDestroyRef = useRef<(() => void) | null>(null)
+  const projectWatchDestroyRef = useRef<(() => void) | null>(null)
 
   const [state, setState] = useState<CollabDocState>({
     connectionState: 'idle',
@@ -68,9 +81,54 @@ export function useCollabDoc({ projectId, fileId }: CollabDocParams) {
         bindingRef.current = null
       }
 
+      if (projectWatchDestroyRef.current) {
+        projectWatchDestroyRef.current()
+        projectWatchDestroyRef.current = null
+      }
+
       collabClient.disconnect()
     }
   }, [collabClient])
+
+  const watchCallbacks = useMemo<WatchProjectCallbacks>(() => {
+    return {
+      onFileCreated,
+      onDirtyStateChanged,
+    }
+  }, [onDirtyStateChanged, onFileCreated])
+
+  useEffect(() => {
+    if (projectWatchDestroyRef.current) {
+      projectWatchDestroyRef.current()
+      projectWatchDestroyRef.current = null
+    }
+
+    if (!projectId) {
+      return
+    }
+
+    let cancelled = false
+
+    void collabClient.watchProject(projectId, watchCallbacks).then((destroyWatch) => {
+      if (cancelled) {
+        destroyWatch()
+        return
+      }
+
+      projectWatchDestroyRef.current = destroyWatch
+    }).catch(() => {
+      projectWatchDestroyRef.current = null
+    })
+
+    return () => {
+      cancelled = true
+
+      if (projectWatchDestroyRef.current) {
+        projectWatchDestroyRef.current()
+        projectWatchDestroyRef.current = null
+      }
+    }
+  }, [collabClient, projectId, watchCallbacks])
 
   useEffect(() => {
     setBindingTargets({
@@ -168,5 +226,8 @@ export function useCollabDoc({ projectId, fileId }: CollabDocParams) {
   return {
     collabState: state,
     onEditorMount,
+    markSaved: (nextProjectId: string, nextFileId: string) => {
+      void collabClient.markDocumentSaved(nextProjectId, nextFileId)
+    },
   }
 }
