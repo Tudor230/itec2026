@@ -34,7 +34,7 @@ export default function RightSidebar({ isOpen, onToggle, activeTab, setActiveTab
   if (!isOpen) return null
 
   return (
-    <div className="h-full w-full min-w-[320px] bg-[rgba(255,255,255,0.52)] flex flex-col overflow-hidden">
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-[rgba(255,255,255,0.52)]">
       {/* Header */}
       <div className="h-[48px] px-2 border-b border-[var(--line)] flex items-center justify-between bg-[rgba(255,255,255,0.05)] whitespace-nowrap">
         <div className="flex bg-[rgba(0,0,0,0.1)] p-1 rounded-lg">
@@ -69,7 +69,7 @@ export default function RightSidebar({ isOpen, onToggle, activeTab, setActiveTab
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 w-full">
+      <div className="w-full flex-1 overflow-y-auto p-4">
             {activeTab === 'ai' ? (
               <div className="space-y-6">
                 {/* Empty Chat State */}
@@ -116,7 +116,7 @@ export default function RightSidebar({ isOpen, onToggle, activeTab, setActiveTab
                   ].map((item, i) => (
                     <div key={i} className="relative group">
                       <div className={cn(
-                        "absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-[var(--bg)] transition-transform group-hover:scale-125",
+                        "absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-[var(--surface-strong)] transition-transform group-hover:scale-125",
                         item.type === 'commit' ? "bg-[var(--lagoon)]" : "bg-purple-500"
                       )} />
                       <div className="space-y-1">

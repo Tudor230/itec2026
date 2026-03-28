@@ -10,8 +10,8 @@ import {
   Search,
   Bell,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Group, Panel, Separator } from 'react-resizable-panels'
+import { useEffect, useRef, useState } from 'react'
+import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
 import { motion } from 'framer-motion'
 import { useAuthRuntime } from '../auth/AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
@@ -55,6 +55,21 @@ export const Route = createFileRoute('/workspace')({
   component: WorkspaceView,
 })
 
+const SIDEBAR_LAYOUT = {
+  collapseThresholdPercent: 1,
+  expandThresholdPercent: 2,
+  left: {
+    defaultSize: '24%',
+    minSize: '18%',
+    maxSize: '38%',
+  },
+  right: {
+    defaultSize: '24%',
+    minSize: '18%',
+    maxSize: '40%',
+  },
+}
+
 function WorkspaceWithHostedAuth() {
   const navigate = useNavigate()
   const search = Route.useSearch()
@@ -93,6 +108,10 @@ function WorkspaceWithHostedAuth() {
   const [authTab, setAuthTab] = useState<AuthTab>('login')
   const [authActionPending, setAuthActionPending] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
+  const leftPanelRef = usePanelRef()
+  const rightPanelRef = usePanelRef()
+  const lastLeftSizeRef = useRef<string>(SIDEBAR_LAYOUT.left.defaultSize)
+  const lastRightSizeRef = useRef<string>(SIDEBAR_LAYOUT.right.defaultSize)
 
   const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
 
@@ -409,6 +428,63 @@ function WorkspaceWithHostedAuth() {
     }
   }, [isAuthenticated])
 
+  useEffect(() => {
+    if (!isLeftSidebarCollapsed) {
+      return
+    }
+
+    const leftPanel = leftPanelRef.current
+
+    if (!leftPanel) {
+      return
+    }
+
+    const leftSize = leftPanel.getSize().asPercentage
+    if (leftSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
+      lastLeftSizeRef.current = `${leftSize}%`
+      leftPanel.resize(0)
+    }
+  }, [isLeftSidebarCollapsed, leftPanelRef])
+
+  useEffect(() => {
+    const leftPanel = leftPanelRef.current
+
+    if (!leftPanel) {
+      return
+    }
+
+    if (isLeftSidebarCollapsed) {
+      return
+    }
+
+    const leftSize = leftPanel.getSize().asPercentage
+    if (leftSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
+      leftPanel.resize(lastLeftSizeRef.current)
+    }
+  }, [isLeftSidebarCollapsed, leftPanelRef])
+
+  useEffect(() => {
+    const rightPanel = rightPanelRef.current
+
+    if (!rightPanel) {
+      return
+    }
+
+    if (!isRightSidebarOpen) {
+      const rightSize = rightPanel.getSize().asPercentage
+      if (rightSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
+        lastRightSizeRef.current = `${rightSize}%`
+        rightPanel.resize(0)
+      }
+      return
+    }
+
+    const rightSize = rightPanel.getSize().asPercentage
+    if (rightSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
+      rightPanel.resize(lastRightSizeRef.current)
+    }
+  }, [isRightSidebarOpen, rightPanelRef])
+
   const openFileById = (fileId: string) => {
     setActiveFileId(fileId)
     setSaveError(null)
@@ -474,17 +550,17 @@ function WorkspaceWithHostedAuth() {
     : {}
 
   return (
-    <main className="workspace-fullscreen-shell">
-      <section className="workspace-shell">
+    <main className="m-0 h-dvh w-screen p-0">
+      <section className="relative flex h-full min-h-0 flex-col">
         <div
           className={cn(
-            "workspace-content relative flex min-h-0 flex-1 flex-col",
-            isLocked && "workspace-content--locked"
+            'relative flex min-h-0 flex-1 flex-col overflow-hidden',
+            isLocked && 'pointer-events-none select-none [transform:scale(0.998)]'
           )}
           {...lockedContentProps}
         >
           {/* Top Bar Refined */}
-          <div className="workspace-toolbar grid items-center gap-3 border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.6)] backdrop-blur-md px-4 py-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="grid items-center gap-3 border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.6)] px-4 py-2 backdrop-blur-md md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 items-center gap-4">
               <button
                 type="button"
@@ -504,7 +580,7 @@ function WorkspaceWithHostedAuth() {
             </div>
 
             <div className="flex items-center justify-center">
-              <div className="workspace-segmented-control bg-[rgba(var(--chip-bg-rgb),0.5)] backdrop-blur-md p-1 rounded-xl border border-[var(--line)] relative flex">
+              <div className="relative flex rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] p-1 backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => setCenterView('editor')}
@@ -584,55 +660,93 @@ function WorkspaceWithHostedAuth() {
             onCloseAll={closeAll}
           />
 
-          <Group autoSaveId="workspace-layout-panels" orientation="horizontal" className="flex-1 min-h-0">
+          <Group
+            autoSaveId="workspace-layout-panels"
+            orientation="horizontal"
+            className="flex-1 min-h-0 min-w-0"
+            resizeTargetMinimumSize={{ coarse: 28, fine: 16 }}
+            onLayoutChanged={(nextLayout) => {
+              const nextLeftSize = nextLayout['left-sidebar'] ?? 0
+              const nextRightSize = nextLayout['right-sidebar'] ?? 0
+              const isLeftCollapsedNext = nextLeftSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
+              const isRightCollapsedNext = nextRightSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
+
+              if (isLeftSidebarCollapsed !== isLeftCollapsedNext) {
+                setIsLeftSidebarCollapsed(isLeftCollapsedNext)
+              }
+
+              if (!isLeftCollapsedNext) {
+                lastLeftSizeRef.current = `${nextLeftSize}%`
+              }
+
+              if (isRightSidebarOpen === isRightCollapsedNext) {
+                setIsRightSidebarOpen(!isRightCollapsedNext)
+              }
+
+              if (!isRightCollapsedNext) {
+                lastRightSizeRef.current = `${nextRightSize}%`
+              }
+            }}
+          >
             {/* Left Sidebar Panel */}
-            {!isLeftSidebarCollapsed && (
-              <>
-                <Panel id="left-sidebar" order={1} defaultSize={20} minSize={15} maxSize={40} className="flex flex-col min-h-0">
-                  <FilesSidebar
-                    files={files}
-                    activeFileId={activeFileId}
-                    isLoading={filesQuery.isLoading || projectsQuery.isLoading}
-                    errorMessage={
-                      projectsQuery.isError
-                        ? 'Could not load projects.'
-                        : filesQuery.isError
-                          ? 'Could not load files.'
-                          : createError
-                    }
-                    onOpenFile={openFileById}
-                    onCreateFile={(path) => {
-                      void createFileMutation.mutateAsync(path)
-                    }}
-                  />
-                </Panel>
-                <Separator className="w-[1px] bg-[var(--line)] hover:bg-[var(--lagoon)] transition-colors hover:w-[2px] cursor-col-resize" />
-              </>
-            )}
+            <Panel
+              id="left-sidebar"
+              order={1}
+              panelRef={leftPanelRef}
+              collapsible
+              collapsedSize="0%"
+              defaultSize={SIDEBAR_LAYOUT.left.defaultSize}
+              minSize={SIDEBAR_LAYOUT.left.minSize}
+              maxSize={SIDEBAR_LAYOUT.left.maxSize}
+              className="flex min-h-0 min-w-0 flex-col"
+            >
+              <FilesSidebar
+                files={files}
+                activeFileId={activeFileId}
+                isLoading={filesQuery.isLoading || projectsQuery.isLoading}
+                errorMessage={
+                  projectsQuery.isError
+                    ? 'Could not load projects.'
+                    : filesQuery.isError
+                      ? 'Could not load files.'
+                      : createError
+                }
+                onOpenFile={openFileById}
+                onCreateFile={(path) => {
+                  void createFileMutation.mutateAsync(path)
+                }}
+              />
+            </Panel>
+            <Separator
+              disabled={isLeftSidebarCollapsed}
+              className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
+            >
+              <div className="h-full w-[1px] bg-[var(--line)] transition-all group-hover:w-[3px] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:w-[1px] data-[disabled]:opacity-30" />
+            </Separator>
 
             {/* Central Editor/Terminal Panel */}
-            <Panel id="main-editor" order={2} className="flex flex-col min-h-0 bg-[rgba(var(--bg-rgb),0.2)]">
-               <div className="relative flex-1 flex flex-col min-h-0">
+            <Panel id="main-editor" order={2} className="flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
+               <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
                   {/* Sidebar Toggle Handle for Left */}
                   <button
                     onClick={() => setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
                     className={cn(
-                      "absolute left-0 top-1/2 -translate-y-1/2 z-10 p-1.5 py-3 bg-[var(--bg)] border border-[var(--line)] rounded-r-lg text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-md",
+                      "absolute left-0 top-1/2 -translate-y-1/2 z-30 px-2 py-6 bg-[var(--surface-strong)] border border-[var(--line)] border-l-0 rounded-r-xl text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-lg",
                       isLeftSidebarCollapsed && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
                     )}
                   >
-                    {isLeftSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+                    {isLeftSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
                   </button>
 
                   {/* Sidebar Toggle Handle for Right */}
                   <button
                     onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
                     className={cn(
-                      "absolute right-0 top-1/2 -translate-y-1/2 z-10 p-1.5 py-3 bg-[var(--bg)] border border-[var(--line)] rounded-l-lg text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-md",
+                      "absolute right-0 top-1/2 -translate-y-1/2 z-30 px-2 py-6 bg-[var(--surface-strong)] border border-[var(--line)] border-r-0 rounded-l-xl text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-lg",
                       !isRightSidebarOpen && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
                     )}
                   >
-                    {!isRightSidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+                    {!isRightSidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
                   </button>
 
                   {centerView === 'editor' ? (
@@ -674,19 +788,30 @@ function WorkspaceWithHostedAuth() {
             </Panel>
 
             {/* Right Sidebar Panel */}
-            {isRightSidebarOpen && (
-              <>
-                <Separator className="w-[1px] bg-[var(--line)] hover:bg-[var(--lagoon)] transition-colors hover:w-[2px] cursor-col-resize" />
-                <Panel id="right-sidebar" order={3} defaultSize={20} minSize={15} maxSize={40} className="flex flex-col min-h-0">
-                  <RightSidebar 
-                    isOpen={isRightSidebarOpen} 
-                    onToggle={() => setIsRightSidebarOpen(!isRightSidebarOpen)} 
-                    activeTab={rightSidebarTab}
-                    setActiveTab={setRightSidebarTab}
-                  />
-                </Panel>
-              </>
-            )}
+            <Separator
+              disabled={!isRightSidebarOpen}
+              className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
+            >
+              <div className="h-full w-[1px] bg-[var(--line)] transition-all group-hover:w-[3px] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:w-[1px] data-[disabled]:opacity-30" />
+            </Separator>
+            <Panel
+              id="right-sidebar"
+              order={3}
+              panelRef={rightPanelRef}
+              collapsible
+              collapsedSize="0%"
+              defaultSize="0%"
+              minSize={SIDEBAR_LAYOUT.right.minSize}
+              maxSize={SIDEBAR_LAYOUT.right.maxSize}
+              className="flex min-h-0 min-w-0 flex-col"
+            >
+              <RightSidebar
+                isOpen={isRightSidebarOpen}
+                onToggle={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
+                activeTab={rightSidebarTab}
+                setActiveTab={setRightSidebarTab}
+              />
+            </Panel>
           </Group>
 
           {/* Bottom Drawers */}
@@ -728,7 +853,7 @@ export function WorkspaceView() {
 
   if (!isConfigured) {
     return (
-      <main className="page-wrap px-4 py-12">
+      <main className="mx-auto w-full max-w-[1080px] px-4 py-12">
         <AuthSetupNotice />
       </main>
     )

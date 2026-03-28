@@ -13,7 +13,7 @@ interface ProtectedRouteProps {
 
 function UnauthorizedMessage({ requiredRoles }: { requiredRoles: string[] }) {
   return (
-    <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+    <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
       You are signed in, but you do not have access to this page.
       {requiredRoles.length > 0 ? (
         <div className="mt-3 text-xs uppercase tracking-[0.12em] text-[var(--kicker)]">
@@ -52,7 +52,7 @@ function ProtectedRouteContent({
 
   if (isLoading) {
     return (
-      <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+      <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
         Checking your Auth0 session...
       </div>
     )
@@ -60,7 +60,7 @@ function ProtectedRouteContent({
 
   if (error) {
     return (
-      <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+      <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
         Auth0 returned an error: {error.message}
       </div>
     )
@@ -68,7 +68,7 @@ function ProtectedRouteContent({
 
   if (!isAuthenticated) {
     return (
-      <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+      <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
         Redirecting you to Auth0 login...
       </div>
     )

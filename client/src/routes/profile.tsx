@@ -17,10 +17,10 @@ function ProfileRoute() {
 
   return (
     <ProtectedRoute>
-      <main className="page-wrap px-4 py-10 sm:py-12">
-        <section className="island-shell rounded-[1.8rem] p-6 sm:p-8">
-          <p className="island-kicker mb-2">Profile</p>
-          <h1 className="display-title mb-5 text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
+      <main className="mx-auto w-full max-w-[1080px] px-4 py-10 sm:py-12">
+        <section className="rounded-[1.8rem] border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] sm:p-8">
+          <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Profile</p>
+          <h1 className="mb-5 font-[Fraunces,Georgia,serif] text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
             Account and workspace preferences
           </h1>
 
@@ -54,7 +54,7 @@ function ProfileRoute() {
             </section>
 
             <section className="rounded-2xl border border-[var(--line)] bg-[var(--chip-bg)] p-5">
-              <p className="island-kicker mb-2">Editor theme presets</p>
+              <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Editor theme presets</p>
               <ThemePresetPicker />
             </section>
           </div>

@@ -65,24 +65,61 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
   }, [])
 
   return (
-    <div className="relative flex flex-col pointer-events-none z-50">
+    <div className="absolute bottom-0 left-0 right-0 z-50 flex flex-col pointer-events-none justify-end">
+      {/* Bookmark Tabs */}
+      <div className="flex gap-2 pointer-events-auto items-end relative z-10 mx-4">
+        {DRAWER_ITEMS.map((item) => {
+          const Icon = item.icon
+          const isActive = activeTab === item.id
+          
+          return (
+            <button
+              key={item.id}
+              onClick={() => toggleTab(item.id)}
+              className={cn(
+                "relative h-[36px] px-4 flex items-center gap-2 rounded-t-xl transition-all duration-200 group border border-b-0",
+                isActive 
+                  ? "bg-[rgba(var(--bg-rgb),0.95)] backdrop-blur-xl border-[var(--line)] text-[var(--lagoon-deep)] shadow-lg pb-1 h-[40px] z-20" 
+                  : "bg-transparent border-transparent text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(var(--bg-rgb),0.4)] z-10"
+              )}
+            >
+              <Icon size={14} className={cn("transition-transform", isActive ? "scale-110" : "group-hover:scale-110")} />
+              
+              <div className="relative flex items-center h-full">
+                <span className={cn(
+                  "text-[10px] font-bold uppercase tracking-widest",
+                  isActive ? "" : "invisible" 
+                )}>
+                  {item.label}
+                </span>
+                
+                {!isActive && (
+                  <span className="text-[10px] font-bold uppercase tracking-widest absolute left-0 whitespace-nowrap opacity-70 group-hover:opacity-100 transition-opacity">
+                    {item.label}
+                  </span>
+                )}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
       <AnimatePresence mode="wait">
         {activeTab && (
           <motion.div
             key={activeTab}
-            initial={{ y: '100%', opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: '100%', opacity: 0 }}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: isExpanded ? '80vh' : height, opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            style={{ height: isExpanded ? '80vh' : `${height}px` }}
             className={cn(
-              "absolute bottom-[40px] left-4 right-4 z-50 pointer-events-auto flex flex-col",
-              "bg-[rgba(var(--bg-rgb),0.85)] backdrop-blur-xl border border-[var(--line)] rounded-t-xl shadow-2xl overflow-hidden"
+              "relative z-0 pointer-events-auto flex flex-col mx-4 mb-4",
+              "bg-[rgba(var(--bg-rgb),0.95)] backdrop-blur-xl border border-[var(--line)] rounded-xl shadow-2xl overflow-hidden"
             )}
           >
             {/* Drag Handle */}
             <div 
-              className="h-3 w-full cursor-ns-resize flex items-center justify-center hover:bg-[rgba(255,255,255,0.05)] transition-colors group"
+              className="h-3 w-full cursor-ns-resize flex items-center justify-center hover:bg-[rgba(255,255,255,0.05)] transition-colors group border-b border-[var(--line)]"
               onMouseDown={() => {
                 isDragging.current = true
                 document.body.style.cursor = 'ns-resize'
@@ -91,47 +128,27 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
               <div className="w-12 h-1 bg-[var(--line)] group-hover:bg-[var(--lagoon)] rounded-full transition-colors" />
             </div>
 
-            {/* Drawer Header */}
-            <div className="flex items-center justify-between px-4 pb-2 border-b border-[var(--line)] bg-[rgba(255,255,255,0.05)] pt-2">
-              <div className="flex items-center gap-2">
-                {(() => {
-                  const Item = DRAWER_ITEMS.find(i => i.id === activeTab)
-                  if (!Item) return null
-                  const Icon = Item.icon
-                  return (
-                    <>
-                      <Icon size={14} className="text-[var(--sea-ink-soft)]" />
-                      <motion.span 
-                        layoutId={`drawer-title-${Item.id}`}
-                        className="text-xs font-bold uppercase tracking-wider text-[var(--sea-ink)]"
-                      >
-                        {Item.label}
-                      </motion.span>
-                    </>
-                  )
-                })()}
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setIsExpanded(!isExpanded)}
-                  className="p-1.5 hover:bg-[rgba(0,0,0,0.05)] rounded-md text-[var(--sea-ink-soft)] transition-colors"
-                >
-                  {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                </button>
-                <button
-                  onClick={() => {
-                    setActiveTab(null)
-                    setIsExpanded(false)
-                  }}
-                  className="p-1.5 hover:bg-[rgba(0,0,0,0.05)] rounded-md text-[var(--sea-ink-soft)] transition-colors"
-                >
-                  <X size={14} />
-                </button>
-              </div>
+            {/* Drawer Header Controls */}
+            <div className="absolute top-2 right-4 flex items-center gap-1 z-10">
+              <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="p-1.5 hover:bg-[rgba(0,0,0,0.05)] rounded-md text-[var(--sea-ink-soft)] transition-colors"
+              >
+                {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab(null)
+                  setIsExpanded(false)
+                }}
+                className="p-1.5 hover:bg-[rgba(0,0,0,0.05)] rounded-md text-[var(--sea-ink-soft)] transition-colors"
+              >
+                <X size={14} />
+              </button>
             </div>
 
             {/* Drawer Content */}
-            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+            <div className="mt-2 flex-1 overflow-y-auto p-4">
               {activeTab === 'timeline' && (
                 <div className="space-y-4">
                   <div className="p-8 border-2 border-dashed border-[var(--line)] rounded-xl flex flex-col items-center justify-center text-center opacity-50">
@@ -195,46 +212,6 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Bookmark Tabs */}
-      <div className="h-[40px] flex items-end px-6 gap-2 pointer-events-auto">
-        {DRAWER_ITEMS.map((item) => {
-          const Icon = item.icon
-          const isActive = activeTab === item.id
-          return (
-            <button
-              key={item.id}
-              onClick={() => toggleTab(item.id)}
-              className={cn(
-                "relative h-[36px] px-4 flex items-center gap-2 rounded-t-xl transition-all duration-200 group border border-b-0",
-                isActive 
-                  ? "bg-[rgba(var(--bg-rgb),0.85)] backdrop-blur-xl border-[var(--line)] text-[var(--lagoon-deep)] shadow-lg pb-1" 
-                  : "bg-[rgba(var(--bg-rgb),0.4)] backdrop-blur-md border-[var(--line)] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(var(--bg-rgb),0.6)] hover:h-[40px]"
-              )}
-            >
-              <Icon size={14} className={cn("transition-transform", isActive ? "scale-110" : "group-hover:scale-110")} />
-              
-              <div className="relative flex items-center h-full">
-                <span className={cn(
-                  "text-[10px] font-bold uppercase tracking-widest",
-                  isActive ? "invisible" : "invisible" // Keep space for width
-                )}>
-                  {item.label}
-                </span>
-                
-                {!isActive && (
-                  <motion.span 
-                    layoutId={`drawer-title-${item.id}`}
-                    className="text-[10px] font-bold uppercase tracking-widest absolute left-0 whitespace-nowrap"
-                  >
-                    {item.label}
-                  </motion.span>
-                )}
-              </div>
-            </button>
-          )
-        })}
-      </div>
     </div>
   )
 }

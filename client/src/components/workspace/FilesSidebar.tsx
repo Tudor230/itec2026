@@ -102,7 +102,7 @@ export default function FilesSidebar({
   }, [files, query])
 
   return (
-    <aside className="flex h-full w-full min-w-[280px] flex-col bg-[rgba(255,255,255,0.52)] overflow-hidden">
+    <aside className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-[rgba(255,255,255,0.52)]">
       <div className="border-b border-[var(--line)] px-3 py-3">
         <div className="mb-2 flex items-center justify-between">
           <p className="m-0 text-xs font-semibold tracking-[0.14em] text-[var(--kicker)] uppercase">

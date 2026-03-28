@@ -24,11 +24,11 @@ export default function LandingDeferredAuthCta() {
   return (
     <section
       id="landing-auth-cta"
-      className={`landing-auth-cta island-shell mt-10 rounded-2xl p-6 ${
-        isVisible ? 'is-visible' : ''
+      className={`mt-10 rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] transition-[opacity,transform] duration-[320ms] ${
+        isVisible ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
       }`}
     >
-      <p className="island-kicker mb-2">Ready to enter iTECify?</p>
+      <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Ready to enter iTECify?</p>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="max-w-2xl">
           <h2 className="m-0 text-2xl font-semibold text-[var(--sea-ink)]">

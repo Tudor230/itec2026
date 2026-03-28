@@ -1,6 +1,6 @@
 export default function WorkspaceSkeleton() {
   return (
-    <div className="workspace-fullscreen-shell bg-[var(--bg-base)] overflow-hidden">
+    <div className="m-0 h-dvh w-screen overflow-hidden bg-[var(--bg-base)] p-0">
       <div className="flex h-full w-full flex-col">
         {/* Top Bar Skeleton */}
         <div className="h-[52px] border-b border-[var(--line)] bg-[rgba(255,255,255,0.05)] flex items-center justify-between px-4">

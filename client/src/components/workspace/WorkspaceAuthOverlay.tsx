@@ -29,20 +29,20 @@ export default function WorkspaceAuthOverlay({
   const errorMessage = authError ?? runtimeError
 
   return (
-    <div className="workspace-auth-overlay">
-      <div className="workspace-auth-panels">
+    <div className="absolute inset-0 z-20 grid place-items-center bg-[rgba(0,0,0,0.6)] p-[clamp(1rem,2.5vw,2rem)] backdrop-blur-xl">
+      <div className="grid w-full max-w-[1100px] items-stretch gap-4 lg:grid-cols-2">
         {infoOpen ? (
-          <section className="workspace-auth-card">
+          <section className="relative rounded-2xl border border-[color-mix(in_oklab,var(--line)_78%,var(--lagoon)_22%)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-[1.15rem] shadow-[inset_0_1px_0_var(--inset-glint),0_24px_45px_rgba(10,25,31,0.28)]">
             <button
               type="button"
               onClick={onCloseInfo}
-              className="workspace-auth-dismiss"
+              className="absolute right-[0.7rem] top-[0.7rem] grid h-8 w-8 place-items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]"
               aria-label="Hide context panel"
               title="Hide context panel"
             >
               <X size={16} />
             </button>
-            <p className="island-kicker mb-2">Session Context</p>
+            <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Session Context</p>
             <h2 className="mb-3 text-2xl font-semibold text-[var(--sea-ink)]">
               Sign in to continue to your projects.
             </h2>
@@ -58,12 +58,12 @@ export default function WorkspaceAuthOverlay({
           </section>
         ) : null}
 
-        <section className="workspace-auth-card workspace-auth-card-auth">
+        <section className="relative min-h-[360px] rounded-2xl border border-[color-mix(in_oklab,var(--line)_78%,var(--lagoon)_22%)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-[1.15rem] shadow-[inset_0_1px_0_var(--inset-glint),0_24px_45px_rgba(10,25,31,0.28)]">
           {!infoOpen ? (
             <button
               type="button"
               onClick={onOpenInfo}
-              className="workspace-auth-help"
+              className="absolute right-[0.7rem] top-[0.7rem] grid h-8 w-8 place-items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]"
               aria-label="Show context panel"
               title="Show context panel"
             >

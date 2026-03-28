@@ -13,7 +13,7 @@ function DashboardRedirect() {
   }, [navigate])
 
   return (
-    <main className="page-wrap px-4 py-12">
+    <main className="mx-auto w-full max-w-[1080px] px-4 py-12">
       <p className="text-sm text-[var(--sea-ink-soft)]">Redirecting to projects...</p>
     </main>
   )

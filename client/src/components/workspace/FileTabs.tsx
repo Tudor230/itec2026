@@ -29,7 +29,7 @@ export default function FileTabs({
   }
 
   return (
-    <div className="workspace-tabs flex items-center gap-1 px-4 py-2 border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.2)] overflow-x-auto custom-scrollbar min-h-[44px]">
+    <div className="flex min-h-[44px] items-center gap-1 overflow-x-auto border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.2)] px-4 py-2">
       {tabs.map((tab) => (
         <DropdownMenu.Root key={tab.id}>
           <DropdownMenu.Trigger asChild>
