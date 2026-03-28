@@ -9,7 +9,7 @@ import {
   Monitor,
   SquareTerminal,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuthRuntime } from '../auth/AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
 import FileTabs from '../components/workspace/FileTabs'
@@ -36,6 +36,8 @@ import {
   type CollabFileCreatedPayload,
 } from '../lib/collab-client'
 import { useCollabDoc } from '../hooks/use-collab-doc'
+
+const AUTOSAVE_DELAY_MS = 200
 
 export const Route = createFileRoute('/workspace')({
   validateSearch: (search: Record<string, unknown>) => {
@@ -91,6 +93,7 @@ function WorkspaceWithHostedAuth() {
     text: string
   } | null>(null)
   const [inviteNotice, setInviteNotice] = useState<string | null>(null)
+  const autosaveTimeoutRef = useRef<number | null>(null)
 
   const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
 
@@ -260,6 +263,11 @@ function WorkspaceWithHostedAuth() {
       upsertFileInCache(updated)
       markSaved(updated.projectId, updated.id)
       setDraftsByFileId((previous) => {
+        const latestDraft = previous[updated.id]
+        if (latestDraft !== undefined && latestDraft !== updated.content) {
+          return previous
+        }
+
         const next = { ...previous }
         delete next[updated.id]
         return next
@@ -271,6 +279,28 @@ function WorkspaceWithHostedAuth() {
       setSaveError(error.message)
     },
   })
+
+  const clearAutosaveTimeout = useCallback(() => {
+    if (autosaveTimeoutRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(autosaveTimeoutRef.current)
+    autosaveTimeoutRef.current = null
+  }, [])
+
+  const triggerSave = useCallback((fileId: string, content: string) => {
+    clearAutosaveTimeout()
+
+    if (saveFileMutation.isPending) {
+      return
+    }
+
+    void saveFileMutation.mutateAsync({
+      fileId,
+      content,
+    })
+  }, [clearAutosaveTimeout, saveFileMutation])
 
   const files = filesQuery.data ?? []
   const activeFile = files.find((file) => file.id === activeFileId) ?? null
@@ -284,6 +314,32 @@ function WorkspaceWithHostedAuth() {
     ? (draftsByFileId[activeFile.id] ?? activeFile.content) !== activeFile.content
     : false
   const isDirty = activeFile ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id]) : false
+
+  useEffect(() => {
+    clearAutosaveTimeout()
+
+    if (!isAuthenticated || !activeFile || !localIsDirty) {
+      return
+    }
+
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      if (saveFileMutation.isPending) {
+        return
+      }
+
+      triggerSave(activeFile.id, editorValue)
+    }, AUTOSAVE_DELAY_MS)
+
+    return clearAutosaveTimeout
+  }, [
+    activeFile,
+    clearAutosaveTimeout,
+    editorValue,
+    isAuthenticated,
+    localIsDirty,
+    saveFileMutation.isPending,
+    triggerSave,
+  ])
 
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
   const requestedProjectMissing =
@@ -460,17 +516,14 @@ function WorkspaceWithHostedAuth() {
         return
       }
 
-      void saveFileMutation.mutateAsync({
-        fileId: activeFile.id,
-        content: editorValue,
-      })
+      triggerSave(activeFile.id, editorValue)
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [activeFile, editorValue, isAuthenticated, localIsDirty, saveFileMutation])
+  }, [activeFile, editorValue, isAuthenticated, localIsDirty, saveFileMutation.isPending, triggerSave])
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -532,9 +585,9 @@ function WorkspaceWithHostedAuth() {
 
   const lockedContentProps = isLocked
     ? ({
-        'aria-hidden': true,
-        inert: true,
-      } as const)
+      'aria-hidden': true,
+      inert: true,
+    } as const)
     : {}
 
   return (
@@ -742,10 +795,7 @@ function WorkspaceWithHostedAuth() {
                     return
                   }
 
-                  void saveFileMutation.mutateAsync({
-                    fileId: activeFile.id,
-                    content: editorValue,
-                  })
+                  triggerSave(activeFile.id, editorValue)
                 }}
               />
             ) : (
