@@ -31,43 +31,69 @@ export function easeOutCubic(t: number) {
   return 1 - (1 - clamped) ** 3
 }
 
+function windowOpacity(
+  progress: number,
+  fadeInStart: number,
+  fadeInEnd: number,
+  fadeOutStart: number,
+  fadeOutEnd: number,
+) {
+  const fadeIn = segmentProgress(progress, fadeInStart, fadeInEnd)
+  const fadeOut = 1 - segmentProgress(progress, fadeOutStart, fadeOutEnd)
+  return clamp01(fadeIn * fadeOut)
+}
+
 export interface LandingTimelineView {
   heroOpacity: number
-  infoOpacity: number
-  authOpacity: number
+  philosophyOpacity: number
+  scopeOpacity: number
   robotX: number
   robotOpacity: number
+  robotZoom: number
+  heroLift: number
+  philosophyLift: number
+  scopeLift: number
+  philosophyX: number
+  scopeX: number
 }
 
 export function deriveLandingTimeline(progress: number): LandingTimelineView {
   const clamped = clamp01(progress)
-  const heroFade = 1 - segmentProgress(clamped, 0.2, 0.4)
-  const infoFadeIn = segmentProgress(clamped, 0.2, 0.4)
-  const infoFadeOut = segmentProgress(clamped, 0.6, 0.8)
-  const infoOpacity = clamp01(infoFadeIn * (1 - infoFadeOut))
-  const authOpacity = segmentProgress(clamped, 0.8, 1)
+  const heroOpacity = 1 - segmentProgress(clamped, 0.12, 0.3)
+  const philosophyOpacity = windowOpacity(clamped, 0.3, 0.38, 0.6, 0.72)
+  const scopeOpacity = segmentProgress(clamped, 0.9, 0.98)
 
   let robotX = 0
 
-  if (clamped < 0.2) {
+  if (clamped < 0.3) {
     robotX = 0
-  } else if (clamped < 0.4) {
-    robotX = lerp(0, 30, segmentProgress(clamped, 0.2, 0.4))
-  } else if (clamped < 0.6) {
-    robotX = 30
-  } else if (clamped < 0.99) {
-    robotX = lerp(30, -30, segmentProgress(clamped, 0.6, 0.99))
+  } else if (clamped < 0.48) {
+    robotX = lerp(0, 24, segmentProgress(clamped, 0.3, 0.48))
+  } else if (clamped < 0.72) {
+    robotX = 22
+  } else if (clamped < 0.9) {
+    robotX = lerp(22, -24, segmentProgress(clamped, 0.72, 0.9))
   } else {
-    robotX = -30
+    robotX = -24
   }
 
-  const robotOpacity = clamped < 0.2 ? 0.24 : lerp(0.24, 1, segmentProgress(clamped, 0.2, 0.4))
+  const robotZoom = lerp(1.02, 0.86, easeOutCubic(clamped))
+  const robotOpacity = lerp(0.24, 1, segmentProgress(clamped, 0.12, 0.3))
+
+  const philosophyX = lerp(0, -120, segmentProgress(clamped, 0.3, 0.48))
+  const scopeX = lerp(0, 132, segmentProgress(clamped, 0.9, 1))
 
   return {
-    heroOpacity: clamp01(heroFade),
-    infoOpacity,
-    authOpacity,
+    heroOpacity: clamp01(heroOpacity),
+    philosophyOpacity,
+    scopeOpacity,
     robotX,
     robotOpacity,
+    robotZoom,
+    heroLift: lerp(0, -18, segmentProgress(clamped, 0.1, 0.3)),
+    philosophyLift: lerp(28, 0, segmentProgress(clamped, 0.3, 0.4)),
+    scopeLift: lerp(24, 0, segmentProgress(clamped, 0.9, 1)),
+    philosophyX,
+    scopeX,
   }
 }

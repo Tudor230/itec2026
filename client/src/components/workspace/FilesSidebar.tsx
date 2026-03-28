@@ -731,6 +731,7 @@ export default function FilesSidebar({
             <button
               type="button"
               onClick={() => handleTopLevelCreate('file')}
+              aria-label="New file"
               className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
               title="New file"
             >
@@ -740,6 +741,7 @@ export default function FilesSidebar({
             <button
               type="button"
               onClick={() => handleTopLevelCreate('folder')}
+              aria-label="New folder"
               className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
               title="New folder"
             >
@@ -750,6 +752,7 @@ export default function FilesSidebar({
               <button
                 type="button"
                 onClick={onClose}
+                aria-label="Close files panel"
                 className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
                 title="Close files panel"
               >
