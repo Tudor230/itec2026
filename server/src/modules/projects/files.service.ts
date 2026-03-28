@@ -47,4 +47,20 @@ export class FilesService {
   removeFromSync(fileId: string) {
     return this.repository.removeFromSync(fileId)
   }
+
+  listFoldersByProject(actor: ActorContext, projectId: string) {
+    return this.repository.listFoldersByProject(actor, projectId)
+  }
+
+  createFolder(actor: ActorContext, projectId: string, path: string) {
+    return this.repository.createFolder(actor, projectId, path)
+  }
+
+  renameFolder(actor: ActorContext, projectId: string, fromPath: string, toPath: string) {
+    return this.repository.renameFolder(actor, projectId, fromPath, toPath)
+  }
+
+  deleteFolder(actor: ActorContext, projectId: string, path: string) {
+    return this.repository.deleteFolder(actor, projectId, path)
+  }
 }

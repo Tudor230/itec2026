@@ -41,6 +41,7 @@ services:
       PORT: 4000
       DATABASE_URL: postgres://itec:itec@postgres:5432/itec2026
       CLIENT_ORIGIN: http://localhost:3000
+      COLLAB_TERMINAL_DOCKER_IMAGE: node:20.0
       FILES_STORAGE_ROOT: /data/files
       COLLAB_WORKSPACE_ROOT: /data/workspaces
       DOCKER_HOST: tcp://dockerd:2375
@@ -51,6 +52,10 @@ services:
       COLLAB_WORKSPACE_EXCLUDED_DIRS: node_modules,.git,dist,build,.next,coverage,.cache
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-itec2026.eu.auth0.com}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://itec2026-api}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-30000}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
     depends_on:
       postgres:
         condition: service_healthy

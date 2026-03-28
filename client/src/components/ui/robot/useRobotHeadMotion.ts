@@ -11,8 +11,15 @@ export type RobotHeadStyleVars = CSSProperties & {
   '--robot-head-bob': string
 }
 
+interface RobotEyeTarget {
+  x: number
+  y: number
+}
+
 interface RobotHeadMotion {
   isTransitioning: boolean
+  isFocusLocked: boolean
+  eyeTarget: RobotEyeTarget
   style: RobotHeadStyleVars
 }
 
@@ -21,6 +28,43 @@ interface PoseVars {
   yaw: string
   shiftX: string
   shiftY: string
+}
+
+const REACTION_POSE_BY_SECTION: Record<RobotSection, PoseVars> = {
+  hero: {
+    tilt: '0deg',
+    yaw: '0deg',
+    shiftX: '0px',
+    shiftY: '0px',
+  },
+  split: {
+    tilt: '-9deg',
+    yaw: '-16deg',
+    shiftX: '-14px',
+    shiftY: '-6px',
+  },
+  auth: {
+    tilt: '-7deg',
+    yaw: '18deg',
+    shiftX: '16px',
+    shiftY: '-4px',
+  },
+}
+
+const EYE_TARGET_BY_SECTION: Record<RobotSection, RobotEyeTarget> = {
+  hero: { x: 0, y: -1 },
+  split: { x: -14, y: -8 },
+  auth: { x: 15, y: -8 },
+}
+
+function isInfoSection(section: RobotSection) {
+  return section === 'split' || section === 'auth'
+}
+
+function addUnit(base: string, delta: string) {
+  const unit = base.endsWith('deg') ? 'deg' : 'px'
+  const nextValue = Number.parseFloat(base) + Number.parseFloat(delta)
+  return `${nextValue.toFixed(2)}${unit}`
 }
 
 const POSE_BY_SECTION: Record<RobotSection, PoseVars> = {
@@ -55,42 +99,95 @@ export function getRobotHeadPose(section: RobotSection): PoseVars {
   return POSE_BY_SECTION[section]
 }
 
-export function useRobotHeadMotion(section: RobotSection, zoom: number): RobotHeadMotion {
+export function getRobotEyeTarget(section: RobotSection): RobotEyeTarget {
+  return EYE_TARGET_BY_SECTION[section]
+}
+
+export function resolveRobotReactionPose(section: RobotSection, focusLocked: boolean): PoseVars {
+  const pose = getRobotHeadPose(section)
+
+  if (!focusLocked) {
+    return pose
+  }
+
+  const reactionPose = REACTION_POSE_BY_SECTION[section]
+
+  return {
+    tilt: addUnit(pose.tilt, reactionPose.tilt),
+    yaw: addUnit(pose.yaw, reactionPose.yaw),
+    shiftX: addUnit(pose.shiftX, reactionPose.shiftX),
+    shiftY: addUnit(pose.shiftY, reactionPose.shiftY),
+  }
+}
+
+export function resolveRobotEyeTarget(section: RobotSection, focusLocked: boolean): RobotEyeTarget {
+  const baseEyeTarget = getRobotEyeTarget(section)
+
+  if (!focusLocked) {
+    return baseEyeTarget
+  }
+
+  return {
+    x: baseEyeTarget.x * 2.4,
+    y: baseEyeTarget.y * 2.1,
+  }
+}
+
+export function useRobotHeadMotion(section: RobotSection, zoom: number, shouldAnimate = true): RobotHeadMotion {
   const [isTransitioning, setIsTransitioning] = useState(false)
+  const [isEyeFocusLocked, setIsEyeFocusLocked] = useState(false)
   const previousSectionRef = useRef<RobotSection>(section)
 
   useEffect(() => {
+    if (!shouldAnimate) {
+      previousSectionRef.current = section
+      setIsTransitioning(false)
+      setIsEyeFocusLocked(false)
+      return
+    }
+
     if (previousSectionRef.current === section) {
       return
     }
 
     previousSectionRef.current = section
     setIsTransitioning(true)
+    setIsEyeFocusLocked(true)
 
-    const timeoutId = window.setTimeout(() => {
+    const transitionTimeoutId = window.setTimeout(() => {
       setIsTransitioning(false)
     }, 620)
 
-    return () => {
-      window.clearTimeout(timeoutId)
-    }
-  }, [section])
+    const focusTimeoutId = window.setTimeout(() => {
+      setIsEyeFocusLocked(false)
+    }, 1000)
 
-  const pose = getRobotHeadPose(section)
+    return () => {
+      window.clearTimeout(transitionTimeoutId)
+      window.clearTimeout(focusTimeoutId)
+    }
+  }, [section, shouldAnimate])
+
+  const effectiveHeadFocus = shouldAnimate && isInfoSection(section)
+  const effectiveEyeFocus = shouldAnimate && isEyeFocusLocked
+  const effectivePose = resolveRobotReactionPose(section, effectiveHeadFocus)
+  const effectiveEyeTarget = resolveRobotEyeTarget(section, effectiveEyeFocus)
 
   const style = useMemo<RobotHeadStyleVars>(
     () => ({
-      '--robot-head-tilt': pose.tilt,
-      '--robot-head-yaw': pose.yaw,
-      '--robot-head-shift-x': pose.shiftX,
-      '--robot-head-shift-y': pose.shiftY,
+      '--robot-head-tilt': effectivePose.tilt,
+      '--robot-head-yaw': effectivePose.yaw,
+      '--robot-head-shift-x': effectivePose.shiftX,
+      '--robot-head-shift-y': effectivePose.shiftY,
       '--robot-head-bob': mapZoomToBobAmplitude(zoom),
     }),
-    [pose.shiftX, pose.shiftY, pose.tilt, pose.yaw, zoom],
+    [effectivePose.shiftX, effectivePose.shiftY, effectivePose.tilt, effectivePose.yaw, zoom],
   )
 
   return {
     isTransitioning,
+    isFocusLocked: effectiveEyeFocus,
+    eyeTarget: effectiveEyeTarget,
     style,
   }
 }

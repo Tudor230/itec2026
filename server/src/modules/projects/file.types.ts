@@ -16,3 +16,7 @@ export interface FileInput {
   path: string
   content: string
 }
+
+export interface FolderRecord {
+  path: string
+}
