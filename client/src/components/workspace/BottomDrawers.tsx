@@ -4,6 +4,9 @@ import {
   Play,
   Settings,
   Users,
+  RotateCcw,
+  RefreshCw,
+  AlertTriangle,
   X,
   Maximize2,
   Minimize2,
@@ -17,10 +20,53 @@ import { workspaceHudChipClass } from './ui-classes'
 
 export type DrawerTab = 'timeline' | 'run' | 'env' | 'collab'
 
+export interface TimelineEntry {
+  sequence: number
+  kind: 'snapshot' | 'update'
+  createdAt: string
+}
+
 interface BottomDrawersProps {
   activeTab?: DrawerTab | null
   onActiveTabChange?: (tab: DrawerTab | null) => void
   onClose?: () => void
+  timelineEntries?: TimelineEntry[]
+  timelineHeadSequence?: number
+  timelineIsLoading?: boolean
+  timelineError?: string | null
+  timelineRewindPending?: boolean
+  onTimelineRefresh?: () => void
+  onTimelineRewind?: (targetSequence: number) => void
+  onTimelineReturnToLatest?: () => void
+}
+
+function formatRelativeTime(value: string) {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return 'unknown time'
+  }
+
+  const diffMs = Date.now() - parsed.getTime()
+  const diffSeconds = Math.max(0, Math.round(diffMs / 1000))
+  if (diffSeconds < 5) {
+    return 'just now'
+  }
+  if (diffSeconds < 60) {
+    return `${diffSeconds} sec ago`
+  }
+
+  const diffMinutes = Math.floor(diffSeconds / 60)
+  if (diffMinutes < 60) {
+    return `${diffMinutes} min ago`
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) {
+    return `${diffHours} hr ago`
+  }
+
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
 }
 
 const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: LucideIcon }[] = [
@@ -30,12 +76,25 @@ const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: Luci
   { id: 'collab', label: 'Collaboration', subtitle: 'team presence', icon: Users },
 ]
 
-export default function BottomDrawers({ activeTab: controlledActiveTab, onActiveTabChange, onClose }: BottomDrawersProps) {
+export default function BottomDrawers({
+  activeTab: controlledActiveTab,
+  onActiveTabChange,
+  onClose,
+  timelineEntries = [],
+  timelineHeadSequence = 0,
+  timelineIsLoading = false,
+  timelineError = null,
+  timelineRewindPending = false,
+  onTimelineRefresh,
+  onTimelineRewind,
+  onTimelineReturnToLatest,
+}: BottomDrawersProps) {
   const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
   const isDragging = useRef(false)
   const [isResizing, setIsResizing] = useState(false)
+  const [rewindConfirmSequence, setRewindConfirmSequence] = useState<number | null>(null)
   const isControlled = controlledActiveTab !== undefined
   const activeTab = isControlled ? controlledActiveTab : uncontrolledActiveTab
   const isOpen = activeTab !== null
@@ -216,31 +275,89 @@ export default function BottomDrawers({ activeTab: controlledActiveTab, onActive
         <div key={activeTab} className="mt-2 flex-1 overflow-y-auto p-4">
           {activeTab === 'timeline' && (
             <div className="space-y-3">
-              {[
-                { label: 'Opened workspace', time: 'Just now', tone: 'bg-[rgba(var(--lagoon-rgb),0.14)] text-[var(--lagoon-deep)]' },
-                { label: 'Fetched latest files', time: '14 sec ago', tone: 'bg-[rgba(47,106,74,0.14)] text-[var(--kicker)]' },
-                { label: 'Synced project metadata', time: '1 min ago', tone: 'bg-[rgba(99,122,138,0.14)] text-[var(--sea-ink-soft)]' },
-              ].map((entry, index) => (
-                <article
-                  key={entry.label}
-                  className="relative overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-3"
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onTimelineRefresh?.()}
+                  className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.45)] px-2 py-1 text-[11px] font-semibold text-[var(--sea-ink)] transition-colors hover:bg-[rgba(var(--chip-bg-rgb),0.68)]"
+                  disabled={timelineIsLoading}
                 >
-                  <span className="absolute bottom-0 left-0 top-0 w-[3px] bg-[linear-gradient(180deg,var(--lagoon),var(--lagoon-deep))]" />
-                  <div className="ml-2 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">{entry.label}</p>
-                      <p className="m-0 mt-1 text-[11px] text-[var(--sea-ink-soft)]">Workspace event #{index + 1}</p>
-                    </div>
-                    <span className={cn('rounded-full px-2 py-1 text-[10px] font-bold', entry.tone)}>
-                      {entry.time}
-                    </span>
-                  </div>
-                </article>
-              ))}
+                  <RefreshCw size={12} className={timelineIsLoading ? 'animate-spin' : ''} />
+                  refresh
+                </button>
 
-              <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
-                Full timeline stream will appear here as executions and edits are connected.
+                <button
+                  type="button"
+                  onClick={() => onTimelineReturnToLatest?.()}
+                  className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.45)] px-2 py-1 text-[11px] font-semibold text-[var(--sea-ink)] transition-colors hover:bg-[rgba(var(--chip-bg-rgb),0.68)] disabled:opacity-50"
+                  disabled={timelineRewindPending || timelineHeadSequence <= 0}
+                >
+                  <RotateCcw size={12} />
+                  return to latest
+                </button>
               </div>
+
+              {timelineError ? (
+                <div className="flex items-center gap-2 rounded-xl border border-[rgba(178,72,55,0.32)] bg-[rgba(178,72,55,0.09)] p-3 text-xs text-[var(--sea-ink)]">
+                  <AlertTriangle size={13} className="text-[rgb(178,72,55)]" />
+                  {timelineError}
+                </div>
+              ) : null}
+
+              {timelineEntries.length === 0 && !timelineIsLoading ? (
+                <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
+                  No timeline entries yet for this file.
+                </div>
+              ) : null}
+
+              {timelineEntries.map((entry) => {
+                const isHead = entry.sequence === timelineHeadSequence
+                const isSnapshot = entry.kind === 'snapshot'
+
+                return (
+                  <article
+                    key={`${entry.kind}-${entry.sequence}-${entry.createdAt}`}
+                    className="relative overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-3"
+                  >
+                    <span
+                      className={cn(
+                        'absolute bottom-0 left-0 top-0 w-[3px]',
+                        isSnapshot
+                          ? 'bg-[linear-gradient(180deg,var(--lagoon),var(--lagoon-deep))]'
+                          : 'bg-[linear-gradient(180deg,var(--kicker),color-mix(in_oklab,var(--kicker)_66%,black))]'
+                      )}
+                    />
+                    <div className="ml-2 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">
+                          {isSnapshot ? 'Snapshot' : 'Update'} #{entry.sequence}
+                        </p>
+                        <p className="m-0 mt-1 text-[11px] text-[var(--sea-ink-soft)]">
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <span className={cn(
+                        'rounded-full px-2 py-1 text-[10px] font-bold',
+                        isHead
+                          ? 'bg-[rgba(var(--lagoon-rgb),0.14)] text-[var(--lagoon-deep)]'
+                          : 'bg-[rgba(99,122,138,0.14)] text-[var(--sea-ink-soft)]'
+                      )}>
+                        {isHead ? 'latest' : formatRelativeTime(entry.createdAt)}
+                      </span>
+                    </div>
+                    <div className="ml-2 mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setRewindConfirmSequence(entry.sequence)}
+                        className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.4)] px-2 py-1 text-[11px] font-semibold text-[var(--sea-ink)] transition-colors hover:bg-[rgba(var(--chip-bg-rgb),0.65)] disabled:opacity-45"
+                        disabled={timelineRewindPending || isHead}
+                      >
+                        <RotateCcw size={12} /> rewind here
+                      </button>
+                    </div>
+                  </article>
+                )
+              })}
             </div>
           )}
 
@@ -317,6 +434,40 @@ export default function BottomDrawers({ activeTab: controlledActiveTab, onActive
           )}
         </div>
       </div>
+
+      {rewindConfirmSequence !== null ? (
+        <div className="pointer-events-auto absolute inset-0 z-[60] grid place-items-center bg-[rgba(5,14,18,0.45)] p-4">
+          <div className="w-full max-w-md rounded-xl border border-[var(--line)] bg-[color-mix(in_oklab,var(--surface-strong)_96%,var(--bg-base)_4%)] p-4 shadow-[0_20px_40px_rgba(7,20,26,0.26)]">
+            <p className="m-0 text-sm font-bold text-[var(--sea-ink)]">Confirm rewind</p>
+            <p className="m-0 mt-2 text-xs text-[var(--sea-ink-soft)]">
+              Rewind this file to sequence #{rewindConfirmSequence}. This is non-destructive and will append a new update.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRewindConfirmSequence(null)}
+                className="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--sea-ink)]"
+                disabled={timelineRewindPending}
+              >
+                cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (rewindConfirmSequence !== null) {
+                    onTimelineRewind?.(rewindConfirmSequence)
+                  }
+                  setRewindConfirmSequence(null)
+                }}
+                className="rounded-md bg-[var(--lagoon)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                disabled={timelineRewindPending}
+              >
+                {timelineRewindPending ? 'rewinding...' : 'confirm rewind'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

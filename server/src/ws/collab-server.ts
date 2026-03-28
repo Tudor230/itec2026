@@ -143,6 +143,79 @@ export function createCollabServer(
 
       return yjsHistoryRepository.getHydratedState(fileId)
     },
+    async (actor, projectId, fileId, options) => {
+      if (!actor.subject) {
+        return {
+          entries: [],
+          headSequence: 0,
+        }
+      }
+
+      const canAccess = await canEditProject(prisma, actor, projectId)
+      if (!canAccess) {
+        return {
+          entries: [],
+          headSequence: 0,
+        }
+      }
+
+      const file = await prisma.file.findFirst({
+        where: {
+          id: fileId,
+          projectId,
+        },
+        select: {
+          id: true,
+        },
+      })
+
+      if (!file) {
+        return {
+          entries: [],
+          headSequence: 0,
+        }
+      }
+
+      const [entries, headSequence] = await Promise.all([
+        yjsHistoryRepository.listTimelineEntries(fileId, options),
+        yjsHistoryRepository.getHeadSequence(fileId),
+      ])
+
+      return {
+        entries: entries.map((entry) => ({
+          sequence: entry.sequence,
+          kind: entry.kind,
+          createdAt: entry.createdAt.toISOString(),
+        })),
+        headSequence,
+      }
+    },
+    async (actor, projectId, fileId, sequence) => {
+      if (!actor.subject) {
+        return null
+      }
+
+      const canAccess = await canEditProject(prisma, actor, projectId)
+      if (!canAccess) {
+        return null
+      }
+
+      const file = await prisma.file.findFirst({
+        where: {
+          id: fileId,
+          projectId,
+        },
+        select: {
+          id: true,
+        },
+      })
+
+      if (!file) {
+        return null
+      }
+
+      return yjsHistoryRepository.getHydratedStateAtSequence(fileId, sequence)
+    },
     async (actor, projectId, fileId, update) => {
       if (!actor.subject) {
         throw Object.assign(new Error('Authentication is required'), {

@@ -17,6 +17,55 @@ interface DocUpdatePayload extends DocKey {
   update: string
 }
 
+export interface CollabDocTimelineEntry {
+  sequence: number
+  kind: 'snapshot' | 'update'
+  createdAt: string
+}
+
+interface DocTimelinePayload extends DocKey {
+  requestId?: string
+  headSequence: number
+  entries: CollabDocTimelineEntry[]
+}
+
+export interface CollabDocTimelineResponse {
+  projectId: string
+  fileId: string
+  headSequence: number
+  entries: CollabDocTimelineEntry[]
+}
+
+interface DocRewindResultPayload extends DocKey {
+  requestId?: string
+  previousHeadSequence: number
+  targetSequence: number
+  appliedSequence: number
+}
+
+interface ErrorPayload {
+  message?: string
+  projectId?: string
+  fileId?: string
+  requestId?: string
+}
+
+function createRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+export interface CollabDocRewindResult {
+  projectId: string
+  fileId: string
+  previousHeadSequence: number
+  targetSequence: number
+  appliedSequence: number
+}
+
 interface ConnectedPayload {
   actorType: 'anonymous' | 'token_present' | 'authenticated'
   socketId: string
@@ -581,6 +630,115 @@ export class CollabClient {
     socket.emit('collab:doc:saved', {
       projectId,
       fileId,
+    })
+  }
+
+  async getDocumentTimeline(
+    projectId: string,
+    fileId: string,
+    options?: { limit?: number; beforeSequence?: number },
+  ): Promise<CollabDocTimelineResponse> {
+    const socket = await this.connect()
+    const requestId = createRequestId()
+
+    return new Promise<CollabDocTimelineResponse>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error('Timed out waiting for document timeline'))
+      }, 6000)
+
+      const onTimeline = (payload: DocTimelinePayload) => {
+        if (payload.projectId !== projectId || payload.fileId !== fileId) {
+          return
+        }
+
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        resolve(payload)
+      }
+
+      const onError = (payload: ErrorPayload) => {
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        reject(new Error(payload.message ?? 'Could not load document timeline'))
+      }
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        socket.off('collab:doc:timeline', onTimeline)
+        socket.off('collab:error', onError)
+      }
+
+      socket.on('collab:doc:timeline', onTimeline)
+      socket.on('collab:error', onError)
+      socket.emit('collab:doc:timeline:list', {
+        projectId,
+        fileId,
+        requestId,
+        limit: options?.limit,
+        beforeSequence: options?.beforeSequence,
+      })
+    })
+  }
+
+  async rewindDocument(
+    projectId: string,
+    fileId: string,
+    targetSequence: number,
+    expectedHeadSequence?: number,
+  ): Promise<CollabDocRewindResult> {
+    const socket = await this.connect()
+    const requestId = createRequestId()
+
+    return new Promise<CollabDocRewindResult>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error('Timed out waiting for rewind result'))
+      }, 6000)
+
+      const onResult = (payload: DocRewindResultPayload) => {
+        if (payload.projectId !== projectId || payload.fileId !== fileId) {
+          return
+        }
+
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        resolve(payload)
+      }
+
+      const onError = (payload: ErrorPayload) => {
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        reject(new Error(payload.message ?? 'Could not rewind document'))
+      }
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        socket.off('collab:doc:rewind:result', onResult)
+        socket.off('collab:error', onError)
+      }
+
+      socket.on('collab:doc:rewind:result', onResult)
+      socket.on('collab:error', onError)
+      socket.emit('collab:doc:rewind', {
+        projectId,
+        fileId,
+        requestId,
+        targetSequence,
+        expectedHeadSequence,
+      })
     })
   }
 

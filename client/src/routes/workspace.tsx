@@ -132,6 +132,8 @@ function WorkspaceWithHostedAuth() {
   const [authActionPending, setAuthActionPending] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
   const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
+  const [timelineRewindPending, setTimelineRewindPending] = useState(false)
+  const [timelineReturnSequence, setTimelineReturnSequence] = useState<number | null>(null)
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
   const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
   const autosaveTimeoutRef = useRef<number | null>(null)
@@ -622,7 +624,14 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const { collabState, onEditorMount, markSaved } = useCollabDoc({
+  const {
+    collabState,
+    onEditorMount,
+    markSaved,
+    timelineState,
+    loadTimeline,
+    rewindToSequence,
+  } = useCollabDoc({
     projectId: activeProjectId,
     fileId: activeFileId,
     onFileCreated: onCollabFileCreated,
@@ -883,6 +892,22 @@ function WorkspaceWithHostedAuth() {
       rightPanel.resize(SIDEBAR_LAYOUT.right.minSize)
     }
   }, [isRightSidebarOpen, rightPanelRef])
+
+  useEffect(() => {
+    if (bottomDrawerTab !== 'timeline') {
+      return
+    }
+
+    if (!activeProjectId || !activeFileId) {
+      return
+    }
+
+    void loadTimeline()
+  }, [activeFileId, activeProjectId, bottomDrawerTab, loadTimeline])
+
+  useEffect(() => {
+    setTimelineReturnSequence(null)
+  }, [activeFileId])
 
   const openFileById = (fileId: string) => {
     setHasClosedAllTabs(false)
@@ -1297,6 +1322,61 @@ function WorkspaceWithHostedAuth() {
           <BottomDrawers
             activeTab={bottomDrawerTab}
             onActiveTabChange={setBottomDrawerTab}
+            timelineEntries={timelineState.entries}
+            timelineHeadSequence={timelineState.headSequence}
+            timelineIsLoading={timelineState.isLoading}
+            timelineError={timelineState.error}
+            timelineRewindPending={timelineRewindPending}
+            onTimelineRefresh={() => {
+              void loadTimeline()
+            }}
+            onTimelineRewind={(targetSequence) => {
+              if (!activeProjectId || !activeFileId) {
+                toastError('Select a file before rewinding timeline')
+                return
+              }
+
+              const headBeforeRewind = timelineState.headSequence
+              if (timelineReturnSequence === null && headBeforeRewind > 0) {
+                setTimelineReturnSequence(headBeforeRewind)
+              }
+
+              setTimelineRewindPending(true)
+              void rewindToSequence(targetSequence, headBeforeRewind)
+                .then((result) => {
+                  success(`Rewound to sequence #${result.targetSequence}`)
+                })
+                .catch((error: unknown) => {
+                  toastError(error instanceof Error ? error.message : 'Could not rewind timeline')
+                })
+                .finally(() => {
+                  setTimelineRewindPending(false)
+                })
+            }}
+            onTimelineReturnToLatest={() => {
+              if (!activeProjectId || !activeFileId) {
+                return
+              }
+
+              const targetSequence = timelineReturnSequence
+              if (!targetSequence || targetSequence <= 0) {
+                toast('No saved latest point available yet', 'info', 3000)
+                return
+              }
+
+              setTimelineRewindPending(true)
+              void rewindToSequence(targetSequence, timelineState.headSequence)
+                .then(() => {
+                  success(`Returned to latest snapshot #${targetSequence}`)
+                  setTimelineReturnSequence(null)
+                })
+                .catch((error: unknown) => {
+                  toastError(error instanceof Error ? error.message : 'Could not return to latest')
+                })
+                .finally(() => {
+                  setTimelineRewindPending(false)
+                })
+            }}
           />
         </div>
 

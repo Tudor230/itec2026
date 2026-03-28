@@ -3,6 +3,8 @@ import { useAuth0 } from '@auth0/auth0-react'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import {
   CollabClient,
+  type CollabDocRewindResult,
+  type CollabDocTimelineEntry,
   type CollabDocDirtyStatePayload,
   type CollabFileCreatedPayload,
   type CollabFileDeletedPayload,
@@ -30,6 +32,13 @@ interface CollabDocModelBinding {
   model: MonacoEditorTypes.ITextModel | null
 }
 
+interface CollabDocTimelineState {
+  entries: CollabDocTimelineEntry[]
+  headSequence: number
+  isLoading: boolean
+  error: string | null
+}
+
 interface MonacoBindingInstance {
   destroy: () => void
 }
@@ -51,10 +60,18 @@ export function useCollabDoc({
   const bindingRef = useRef<MonacoBindingInstance | null>(null)
   const sessionDestroyRef = useRef<(() => void) | null>(null)
   const projectWatchDestroyRef = useRef<(() => void) | null>(null)
+  const timelineRequestIdRef = useRef(0)
+  const activeDocKeyRef = useRef('')
 
   const [state, setState] = useState<CollabDocState>({
     connectionState: 'idle',
     message: null,
+  })
+  const [timelineState, setTimelineState] = useState<CollabDocTimelineState>({
+    entries: [],
+    headSequence: 0,
+    isLoading: false,
+    error: null,
   })
 
   const collabClient = useMemo(() => {
@@ -139,11 +156,80 @@ export function useCollabDoc({
   }, [collabClient, projectId, watchCallbacks])
 
   useEffect(() => {
+    activeDocKeyRef.current = projectId && fileId ? `${projectId}:${fileId}` : ''
+
     setBindingTargets({
       editor: null,
       model: null,
     })
+
+    setTimelineState({
+      entries: [],
+      headSequence: 0,
+      isLoading: false,
+      error: null,
+    })
   }, [fileId, projectId])
+
+  const loadTimeline = useMemo(() => {
+    return async (options?: { limit?: number; beforeSequence?: number }) => {
+      if (!projectId || !fileId) {
+        setTimelineState({
+          entries: [],
+          headSequence: 0,
+          isLoading: false,
+          error: null,
+        })
+        return
+      }
+
+      setTimelineState((previous) => ({
+        ...previous,
+        isLoading: true,
+        error: null,
+      }))
+
+      const requestId = timelineRequestIdRef.current + 1
+      timelineRequestIdRef.current = requestId
+      const expectedDocKey = `${projectId}:${fileId}`
+
+      try {
+        const timeline = await collabClient.getDocumentTimeline(projectId, fileId, options)
+        if (requestId !== timelineRequestIdRef.current || activeDocKeyRef.current !== expectedDocKey) {
+          return
+        }
+
+        setTimelineState({
+          entries: timeline.entries,
+          headSequence: timeline.headSequence,
+          isLoading: false,
+          error: null,
+        })
+      } catch (error) {
+        if (requestId !== timelineRequestIdRef.current || activeDocKeyRef.current !== expectedDocKey) {
+          return
+        }
+
+        setTimelineState((previous) => ({
+          ...previous,
+          isLoading: false,
+          error: error instanceof Error ? error.message : 'Could not load timeline',
+        }))
+      }
+    }
+  }, [collabClient, fileId, projectId])
+
+  const rewindToSequence = useMemo(() => {
+    return async (targetSequence: number, expectedHeadSequence?: number): Promise<CollabDocRewindResult> => {
+      if (!projectId || !fileId) {
+        throw new Error('Select a file to rewind')
+      }
+
+      const result = await collabClient.rewindDocument(projectId, fileId, targetSequence, expectedHeadSequence)
+      await loadTimeline()
+      return result
+    }
+  }, [collabClient, fileId, loadTimeline, projectId])
 
   useEffect(() => {
     const model = bindingTargets.model
@@ -234,6 +320,9 @@ export function useCollabDoc({
   return {
     collabState: state,
     onEditorMount,
+    timelineState,
+    loadTimeline,
+    rewindToSequence,
     markSaved: (nextProjectId: string, nextFileId: string) => {
       void collabClient.markDocumentSaved(nextProjectId, nextFileId)
     },
