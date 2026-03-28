@@ -1046,6 +1046,13 @@ function WorkspaceWithHostedAuth() {
                 onToggle={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
                 activeTab={rightSidebarTab}
                 setActiveTab={setRightSidebarTab}
+                activeFileContext={activeFile
+                  ? {
+                      path: activeFile.path,
+                      content: editorValue,
+                    }
+                  : null}
+                getAccessToken={getApiAccessToken}
               />
             </Panel>
           </Group>
