@@ -5,6 +5,7 @@ import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import { Sparkles, FileCode2 } from 'lucide-react'
 import { useThemePreset } from '../../theme/ThemeProvider'
 import { defineMonacoThemes, getMonacoThemeForPreset } from '../../lib/workspace-monaco-theme'
+import { workspaceHudChipClass } from './ui-classes'
 
 interface EditorPaneProps {
   file: FileDto | null
@@ -56,12 +57,12 @@ export default function EditorPane({
 
         <div className="flex items-center justify-between gap-3">
         {file ? (
-          <div className="min-w-0 flex flex-wrap items-center gap-1.5">
-            <span className="workspace-hud-chip">
+            <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+            <span className={workspaceHudChipClass}>
               {isDirty ? 'Unsaved changes' : 'Saved'}
             </span>
             {collabState && collabState.connectionState !== 'idle' ? (
-              <span className="workspace-hud-chip">Live: {collabState.connectionState}</span>
+              <span className={workspaceHudChipClass}>Live: {collabState.connectionState}</span>
             ) : null}
           </div>
         ) : (
