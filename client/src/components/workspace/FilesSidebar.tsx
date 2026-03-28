@@ -67,16 +67,16 @@ function getInitialCreatePath(
     if (activeFile) {
       const segments = activeFile.path.split('/')
       const parentPath = segments.slice(0, -1).join('/')
-      return toJoinedPath(parentPath, createType === 'file' ? '' : 'new-folder')
+      return toJoinedPath(parentPath, '')
     }
   }
 
   const firstFolder = tree?.children.find((child) => child.type === 'folder')
   if (firstFolder) {
-    return toJoinedPath(firstFolder.path, createType === 'file' ? '' : 'new-folder')
+    return toJoinedPath(firstFolder.path, '')
   }
 
-  return createType === 'file' ? '' : 'new-folder'
+  return ''
 }
 
 function getParentPath(path: string) {
@@ -138,6 +138,12 @@ function NodeRow({
   onPendingPathChange,
   onConfirmCreate,
   onCancelCreate,
+  renameTargetPath,
+  renameValue,
+  isRenamePending,
+  onRenameValueChange,
+  onConfirmRename,
+  onCancelRename,
 }: {
   node: FileTreeNode
   depth: number
@@ -154,6 +160,12 @@ function NodeRow({
   onPendingPathChange: (nextPath: string) => void
   onConfirmCreate: () => void
   onCancelCreate: () => void
+  renameTargetPath: string | null
+  renameValue: string
+  isRenamePending: boolean
+  onRenameValueChange: (nextValue: string) => void
+  onConfirmRename: () => void
+  onCancelRename: () => void
 }) {
   const [isOpen, setIsOpen] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -178,6 +190,7 @@ function NodeRow({
     : 'text-[color-mix(in_oklab,var(--palm)_62%,var(--sea-ink)_38%)]'
 
   const renderInlineCreate = !isFile && isOpen && pendingParentPath === node.path
+  const isRenaming = renameTargetPath === node.path
 
   const clearHoldTimer = () => {
     if (holdTimerRef.current === null) {
@@ -246,6 +259,10 @@ function NodeRow({
         role="button"
         tabIndex={0}
         onClick={() => {
+          if (isRenaming) {
+            return
+          }
+
           if (holdTriggeredRef.current) {
             holdTriggeredRef.current = false
             return
@@ -287,6 +304,10 @@ function NodeRow({
           clearHoldTimer()
         }}
         onKeyDown={(event) => {
+          if (isRenaming) {
+            return
+          }
+
           if (event.key !== 'Enter' && event.key !== ' ') {
             if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
               event.preventDefault()
@@ -331,7 +352,31 @@ function NodeRow({
         ) : (
           <Folder size={14} className={iconColor} />
         )}
-        <span className="truncate text-[12px] font-medium">{node.name}</span>
+        {isRenaming ? (
+          <input
+            autoFocus
+            value={renameValue}
+            disabled={isRenamePending}
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+            onChange={(event) => onRenameValueChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void onConfirmRename()
+              }
+
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                onCancelRename()
+              }
+            }}
+            className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-[var(--sea-ink)] outline-none"
+          />
+        ) : (
+          <span className="truncate text-[12px] font-medium">{node.name}</span>
+        )}
         {isDirty ? (
           <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[color-mix(in_oklab,var(--lagoon)_48%,transparent)] bg-[rgba(var(--lagoon-rgb),0.16)] px-1 text-[9px] font-bold leading-none text-[var(--lagoon-deep)]">
             *
@@ -395,6 +440,12 @@ function NodeRow({
               onPendingPathChange={onPendingPathChange}
               onConfirmCreate={onConfirmCreate}
               onCancelCreate={onCancelCreate}
+              renameTargetPath={renameTargetPath}
+              renameValue={renameValue}
+              isRenamePending={isRenamePending}
+              onRenameValueChange={onRenameValueChange}
+              onConfirmRename={onConfirmRename}
+              onCancelRename={onCancelRename}
             />
           ))
         : null}
@@ -532,8 +583,7 @@ export default function FilesSidebar({
   }, [tree, query])
 
   const handleStartCreate = (type: 'file' | 'folder', basePath: string) => {
-    const defaultName = type === 'file' ? '' : 'new-folder'
-    const nextPath = toJoinedPath(basePath, defaultName)
+    const nextPath = toJoinedPath(basePath, '')
     setSelectedFolderPath(basePath)
     setPendingCreateType(type)
     setPendingCreatePath(nextPath)
@@ -556,6 +606,14 @@ export default function FilesSidebar({
     }
 
     const nextPath = pendingCreatePath.trim()
+    const nextLeafName = nextPath.split('/').pop()?.trim() ?? ''
+
+    if (nextLeafName.length === 0) {
+      setPendingCreatePath(null)
+      setPendingCreateType(null)
+      setInlineError(null)
+      return
+    }
 
     if (!isValidFilePath(nextPath)) {
       setInlineError('Please provide a valid relative path.')
@@ -600,6 +658,11 @@ export default function FilesSidebar({
 
     const parentPath = getParentPath(renameTarget.path)
     const nextPath = parentPath ? `${parentPath}/${nextLeafName}` : nextLeafName
+
+    if (nextPath === renameTarget.path) {
+      handleCancelRename()
+      return
+    }
 
     if (!isValidFilePath(nextPath)) {
       setInlineError('Please provide a valid relative path.')
@@ -782,35 +845,15 @@ export default function FilesSidebar({
                   setInlineError(null)
                   setIsCreatePending(false)
                 }}
+                renameTargetPath={renameTarget?.path ?? null}
+                renameValue={renameValue}
+                isRenamePending={isRenamePending}
+                onRenameValueChange={setRenameValue}
+                onConfirmRename={handleConfirmRename}
+                onCancelRename={handleCancelRename}
               />
             ))
           : null}
-
-        {renameTarget ? (
-          <div className="px-2">
-            <label className="mt-2 flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
-              {renameTarget.type === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
-              <input
-                autoFocus
-                value={renameValue}
-                disabled={isRenamePending}
-                onChange={(event) => setRenameValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    void handleConfirmRename()
-                  }
-
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    handleCancelRename()
-                  }
-                }}
-                className="w-full bg-transparent text-xs font-semibold text-[var(--sea-ink)] outline-none"
-              />
-            </label>
-          </div>
-        ) : null}
 
         {!isLoading && !errorMessage && filteredTree && filteredTree.children.length === 0 ? (
           <p className="px-2 text-sm text-[var(--sea-ink-soft)]">No files match your filter.</p>
