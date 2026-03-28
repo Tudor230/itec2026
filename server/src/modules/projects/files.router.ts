@@ -3,18 +3,25 @@ import type { PrismaClient } from '@prisma/client'
 import { asyncHandler } from '../../http/async-handler.js'
 import { actorFromRequest } from '../auth/request-actor.js'
 import { requireTokenPresent } from '../auth/require-token-present.middleware.js'
-import { emitCollabFileCreated } from '../collab/collab-events.js'
+import {
+  emitCollabFileCreated,
+  emitCollabFileDeleted,
+  emitCollabFileUpdated,
+} from '../collab/collab-events.js'
 import { createFileSchema, updateFileSchema } from './file.schema.js'
 import { LocalFileBlobStore, resolveFilesStorageRoot, type FileBlobStore } from './file-blob-store.js'
 import { FilesRepository } from './files.repository.js'
 import { FilesService } from './files.service.js'
+import type { ProjectWorkspaceSyncService } from './project-workspace-sync-service.js'
 
 export function createFilesRouter({
   prisma,
   blobStore = new LocalFileBlobStore(resolveFilesStorageRoot()),
+  workspaceSync,
 }: {
   prisma: PrismaClient
   blobStore?: FileBlobStore
+  workspaceSync?: ProjectWorkspaceSyncService
 }) {
   const router = Router()
   const service = new FilesService(new FilesRepository(prisma, blobStore))
@@ -67,7 +74,38 @@ export function createFilesRouter({
     }
 
     const actor = actorFromRequest(request)
-    const file = await service.create(actor, parsed.data)
+    const projectId = parsed.data.projectId
+
+    if (!workspaceSync) {
+      const file = await service.create(actor, parsed.data)
+      emitCollabFileCreated({
+        id: file.id,
+        projectId: file.projectId,
+        path: file.path,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+      })
+
+      response.status(201).json({
+        ok: true,
+        data: file,
+      })
+      return
+    }
+
+    const file = await workspaceSync.runLocked(projectId, async () => {
+      const created = await service.create(actor, parsed.data)
+
+      try {
+        await workspaceSync.applyApiCreateAlreadyLocked(created)
+      } catch (error) {
+        await service.remove(actor, created.id)
+        throw error
+      }
+
+      return created
+    })
+
     emitCollabFileCreated({
       id: file.id,
       projectId: file.projectId,
@@ -93,7 +131,59 @@ export function createFilesRouter({
     }
 
     const actor = actorFromRequest(request)
-    const file = await service.update(actor, request.params.fileId, parsed.data)
+
+    const previousFile = await service.getById(actor, request.params.fileId)
+    if (!previousFile) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    if (!workspaceSync) {
+      const file = await service.update(actor, request.params.fileId, parsed.data)
+      if (!file) {
+        response.status(404).json({
+          ok: false,
+          error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+        })
+        return
+      }
+
+      emitCollabFileUpdated({
+        id: file.id,
+        projectId: file.projectId,
+        path: file.path,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+      })
+
+      response.json({
+        ok: true,
+        data: file,
+      })
+      return
+    }
+
+    const file = await workspaceSync.runLocked(previousFile.projectId, async () => {
+      const updated = await service.update(actor, request.params.fileId, parsed.data)
+      if (!updated) {
+        return null
+      }
+
+      try {
+        await workspaceSync.applyApiUpdateAlreadyLocked(previousFile, updated)
+      } catch (error) {
+        await service.updateFromSync(updated.id, {
+          path: previousFile.path,
+          content: previousFile.content,
+        })
+        throw error
+      }
+
+      return updated
+    })
 
     if (!file) {
       response.status(404).json({
@@ -103,6 +193,14 @@ export function createFilesRouter({
       return
     }
 
+    emitCollabFileUpdated({
+      id: file.id,
+      projectId: file.projectId,
+      path: file.path,
+      createdAt: file.createdAt,
+      updatedAt: file.updatedAt,
+    })
+
     response.json({
       ok: true,
       data: file,
@@ -111,7 +209,50 @@ export function createFilesRouter({
 
   router.delete('/:fileId', requireTokenPresent, asyncHandler(async (request, response) => {
     const actor = actorFromRequest(request)
-    const removed = await service.remove(actor, request.params.fileId)
+    const file = await service.getById(actor, request.params.fileId)
+    if (!file) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    if (!workspaceSync) {
+      const removed = await service.remove(actor, request.params.fileId)
+      if (!removed) {
+        response.status(404).json({
+          ok: false,
+          error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+        })
+        return
+      }
+
+      emitCollabFileDeleted({
+        id: file.id,
+        projectId: file.projectId,
+        path: file.path,
+        deletedAt: new Date().toISOString(),
+      })
+
+      response.json({
+        ok: true,
+        data: { deleted: true },
+      })
+      return
+    }
+
+    const removed = await workspaceSync.runLocked(file.projectId, async () => {
+      await workspaceSync.applyApiDeleteAlreadyLocked(file)
+
+      const deleted = await service.remove(actor, request.params.fileId)
+      if (!deleted) {
+        await workspaceSync.applyApiCreateAlreadyLocked(file)
+        return false
+      }
+
+      return true
+    })
 
     if (!removed) {
       response.status(404).json({
@@ -120,6 +261,13 @@ export function createFilesRouter({
       })
       return
     }
+
+    emitCollabFileDeleted({
+      id: file.id,
+      projectId: file.projectId,
+      path: file.path,
+      deletedAt: new Date().toISOString(),
+    })
 
     response.json({
       ok: true,

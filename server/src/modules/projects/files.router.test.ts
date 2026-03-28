@@ -8,7 +8,11 @@ import type { PrismaClient } from '@prisma/client'
 import express from 'express'
 import { errorHandler } from '../../http/error-handler.js'
 import { authBoundaryMiddleware } from '../auth/auth-boundary.middleware.js'
-import { registerCollabFileCreatedListener } from '../collab/collab-events.js'
+import {
+  registerCollabFileCreatedListener,
+  registerCollabFileDeletedListener,
+  registerCollabFileUpdatedListener,
+} from '../collab/collab-events.js'
 import { createFilesRouter } from './files.router.js'
 
 const TEST_JWT_SECRET = 'test-jwt-secret'
@@ -77,6 +81,43 @@ class InMemoryBlobStore {
 
   size() {
     return this.files.size
+  }
+}
+
+class WorkspaceSyncDouble {
+  private failDelete = false
+
+  private failCreate = false
+
+  setDeleteFailure(enabled: boolean) {
+    this.failDelete = enabled
+  }
+
+  setCreateFailure(enabled: boolean) {
+    this.failCreate = enabled
+  }
+
+  runLocked<T>(_projectId: string, action: () => Promise<T>): Promise<T> {
+    return action()
+  }
+
+  applyApiCreateAlreadyLocked(_file: { path: string; content: string }) {
+    if (this.failCreate) {
+      return Promise.reject(new Error('workspace create failed'))
+    }
+
+    return Promise.resolve()
+  }
+
+  applyApiUpdateAlreadyLocked(_previous: { path: string }, _next: { path: string; content: string }) {
+    return Promise.resolve()
+  }
+
+  async applyApiDeleteAlreadyLocked(file: { path: string }) {
+    void file
+    if (this.failDelete) {
+      throw new Error('workspace delete failed')
+    }
   }
 }
 
@@ -276,14 +317,22 @@ function createPrismaDouble() {
   }
 }
 
-async function startServer(prisma: PrismaClient, blobStore: InMemoryBlobStore): Promise<{
+async function startServer(
+  prisma: PrismaClient,
+  blobStore: InMemoryBlobStore,
+  workspaceSync?: WorkspaceSyncDouble,
+): Promise<{
   baseUrl: string
   close: () => Promise<void>
 }> {
   const app = express()
   app.use(express.json())
   app.use(authBoundaryMiddleware)
-  app.use('/api/files', createFilesRouter({ prisma, blobStore }))
+  app.use('/api/files', createFilesRouter({
+    prisma,
+    blobStore,
+    workspaceSync: workspaceSync as never,
+  }))
   app.use(errorHandler)
 
   const server = await new Promise<Server>((resolve) => {
@@ -342,17 +391,31 @@ describe('files router', () => {
   let closeServer: (() => Promise<void>) | undefined
   let seedProject: ((projectId: string, ownerSubject: string) => void) | undefined
   const createdEvents: Array<{ projectId: string; path: string }> = []
+  const updatedEvents: Array<{ projectId: string; path: string; id: string }> = []
+  const deletedEvents: Array<{ projectId: string; path: string; id: string }> = []
   let unregisterFileCreatedListener: (() => void) | null = null
+  let unregisterFileUpdatedListener: (() => void) | null = null
+  let unregisterFileDeletedListener: (() => void) | null = null
   let blobStore: InMemoryBlobStore | undefined
+  let workspaceSync: WorkspaceSyncDouble | undefined
 
   beforeEach(async () => {
     createdEvents.length = 0
+    updatedEvents.length = 0
+    deletedEvents.length = 0
     unregisterFileCreatedListener = registerCollabFileCreatedListener((file) => {
       createdEvents.push({ projectId: file.projectId, path: file.path })
     })
+    unregisterFileUpdatedListener = registerCollabFileUpdatedListener((file) => {
+      updatedEvents.push({ projectId: file.projectId, path: file.path, id: file.id })
+    })
+    unregisterFileDeletedListener = registerCollabFileDeletedListener((file) => {
+      deletedEvents.push({ projectId: file.projectId, path: file.path, id: file.id })
+    })
 
     const testDb = createPrismaDouble()
-    const started = await startServer(testDb.prisma, testDb.blobStore)
+    workspaceSync = new WorkspaceSyncDouble()
+    const started = await startServer(testDb.prisma, testDb.blobStore, workspaceSync)
     baseUrl = started.baseUrl
     closeServer = started.close
     seedProject = testDb.seedProject
@@ -363,6 +426,16 @@ describe('files router', () => {
     if (unregisterFileCreatedListener) {
       unregisterFileCreatedListener()
       unregisterFileCreatedListener = null
+    }
+
+    if (unregisterFileUpdatedListener) {
+      unregisterFileUpdatedListener()
+      unregisterFileUpdatedListener = null
+    }
+
+    if (unregisterFileDeletedListener) {
+      unregisterFileDeletedListener()
+      unregisterFileDeletedListener = null
     }
 
     if (closeServer) {
@@ -453,6 +526,10 @@ describe('files router', () => {
       projectId,
       path: 'src/main.ts',
     })
+    assert.equal(updatedEvents.length, 1)
+    assert.equal(updatedEvents[0]?.id, createdPayload.data.id)
+    assert.equal(deletedEvents.length, 1)
+    assert.equal(deletedEvents[0]?.id, createdPayload.data.id)
   })
 
   it('isolates file access by subject owner', async () => {
@@ -629,5 +706,65 @@ describe('files router', () => {
 
     assert.equal(conflicting.status, 409)
     assert.equal(blobStore?.size(), 1)
+  })
+
+  it('rolls back db record when workspace sync fails after create', async () => {
+    const ownerSubject = 'auth0|workspace-create-fail-user'
+    const token = createJwt(ownerSubject, 'jwt-workspace-create-fail')
+    const projectId = 'project-workspace-create-fail'
+    seedProject?.(projectId, ownerSubject)
+
+    workspaceSync?.setCreateFailure(true)
+
+    const created = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/main.ts',
+        content: 'first',
+      }),
+    })
+
+    assert.equal(created.status, 500)
+
+    const listed = await fetch(`${baseUrl}/api/files?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listedPayload = await listed.json()
+    assert.equal(listed.status, 200)
+    assert.equal(listedPayload.data.length, 0)
+  })
+
+  it('keeps delete atomic when workspace deletion fails', async () => {
+    const ownerSubject = 'auth0|delete-atomic-user'
+    const token = createJwt(ownerSubject, 'jwt-delete-atomic')
+    const projectId = 'project-delete-atomic'
+    seedProject?.(projectId, ownerSubject)
+
+    const created = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/atomic.ts',
+        content: 'atomic',
+      }),
+    })
+    const createdPayload = await created.json()
+
+    workspaceSync?.setDeleteFailure(true)
+
+    const deleted = await fetch(`${baseUrl}/api/files/${createdPayload.data.id}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    })
+
+    assert.equal(deleted.status, 500)
+
+    const stillExists = await fetch(`${baseUrl}/api/files/${createdPayload.data.id}`, {
+      headers: authHeaders(token),
+    })
+    assert.equal(stillExists.status, 200)
   })
 })

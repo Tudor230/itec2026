@@ -86,6 +86,43 @@ export class FilesRepository {
     return fileRecords.filter((file): file is FileRecord => file !== null)
   }
 
+  async listByProjectForSync(projectId: string): Promise<FileRecord[]> {
+    const files: Array<{
+      id: string
+      projectId: string
+      path: string
+      storageKey: string
+      contentHash: string
+      byteSize: number
+      ownerSubject: string | null
+      createdAt: Date
+      updatedAt: Date
+    }> = await this.prisma.file.findMany({
+      where: {
+        projectId,
+      },
+      orderBy: {
+        path: 'asc',
+      },
+    })
+
+    const fileRecords = await Promise.all(files.map(async (file) => {
+      try {
+        const content = await this.blobStore.readText(file.storageKey)
+        return toFileRecord(file, content)
+      } catch (error) {
+        const errorLike = error as { code?: string }
+        if (errorLike.code === 'FILE_BLOB_NOT_FOUND') {
+          return null
+        }
+
+        throw error
+      }
+    }))
+
+    return fileRecords.filter((file): file is FileRecord => file !== null)
+  }
+
   async getById(actor: ActorContext, id: string): Promise<FileRecord | null> {
     if (!actor.subject) {
       return null
@@ -172,6 +209,42 @@ export class FilesRepository {
     }
   }
 
+  async createFromSync(input: FileInput, ownerSubject: string | null = null): Promise<FileRecord> {
+    const id = createId()
+    const storageKey = createFileStorageKey(input.projectId, id)
+    const blobResult = await this.blobStore.writeText(storageKey, input.content)
+
+    try {
+      const file = await this.prisma.file.create({
+        data: {
+          id,
+          projectId: input.projectId,
+          path: input.path,
+          storageKey,
+          contentHash: blobResult.contentHash,
+          byteSize: blobResult.byteSize,
+          ownerSubject,
+        },
+        select: {
+          id: true,
+          projectId: true,
+          path: true,
+          storageKey: true,
+          contentHash: true,
+          byteSize: true,
+          ownerSubject: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+
+      return toFileRecord(file, input.content)
+    } catch (error) {
+      await this.blobStore.remove(storageKey)
+      throw error
+    }
+  }
+
   async update(
     actor: ActorContext,
     id: string,
@@ -214,6 +287,80 @@ export class FilesRepository {
     }
   }
 
+  async updateFromSync(
+    id: string,
+    updates: Partial<Pick<FileInput, 'path' | 'content'>>,
+  ): Promise<FileRecord | null> {
+    const current = await this.prisma.file.findFirst({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        projectId: true,
+        path: true,
+        storageKey: true,
+        contentHash: true,
+        byteSize: true,
+        ownerSubject: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    if (!current) {
+      return null
+    }
+
+    const currentContent = await this.blobStore.readText(current.storageKey)
+    const nextPath = updates.path ?? current.path
+    const nextContent = updates.content ?? currentContent
+    const blobResult = await this.blobStore.writeText(current.storageKey, nextContent)
+
+    try {
+      const result = await this.prisma.file.updateMany({
+        where: {
+          id,
+        },
+        data: {
+          path: nextPath,
+          contentHash: blobResult.contentHash,
+          byteSize: blobResult.byteSize,
+        },
+      })
+
+      if (result.count === 0) {
+        return null
+      }
+
+      const refreshed = await this.prisma.file.findFirst({
+        where: {
+          id,
+        },
+        select: {
+          id: true,
+          projectId: true,
+          path: true,
+          storageKey: true,
+          contentHash: true,
+          byteSize: true,
+          ownerSubject: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+
+      if (!refreshed) {
+        return null
+      }
+
+      return toFileRecord(refreshed, nextContent)
+    } catch (error) {
+      await this.blobStore.writeText(current.storageKey, currentContent)
+      throw error
+    }
+  }
+
   async remove(actor: ActorContext, id: string): Promise<boolean> {
     const current = await this.getById(actor, id)
     if (!current) {
@@ -222,6 +369,34 @@ export class FilesRepository {
 
     const canRemove = await canEditProject(this.prisma, actor, current.projectId)
     if (!canRemove) {
+      return false
+    }
+
+    const result = await this.prisma.file.deleteMany({
+      where: {
+        id,
+      },
+    })
+
+    if (result.count > 0) {
+      await this.blobStore.remove(current.storageKey)
+    }
+
+    return result.count > 0
+  }
+
+  async removeFromSync(id: string): Promise<boolean> {
+    const current = await this.prisma.file.findFirst({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        storageKey: true,
+      },
+    })
+
+    if (!current) {
       return false
     }
 

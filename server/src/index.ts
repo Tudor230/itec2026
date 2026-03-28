@@ -12,10 +12,27 @@ import { createFilesRouter } from './modules/projects/files.router.js'
 import { createInvitesRouter } from './modules/projects/invites.router.js'
 import { createRunnerRouter } from './modules/runner/runner.router.js'
 import { ensureFilesStorageRootExists, resolveFilesStorageRoot } from './modules/projects/file-blob-store.js'
+import {
+  ensureProjectWorkspaceRootExists,
+  LocalProjectWorkspaceStore,
+  resolveProjectWorkspaceRoot,
+} from './modules/projects/project-workspace-store.js'
+import { FilesRepository } from './modules/projects/files.repository.js'
+import { FilesService } from './modules/projects/files.service.js'
+import { ProjectWorkspaceSyncService } from './modules/projects/project-workspace-sync-service.js'
 import { createCollabServer } from './ws/collab-server.js'
+import { LocalFileBlobStore } from './modules/projects/file-blob-store.js'
 
 async function bootstrap() {
-  await ensureFilesStorageRootExists(resolveFilesStorageRoot())
+  const filesStorageRoot = resolveFilesStorageRoot()
+  const workspaceRoot = resolveProjectWorkspaceRoot()
+  await ensureFilesStorageRootExists(filesStorageRoot)
+  await ensureProjectWorkspaceRootExists(workspaceRoot)
+
+  const blobStore = new LocalFileBlobStore(filesStorageRoot)
+  const workspaceStore = new LocalProjectWorkspaceStore(workspaceRoot)
+  const filesService = new FilesService(new FilesRepository(prisma, blobStore))
+  const workspaceSyncService = new ProjectWorkspaceSyncService(filesService, workspaceStore)
 
   const app = express()
   const server = createServer(app)
@@ -38,14 +55,18 @@ async function bootstrap() {
   })
 
   app.use('/api/projects', createProjectsRouter({ prisma }))
-  app.use('/api/files', createFilesRouter({ prisma }))
+  app.use('/api/files', createFilesRouter({
+    prisma,
+    blobStore,
+    workspaceSync: workspaceSyncService,
+  }))
   app.use('/api/invites', createInvitesRouter({ prisma }))
   app.use('/api/runner', createRunnerRouter())
   app.use('/api/ai', createAiRouter())
   app.use(notFoundHandler)
   app.use(errorHandler)
 
-  createCollabServer(server, prisma, actorContextFromSocket)
+  createCollabServer(server, prisma, actorContextFromSocket, blobStore, workspaceStore)
 
   const port = Number(process.env.PORT ?? 4000)
   server.listen(port, () => {

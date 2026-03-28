@@ -17,12 +17,33 @@ interface DocUpdatePayload extends DocKey {
   update: string
 }
 
+interface ConnectedPayload {
+  actorType: 'anonymous' | 'token_present' | 'authenticated'
+  socketId: string
+  subject?: string
+}
+
 export interface CollabFileCreatedPayload {
   id: string
   projectId: string
   path: string
   createdAt: string
   updatedAt: string
+}
+
+export interface CollabFileUpdatedPayload {
+  id: string
+  projectId: string
+  path: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CollabFileDeletedPayload {
+  id: string
+  projectId: string
+  path: string
+  deletedAt: string
 }
 
 export interface CollabDocDirtyStatePayload extends DocKey {
@@ -32,7 +53,62 @@ export interface CollabDocDirtyStatePayload extends DocKey {
 
 export type WatchProjectCallbacks = {
   onFileCreated?: (payload: CollabFileCreatedPayload) => void
+  onFileUpdated?: (payload: CollabFileUpdatedPayload) => void
+  onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
+}
+
+export interface CollabTerminalDescriptor {
+  ownerSubject: string
+  activeControllerSubject: string
+  pendingRequestCount: number
+}
+
+export interface CollabTerminalListPayload {
+  projectId: string
+  terminals: CollabTerminalDescriptor[]
+}
+
+export interface CollabTerminalStatePayload {
+  projectId: string
+  ownerSubject: string
+  activeControllerSubject: string
+  isSessionOpen: boolean
+  pendingRequests: Array<{
+    requesterSubject: string
+    requestedAt: string
+  }>
+}
+
+export interface CollabTerminalOutputPayload {
+  projectId: string
+  ownerSubject: string
+  stream: 'stdout' | 'stderr' | 'system'
+  chunk: string
+  timestamp: string
+}
+
+export interface CollabTerminalAccessRequestedPayload {
+  projectId: string
+  ownerSubject: string
+  requesterSubject: string
+  requestedAt: string
+}
+
+export interface CollabTerminalAccessDecisionPayload {
+  projectId: string
+  ownerSubject: string
+  requesterSubject: string
+  status: 'approved' | 'rejected' | 'revoked'
+}
+
+export type WatchTerminalCallbacks = {
+  onTerminalList?: (payload: CollabTerminalListPayload) => void
+  onTerminalState?: (payload: CollabTerminalStatePayload) => void
+  onTerminalOutput?: (payload: CollabTerminalOutputPayload) => void
+  onTerminalAccessRequested?: (payload: CollabTerminalAccessRequestedPayload) => void
+  onTerminalAccessDecision?: (payload: CollabTerminalAccessDecisionPayload) => void
+  onError?: (message: string) => void
 }
 
 interface CollabDocSession {
@@ -83,6 +159,8 @@ export class CollabClient {
   private readonly onStatus: ((status: CollabStatus) => void) | undefined
   private socket: Socket | null = null
   private connectPromise: Promise<Socket> | null = null
+  private currentSubject: string | null = null
+  private readonly joinedProjects = new Map<string, number>()
 
   constructor(options: CollabClientOptions) {
     this.getToken = options.getToken
@@ -116,6 +194,8 @@ export class CollabClient {
       this.socket.removeAllListeners()
       this.socket.disconnect()
       this.socket = null
+      this.currentSubject = null
+      this.joinedProjects.clear()
     }
 
     this.onStatus?.({ state: 'connecting' })
@@ -137,8 +217,9 @@ export class CollabClient {
         reject(new Error('Timed out connecting to collaboration server'))
       }, 6000)
 
-      const onConnected = () => {
+      const onConnected = (payload?: ConnectedPayload) => {
         cleanup()
+        this.currentSubject = payload?.subject ?? null
         this.onStatus?.({ state: 'synced' })
         resolve()
       }
@@ -161,6 +242,7 @@ export class CollabClient {
     })
 
     socket.on('disconnect', () => {
+      this.currentSubject = null
       this.onStatus?.({ state: 'disconnected', message: 'Collaboration disconnected' })
     })
 
@@ -299,6 +381,22 @@ export class CollabClient {
       callbacks.onFileCreated?.(payload)
     }
 
+    const onFileUpdated = (payload: CollabFileUpdatedPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onFileUpdated?.(payload)
+    }
+
+    const onFileDeleted = (payload: CollabFileDeletedPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onFileDeleted?.(payload)
+    }
+
     const onDirtyStateChanged = (payload: CollabDocDirtyStatePayload) => {
       if (payload.projectId !== projectId) {
         return
@@ -308,14 +406,174 @@ export class CollabClient {
     }
 
     socket.on('collab:file:created', onFileCreated)
+    socket.on('collab:file:updated', onFileUpdated)
+    socket.on('collab:file:deleted', onFileDeleted)
     socket.on('collab:doc:dirty-state', onDirtyStateChanged)
-    socket.emit('collab:join-project', projectId)
+    this.retainProject(socket, projectId)
 
     return () => {
-      socket.emit('collab:leave-project', projectId)
+      this.releaseProject(socket, projectId)
       socket.off('collab:file:created', onFileCreated)
+      socket.off('collab:file:updated', onFileUpdated)
+      socket.off('collab:file:deleted', onFileDeleted)
       socket.off('collab:doc:dirty-state', onDirtyStateChanged)
     }
+  }
+
+  async watchTerminals(projectId: string, callbacks: WatchTerminalCallbacks): Promise<() => void> {
+    const socket = await this.connect()
+
+    const onTerminalList = (payload: CollabTerminalListPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onTerminalList?.(payload)
+    }
+
+    const onTerminalState = (payload: CollabTerminalStatePayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onTerminalState?.(payload)
+    }
+
+    const onTerminalOutput = (payload: CollabTerminalOutputPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onTerminalOutput?.(payload)
+    }
+
+    const onTerminalAccessRequested = (payload: CollabTerminalAccessRequestedPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onTerminalAccessRequested?.(payload)
+    }
+
+    const onTerminalAccessDecision = (payload: CollabTerminalAccessDecisionPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onTerminalAccessDecision?.(payload)
+    }
+
+    const onError = (payload: { message?: string }) => {
+      callbacks.onError?.(payload.message ?? 'Collaboration error')
+    }
+
+    socket.on('collab:terminal:list', onTerminalList)
+    socket.on('collab:terminal:state', onTerminalState)
+    socket.on('collab:terminal:output', onTerminalOutput)
+    socket.on('collab:terminal:access:requested', onTerminalAccessRequested)
+    socket.on('collab:terminal:access:decision', onTerminalAccessDecision)
+    socket.on('collab:error', onError)
+
+    this.retainProject(socket, projectId)
+    socket.emit('collab:terminal:list', { projectId })
+
+    return () => {
+      this.releaseProject(socket, projectId)
+      socket.off('collab:terminal:list', onTerminalList)
+      socket.off('collab:terminal:state', onTerminalState)
+      socket.off('collab:terminal:output', onTerminalOutput)
+      socket.off('collab:terminal:access:requested', onTerminalAccessRequested)
+      socket.off('collab:terminal:access:decision', onTerminalAccessDecision)
+      socket.off('collab:error', onError)
+    }
+  }
+
+  async joinTerminal(projectId: string, ownerSubject: string) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:join', {
+      projectId,
+      ownerSubject,
+    })
+  }
+
+  async leaveTerminal(projectId: string, ownerSubject: string) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:leave', {
+      projectId,
+      ownerSubject,
+    })
+  }
+
+  async sendTerminalInput(projectId: string, ownerSubject: string, input: string) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:input', {
+      projectId,
+      ownerSubject,
+      input,
+    })
+  }
+
+  async openTerminal(projectId: string, ownerSubject: string, size?: { cols: number; rows: number }) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:open', {
+      projectId,
+      ownerSubject,
+      cols: size?.cols,
+      rows: size?.rows,
+    })
+  }
+
+  async resizeTerminal(projectId: string, ownerSubject: string, size: { cols: number; rows: number }) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:resize', {
+      projectId,
+      ownerSubject,
+      cols: size.cols,
+      rows: size.rows,
+    })
+  }
+
+  async closeTerminal(projectId: string, ownerSubject: string) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:close', {
+      projectId,
+      ownerSubject,
+    })
+  }
+
+  async requestTerminalAccess(projectId: string, ownerSubject: string) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:access:request', {
+      projectId,
+      ownerSubject,
+    })
+  }
+
+  async decideTerminalAccess(
+    projectId: string,
+    ownerSubject: string,
+    requesterSubject: string,
+    approve: boolean,
+  ) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:access:decision', {
+      projectId,
+      ownerSubject,
+      requesterSubject,
+      approve,
+    })
+  }
+
+  async revokeTerminalControl(projectId: string, ownerSubject: string) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:control:revoke', {
+      projectId,
+      ownerSubject,
+    })
+  }
+
+  getCurrentSubject() {
+    return this.currentSubject
   }
 
   async markDocumentSaved(projectId: string, fileId: string) {
@@ -333,6 +591,32 @@ export class CollabClient {
 
     this.socket.disconnect()
     this.socket = null
+    this.currentSubject = null
+    this.joinedProjects.clear()
     this.onStatus?.({ state: 'idle' })
+  }
+
+  private retainProject(socket: Socket, projectId: string) {
+    const count = this.joinedProjects.get(projectId) ?? 0
+    if (count === 0) {
+      socket.emit('collab:join-project', projectId)
+    }
+
+    this.joinedProjects.set(projectId, count + 1)
+  }
+
+  private releaseProject(socket: Socket, projectId: string) {
+    const count = this.joinedProjects.get(projectId)
+    if (!count) {
+      return
+    }
+
+    if (count > 1) {
+      this.joinedProjects.set(projectId, count - 1)
+      return
+    }
+
+    this.joinedProjects.delete(projectId)
+    socket.emit('collab:leave-project', projectId)
   }
 }
