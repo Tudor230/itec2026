@@ -48,6 +48,7 @@ export interface LandingTimelineView {
   philosophyOpacity: number
   scopeOpacity: number
   robotX: number
+  robotY: number
   robotOpacity: number
   robotZoom: number
   heroLift: number
@@ -88,6 +89,7 @@ export function deriveLandingTimeline(progress: number): LandingTimelineView {
     philosophyOpacity,
     scopeOpacity,
     robotX,
+    robotY: lerp(-72, 0, segmentProgress(clamped, 0, 0.14)),
     robotOpacity,
     robotZoom,
     heroLift: lerp(0, -18, segmentProgress(clamped, 0.1, 0.3)),

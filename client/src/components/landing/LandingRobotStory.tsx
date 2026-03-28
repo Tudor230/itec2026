@@ -16,9 +16,10 @@ interface LandingActionState {
   isAuthenticated: boolean
 }
 
-const INTRO_SCROLL_SCALE = 0.00135
+const INTRO_SCROLL_SCALE = 0.00032
 const MAX_DELTA = 180
 const KEYBOARD_DELTA = 96
+const TOP_RELOCK_THRESHOLD = 2
 
 function clampDelta(value: number) {
   return Math.max(-MAX_DELTA, Math.min(MAX_DELTA, value))
@@ -34,6 +35,10 @@ function normalizeWheelDelta(event: WheelEvent) {
   }
 
   return event.deltaY
+}
+
+export function shouldRelockIntro(isLocked: boolean, isAtTop: boolean, delta: number) {
+  return !isLocked && isAtTop && delta < 0
 }
 
 export function resolveLandingActionVariant(state: LandingActionState): LandingActionVariant {
@@ -170,6 +175,11 @@ export default function LandingRobotStory() {
     setIsIntroLocked(false)
   }
 
+  const lockIntro = () => {
+    isLockedRef.current = true
+    setIsIntroLocked(true)
+  }
+
   useEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)')
 
@@ -194,7 +204,7 @@ export default function LandingRobotStory() {
   }, [isIntroLocked])
 
   useEffect(() => {
-    if (isReducedMotion || !isIntroLocked) {
+    if (isReducedMotion) {
       return
     }
 
@@ -202,8 +212,24 @@ export default function LandingRobotStory() {
     const body = document.body
     const previousHtmlOverflow = html.style.overflowY
     const previousBodyOverflow = body.style.overflowY
-    html.style.overflowY = 'hidden'
-    body.style.overflowY = 'hidden'
+
+    if (isIntroLocked) {
+      html.style.overflowY = 'hidden'
+      body.style.overflowY = 'hidden'
+    }
+
+    return () => {
+      html.style.overflowY = previousHtmlOverflow
+      body.style.overflowY = previousBodyOverflow
+    }
+  }, [isReducedMotion, isIntroLocked])
+
+  useEffect(() => {
+    if (isReducedMotion) {
+      return
+    }
+
+    const isAtTop = () => window.scrollY <= TOP_RELOCK_THRESHOLD
 
     const flushQueuedDelta = () => {
       scrollRafRef.current = null
@@ -233,12 +259,21 @@ export default function LandingRobotStory() {
     }
 
     const onWheel = (event: WheelEvent) => {
+      const delta = normalizeWheelDelta(event)
+
+      if (shouldRelockIntro(isLockedRef.current, isAtTop(), delta)) {
+        event.preventDefault()
+        lockIntro()
+        queueDelta(delta)
+        return
+      }
+
       if (!isLockedRef.current) {
         return
       }
 
       event.preventDefault()
-      queueDelta(normalizeWheelDelta(event))
+      queueDelta(delta)
     }
 
     const onTouchStart = (event: TouchEvent) => {
@@ -252,25 +287,41 @@ export default function LandingRobotStory() {
     }
 
     const onTouchMove = (event: TouchEvent) => {
-      if (!isLockedRef.current) {
-        return
-      }
-
       const touch = event.touches[0]
 
       if (!touch) {
         return
       }
 
-      event.preventDefault()
-
       const previousY = touchYRef.current ?? touch.clientY
       const delta = previousY - touch.clientY
       touchYRef.current = touch.clientY
+
+      if (shouldRelockIntro(isLockedRef.current, isAtTop(), delta)) {
+        event.preventDefault()
+        lockIntro()
+        queueDelta(delta)
+        return
+      }
+
+      if (!isLockedRef.current) {
+        return
+      }
+
+      event.preventDefault()
       queueDelta(delta)
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowUp' || event.key === 'PageUp') {
+        if (shouldRelockIntro(isLockedRef.current, isAtTop(), -KEYBOARD_DELTA)) {
+          event.preventDefault()
+          lockIntro()
+          queueDelta(-KEYBOARD_DELTA)
+          return
+        }
+      }
+
       if (!isLockedRef.current) {
         return
       }
@@ -303,15 +354,13 @@ export default function LandingRobotStory() {
       window.removeEventListener('touchstart', onTouchStart)
       window.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('keydown', onKeyDown)
-      html.style.overflowY = previousHtmlOverflow
-      body.style.overflowY = previousBodyOverflow
 
       if (scrollRafRef.current !== null) {
         window.cancelAnimationFrame(scrollRafRef.current)
         scrollRafRef.current = null
       }
     }
-  }, [isReducedMotion, isIntroLocked])
+  }, [isReducedMotion])
 
   const timeline = useMemo(() => deriveLandingTimeline(progress), [progress])
   const isHeroInteractive = timeline.heroOpacity > 0.24
@@ -339,7 +388,7 @@ export default function LandingRobotStory() {
           className="pointer-events-none absolute inset-0 z-0 mx-auto h-full [width:min(1000px,88vw)]"
           aria-hidden="true"
           style={{
-            transform: `translate3d(${timeline.robotX}%, 0, 0)`,
+            transform: `translate3d(${timeline.robotX}%, ${timeline.robotY}px, 0)`,
             opacity: timeline.robotOpacity,
             transition: isReducedMotion ? 'none' : 'transform 70ms linear, opacity 120ms linear',
           }}
