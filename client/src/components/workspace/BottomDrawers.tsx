@@ -6,12 +6,19 @@ import {
   Users,
   X,
   Maximize2,
-  Minimize2,
-  Clock3,
-  Sparkles,
-  ShieldCheck,
-  type LucideIcon,
-} from 'lucide-react'
+import {
+    History,
+    Play,
+    Settings,
+    Users,
+    X,
+    Maximize2,
+    Minimize2,
+    Clock3,
+    Sparkles,
+    ShieldCheck,
+    type LucideIcon,
+  } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { workspaceHudChipClass } from './ui-classes'
 
