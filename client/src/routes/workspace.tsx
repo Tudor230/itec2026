@@ -979,7 +979,7 @@ function WorkspaceWithHostedAuth() {
                       }}
                     />
                   ) : (
-                    <TerminalPane />
+                    <TerminalPane projectId={activeProjectId} />
                   )}
                </div>
             </Panel>
