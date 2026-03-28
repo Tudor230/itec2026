@@ -17,6 +17,7 @@ interface TerminalSession {
   runtime: TerminalRuntime
   cwd: string
   activeControllerSubject: string
+  grantedControllerSubject: string | null
   pendingRequests: Map<string, PendingRequest>
   operationChain: Promise<void>
   emitOutput: ((ownerSubject: string, chunk: RuntimeOutputChunk) => void) | null
@@ -132,6 +133,10 @@ export class TerminalSessionManager {
     })
   }
 
+  private canControlTerminal(session: TerminalSession, subject: string) {
+    return subject === session.ownerSubject || subject === session.grantedControllerSubject
+  }
+
   markProjectJoined(projectId: string, subject: string) {
     const projectMembers = this.membershipsByProject.get(projectId) ?? new Map<string, ProjectMembership>()
     const existing = projectMembers.get(subject)
@@ -212,7 +217,10 @@ export class TerminalSessionManager {
       }
 
       candidate.pendingRequests.delete(subject)
-      if (candidate.activeControllerSubject === subject) {
+      if (candidate.grantedControllerSubject === subject) {
+        candidate.grantedControllerSubject = null
+        candidate.activeControllerSubject = candidate.ownerSubject
+      } else if (candidate.activeControllerSubject === subject) {
         candidate.activeControllerSubject = candidate.ownerSubject
       }
     })
@@ -311,7 +319,7 @@ export class TerminalSessionManager {
     }
 
     const session = this.ensureSession(projectId, ownerSubject)
-    if (session.activeControllerSubject === requesterSubject) {
+    if (session.activeControllerSubject === requesterSubject || session.grantedControllerSubject === requesterSubject) {
       return null
     }
 
@@ -367,6 +375,7 @@ export class TerminalSessionManager {
     session.pendingRequests.delete(requesterSubject)
 
     if (approve && this.isProjectMember(projectId, requesterSubject)) {
+      session.grantedControllerSubject = requesterSubject
       session.activeControllerSubject = requesterSubject
     }
 
@@ -390,9 +399,8 @@ export class TerminalSessionManager {
       }
     }
 
-    const revokedSubject = session.activeControllerSubject === ownerSubject
-      ? null
-      : session.activeControllerSubject
+    const revokedSubject = session.grantedControllerSubject
+    session.grantedControllerSubject = null
     session.activeControllerSubject = ownerSubject
     session.pendingRequests.clear()
     return {
@@ -417,7 +425,7 @@ export class TerminalSessionManager {
       }
     }
 
-    if (session.activeControllerSubject !== senderSubject) {
+    if (!this.canControlTerminal(session, senderSubject)) {
       return {
         accepted: false,
         reason: 'Terminal is read-only for this user',
@@ -488,7 +496,7 @@ export class TerminalSessionManager {
       }
     }
 
-    if (session.activeControllerSubject !== senderSubject) {
+    if (!this.canControlTerminal(session, senderSubject)) {
       return {
         accepted: false,
         reason: 'Terminal is read-only for this user',
@@ -551,7 +559,7 @@ export class TerminalSessionManager {
       }
     }
 
-    if (session.activeControllerSubject !== senderSubject) {
+    if (!this.canControlTerminal(session, senderSubject)) {
       return {
         accepted: false,
         reason: 'Terminal is read-only for this user',
@@ -606,7 +614,7 @@ export class TerminalSessionManager {
       }
     }
 
-    if (senderSubject !== ownerSubject && session.activeControllerSubject !== senderSubject) {
+    if (!this.canControlTerminal(session, senderSubject)) {
       return {
         accepted: false,
         reason: 'Terminal is read-only for this user',
@@ -659,6 +667,7 @@ export class TerminalSessionManager {
       runtime: this.runtimeFactory({ projectId, ownerSubject }),
       cwd: this.defaultCwdResolver(projectId),
       activeControllerSubject: ownerSubject,
+      grantedControllerSubject: null,
       pendingRequests: new Map<string, PendingRequest>(),
       operationChain: Promise.resolve(),
       emitOutput: null,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import { cn } from '../../lib/utils'
 import { useCollabTerminal } from '../../hooks/use-collab-terminal'
@@ -43,37 +43,58 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
   const xtermContainerRef = useRef<HTMLDivElement | null>(null)
   const xtermRef = useRef<any>(null)
   const lastWrittenCountRef = useRef(0)
+  const activeOutputRef = useRef(activeOutput)
   const sendInputRef = useRef(sendInput)
   const openActiveTerminalRef = useRef(openActiveTerminal)
   const resizeActiveTerminalRef = useRef(resizeActiveTerminal)
+
+  const replayBufferedOutput = useCallback(() => {
+    const term = xtermRef.current
+    if (!term) {
+      return
+    }
+
+    const output = activeOutputRef.current
+    if (lastWrittenCountRef.current > output.length) {
+      term.reset()
+      lastWrittenCountRef.current = 0
+    }
+
+    for (let index = lastWrittenCountRef.current; index < output.length; index += 1) {
+      term.write(output[index].chunk)
+    }
+
+    lastWrittenCountRef.current = output.length
+  }, [])
 
   const isOwnerOfActiveTerminal = useMemo(() => {
     return Boolean(activeOwnerSubject && currentSubject && activeOwnerSubject === currentSubject)
   }, [activeOwnerSubject, currentSubject])
 
-  const isController = useMemo(() => {
+  const canWriteToActiveTerminal = useMemo(() => {
     if (!activeTerminalState || !currentSubject) {
       return false
     }
 
-    return activeTerminalState.activeControllerSubject === currentSubject
-  }, [activeTerminalState, currentSubject])
+    return activeOwnerSubject === currentSubject || activeTerminalState.activeControllerSubject === currentSubject
+  }, [activeOwnerSubject, activeTerminalState, currentSubject])
 
   const canRequestAccess = Boolean(
     activeOwnerSubject
       && currentSubject
       && activeOwnerSubject !== currentSubject
-      && !isController
+      && !canWriteToActiveTerminal
       && activeRequestStatus !== 'pending',
   )
 
   const pendingRequests = activeTerminalState?.pendingRequests ?? []
 
   useEffect(() => {
+    activeOutputRef.current = activeOutput
     sendInputRef.current = sendInput
     openActiveTerminalRef.current = openActiveTerminal
     resizeActiveTerminalRef.current = resizeActiveTerminal
-  }, [openActiveTerminal, resizeActiveTerminal, sendInput])
+  }, [activeOutput, openActiveTerminal, resizeActiveTerminal, sendInput])
 
   useEffect(() => {
     const container = xtermContainerRef.current
@@ -115,7 +136,7 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
       fit.fit()
 
       const disposable = term.onData((input: string) => {
-        if (!isController) {
+        if (!canWriteToActiveTerminal) {
           return
         }
 
@@ -132,7 +153,7 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
         const cols = Math.max(1, term.cols)
         const rows = Math.max(1, term.rows)
 
-        if (!activeTerminalState?.isSessionOpen && isController) {
+        if (!activeTerminalState?.isSessionOpen && canWriteToActiveTerminal) {
           openActiveTerminalRef.current(cols, rows)
           return
         }
@@ -146,6 +167,7 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
 
       xtermRef.current = term
 
+      replayBufferedOutput()
       handleResize()
 
       cleanup = () => {
@@ -161,25 +183,11 @@ export default function TerminalPane({ projectId }: TerminalPaneProps) {
       cancelled = true
       cleanup?.()
     }
-  }, [activeOwnerSubject, activeTerminalState?.isSessionOpen, isController])
+  }, [activeOwnerSubject, activeTerminalState?.isSessionOpen, canWriteToActiveTerminal, replayBufferedOutput])
 
   useEffect(() => {
-    const term = xtermRef.current
-    if (!term) {
-      return
-    }
-
-    if (lastWrittenCountRef.current > activeOutput.length) {
-      term.reset()
-      lastWrittenCountRef.current = 0
-    }
-
-    for (let index = lastWrittenCountRef.current; index < activeOutput.length; index += 1) {
-      term.write(activeOutput[index].chunk)
-    }
-
-    lastWrittenCountRef.current = activeOutput.length
-  }, [activeOutput])
+    replayBufferedOutput()
+  }, [activeOutput, replayBufferedOutput])
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-[rgba(7,16,20,0.92)] text-[#d2f3ee]">

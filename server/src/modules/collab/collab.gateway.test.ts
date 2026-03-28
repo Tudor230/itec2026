@@ -198,6 +198,43 @@ async function waitForEvent<T>(
   })
 }
 
+async function assertNoEvent<T>(
+  socket: ClientSocket,
+  eventName: string,
+  predicate: (payload: T) => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, timeoutMs)
+
+    const onEvent = (payload: T) => {
+      if (!predicate(payload)) {
+        return
+      }
+
+      cleanup()
+      reject(new Error(`Unexpected ${eventName}`))
+    }
+
+    const onError = (error: unknown) => {
+      cleanup()
+      reject(error instanceof Error ? error : new Error(String(error)))
+    }
+
+    const cleanup = () => {
+      clearTimeout(timeout)
+      socket.off(eventName, onEvent)
+      socket.off('connect_error', onError)
+    }
+
+    socket.on(eventName, onEvent)
+    socket.on('connect_error', onError)
+  })
+}
+
 describe('collab gateway', () => {
   let baseUrl = ''
   let closeServer: (() => Promise<void>) | undefined
@@ -1492,6 +1529,19 @@ describe('collab gateway', () => {
 
     const outputPayload = await outputSeenByOwner
     assert.equal(outputPayload.ownerSubject, ownerSubject)
+
+    owner.emit('collab:terminal:input', {
+      projectId,
+      ownerSubject,
+      input: 'echo test-from-owner\n',
+    })
+
+    await assertNoEvent<{ message: string }>(
+      owner,
+      'collab:error',
+      (payload) => payload.message === 'Terminal is read-only for this user',
+      600,
+    )
   })
 
   it('allows owner to reject terminal access requests', async () => {

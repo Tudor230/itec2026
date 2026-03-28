@@ -113,4 +113,97 @@ describe('terminal session manager', () => {
     assert.ok(beforeIndex < prewarmEndIndex)
     assert.ok(prewarmEndIndex < openIndex)
   })
+
+  it('keeps owner writable after approving collaborator access', async () => {
+    const events: string[] = []
+    const manager = new TerminalSessionManager(
+      () => new RuntimeDouble(events, createDeferred()),
+      undefined,
+      {
+        resolveDefaultCwd: () => '/workspace/project',
+      },
+    )
+
+    const projectId = 'project-1'
+    const ownerSubject = 'owner-1'
+    const collaboratorSubject = 'viewer-1'
+
+    manager.markProjectJoined(projectId, ownerSubject)
+    manager.markProjectJoined(projectId, collaboratorSubject)
+
+    const requested = manager.requestAccess(projectId, ownerSubject, collaboratorSubject)
+    assert.ok(requested)
+
+    const decision = manager.decideAccess(projectId, ownerSubject, collaboratorSubject, true)
+    assert.equal(decision.ok, true)
+    assert.equal(decision.state.activeControllerSubject, collaboratorSubject)
+
+    const openedByOwner = await manager.openSession(
+      projectId,
+      ownerSubject,
+      ownerSubject,
+      () => undefined,
+      { cols: 120, rows: 40 },
+    )
+    assert.equal(openedByOwner.accepted, true)
+
+    const ownerInput = await manager.processInput(projectId, ownerSubject, ownerSubject, 'echo owner\n')
+    assert.equal(ownerInput.accepted, true)
+
+    const collaboratorInput = await manager.processInput(
+      projectId,
+      ownerSubject,
+      collaboratorSubject,
+      'echo collaborator\n',
+    )
+    assert.equal(collaboratorInput.accepted, true)
+  })
+
+  it('revokes collaborator while preserving owner write access', async () => {
+    const events: string[] = []
+    const manager = new TerminalSessionManager(
+      () => new RuntimeDouble(events, createDeferred()),
+      undefined,
+      {
+        resolveDefaultCwd: () => '/workspace/project',
+      },
+    )
+
+    const projectId = 'project-1'
+    const ownerSubject = 'owner-1'
+    const collaboratorSubject = 'viewer-1'
+
+    manager.markProjectJoined(projectId, ownerSubject)
+    manager.markProjectJoined(projectId, collaboratorSubject)
+
+    manager.requestAccess(projectId, ownerSubject, collaboratorSubject)
+    const decision = manager.decideAccess(projectId, ownerSubject, collaboratorSubject, true)
+    assert.equal(decision.ok, true)
+
+    const openedByOwner = await manager.openSession(
+      projectId,
+      ownerSubject,
+      ownerSubject,
+      () => undefined,
+      { cols: 120, rows: 40 },
+    )
+    assert.equal(openedByOwner.accepted, true)
+
+    const revoke = manager.revokeControl(projectId, ownerSubject)
+    assert.equal(revoke.ok, true)
+    assert.equal(revoke.revokedSubject, collaboratorSubject)
+    assert.equal(revoke.state?.activeControllerSubject, ownerSubject)
+
+    const collaboratorInput = await manager.processInput(
+      projectId,
+      ownerSubject,
+      collaboratorSubject,
+      'echo collaborator\n',
+    )
+    assert.equal(collaboratorInput.accepted, false)
+    assert.equal(collaboratorInput.reason, 'Terminal is read-only for this user')
+
+    const ownerInput = await manager.processInput(projectId, ownerSubject, ownerSubject, 'echo owner\n')
+    assert.equal(ownerInput.accepted, true)
+  })
 })

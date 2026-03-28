@@ -250,6 +250,12 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
   const activeTerminalState = activeOwnerSubject ? (statesByOwner[activeOwnerSubject] ?? null) : null
   const activeOutput = activeOwnerSubject ? (outputsByOwner[activeOwnerSubject] ?? []) : []
   const activeRequestStatus = activeOwnerSubject ? (requestStatusByOwner[activeOwnerSubject] ?? 'idle') : 'idle'
+  const canWriteToActiveTerminal = Boolean(
+    activeOwnerSubject
+      && currentSubject
+      && activeTerminalState
+      && (activeOwnerSubject === currentSubject || activeTerminalState.activeControllerSubject === currentSubject),
+  )
 
   useEffect(() => {
     if (!projectId || !activeOwnerSubject || !activeTerminalState || !currentSubject) {
@@ -260,7 +266,7 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
       return
     }
 
-    if (activeTerminalState.activeControllerSubject !== currentSubject) {
+    if (!canWriteToActiveTerminal) {
       return
     }
 
@@ -268,7 +274,7 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
       cols: 120,
       rows: 36,
     })
-  }, [activeOwnerSubject, activeTerminalState, collabClient, currentSubject, projectId])
+  }, [activeOwnerSubject, activeTerminalState, canWriteToActiveTerminal, collabClient, projectId])
 
   return {
     connectionState,
