@@ -3,10 +3,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 export type RobotSection = 'hero' | 'split' | 'auth'
 
+export type RobotHeadStyleVars = CSSProperties & {
+  '--robot-head-tilt': string
+  '--robot-head-yaw': string
+  '--robot-head-shift-x': string
+  '--robot-head-shift-y': string
+  '--robot-head-bob': string
+}
+
 interface RobotHeadMotion {
-  poseClassName: string
   isTransitioning: boolean
-  style: CSSProperties
+  style: RobotHeadStyleVars
 }
 
 interface PoseVars {
@@ -71,19 +78,18 @@ export function useRobotHeadMotion(section: RobotSection, zoom: number): RobotHe
 
   const pose = getRobotHeadPose(section)
 
-  const style = useMemo<CSSProperties>(
+  const style = useMemo<RobotHeadStyleVars>(
     () => ({
       '--robot-head-tilt': pose.tilt,
       '--robot-head-yaw': pose.yaw,
       '--robot-head-shift-x': pose.shiftX,
       '--robot-head-shift-y': pose.shiftY,
       '--robot-head-bob': mapZoomToBobAmplitude(zoom),
-    }) as CSSProperties,
+    }),
     [pose.shiftX, pose.shiftY, pose.tilt, pose.yaw, zoom],
   )
 
   return {
-    poseClassName: `rl-robot-pose--${section}`,
     isTransitioning,
     style,
   }
