@@ -666,7 +666,6 @@ a {
 }
 
 .workspace-content--locked {
-  filter: blur(12px) saturate(0.86);
   transform: scale(0.998);
   pointer-events: none;
   user-select: none;
@@ -679,7 +678,8 @@ a {
   display: grid;
   place-items: center;
   padding: clamp(1rem, 2.5vw, 2rem);
-  background: rgba(4, 14, 18, 0.58);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
 }
 
 .workspace-auth-panels {

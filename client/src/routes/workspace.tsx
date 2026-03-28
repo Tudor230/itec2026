@@ -5,19 +5,26 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  Lock,
-  Monitor,
-  SquareTerminal,
+  Code,
+  Terminal as TerminalIcon,
+  Search,
+  Bell,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Group, Panel, Separator } from 'react-resizable-panels'
+import { motion } from 'framer-motion'
 import { useAuthRuntime } from '../auth/AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
 import FileTabs from '../components/workspace/FileTabs'
 import FilesSidebar from '../components/workspace/FilesSidebar'
 import EditorPane from '../components/workspace/EditorPane'
 import QuickOpenModal from '../components/workspace/QuickOpenModal'
-import RunButton from '../components/workspace/RunButton'
 import TerminalPane from '../components/workspace/TerminalPane'
+import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
+import BottomDrawers from '../components/workspace/BottomDrawers'
+import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
+import UserInfo from '../components/auth/UserInfo'
+import { useToast } from '../components/ToastProvider'
 import { getWorkspaceShortcut } from '../components/workspace/workspace-shortcuts'
 import WorkspaceAuthOverlay, {
   type AuthTab,
@@ -32,6 +39,7 @@ import {
   type FileDto,
 } from '../services/projects-api'
 import { useCollabDoc } from '../hooks/use-collab-doc'
+import { cn } from '../lib/utils'
 
 export const Route = createFileRoute('/workspace')({
   validateSearch: (search: Record<string, unknown>) => {
@@ -50,11 +58,13 @@ export const Route = createFileRoute('/workspace')({
 function WorkspaceWithHostedAuth() {
   const navigate = useNavigate()
   const search = Route.useSearch()
+  const { toast, success, error: toastError } = useToast()
   const {
     getAccessTokenSilently,
     isAuthenticated,
     isLoading,
     loginWithRedirect,
+    logout,
     error,
   } = useAuth0()
   const queryClient = useQueryClient()
@@ -74,18 +84,15 @@ function WorkspaceWithHostedAuth() {
   const [draftsByFileId, setDraftsByFileId] = useState<Record<string, string>>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false)
+  const [rightSidebarTab, setRightSidebarTab] = useState<SidebarTab>('ai')
   const [centerView, setCenterView] = useState<'editor' | 'terminal'>('editor')
   const [isQuickOpenVisible, setIsQuickOpenVisible] = useState(false)
   const [authPanelOpen, setAuthPanelOpen] = useState(true)
   const [authTab, setAuthTab] = useState<AuthTab>('login')
   const [authActionPending, setAuthActionPending] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
-  const [runNotice, setRunNotice] = useState<{
-    id: number
-    text: string
-  } | null>(null)
-  const [inviteNotice, setInviteNotice] = useState<string | null>(null)
 
   const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
 
@@ -99,7 +106,7 @@ function WorkspaceWithHostedAuth() {
     try {
       await loginWithRedirect({
         appState: {
-          returnTo: '/projects',
+          returnTo: window.location.pathname + window.location.search,
         },
         authorizationParams: {
           redirect_uri: auth0Config.redirectUri,
@@ -165,6 +172,7 @@ function WorkspaceWithHostedAuth() {
     },
     onSuccess: async (createdFile) => {
       setCreateError(null)
+      success(`File created: ${createdFile.path.split('/').pop()}`)
       setActiveFileId(createdFile.id)
       setOpenFileIds((previous) =>
         previous.includes(createdFile.id) ? previous : [...previous, createdFile.id],
@@ -179,6 +187,7 @@ function WorkspaceWithHostedAuth() {
     },
     onError: (error) => {
       setCreateError(error.message)
+      toastError(`Could not create file: ${error.message}`)
     },
   })
 
@@ -194,6 +203,7 @@ function WorkspaceWithHostedAuth() {
     },
     onSuccess: async (updated) => {
       setSaveError(null)
+      success(`Saved ${updated.path.split('/').pop()}`)
       setDraftsByFileId((previous) => {
         const next = { ...previous }
         delete next[updated.id]
@@ -204,6 +214,7 @@ function WorkspaceWithHostedAuth() {
     },
     onError: (error) => {
       setSaveError(error.message)
+      toastError(`Save failed: ${error.message}`)
     },
   })
 
@@ -220,17 +231,13 @@ function WorkspaceWithHostedAuth() {
     : false
 
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
-  const requestedProjectMissing =
-    Boolean(search.projectId) &&
-    Boolean(projectsQuery.data) &&
-    !(projectsQuery.data ?? []).some((project) => project.id === search.projectId)
 
   const { collabState, onEditorMount } = useCollabDoc({
     projectId: activeProjectId,
     fileId: activeFileId,
   })
 
-  const createInviteMutation = useMutation({
+  useMutation({
     mutationFn: async (projectId: string) => {
       const token = await getApiAccessToken()
       return createProjectInvite(projectId, token)
@@ -240,13 +247,13 @@ function WorkspaceWithHostedAuth() {
 
       try {
         await navigator.clipboard.writeText(inviteLink)
-        setInviteNotice('Invite link copied to clipboard')
+        success('Invite link copied to clipboard')
       } catch {
-        setInviteNotice(inviteLink)
+        toast(`Invite link: ${inviteLink}`, 'info', 10000)
       }
     },
     onError: (error) => {
-      setInviteNotice(`Could not create invite: ${error.message}`)
+      toastError(`Could not create invite: ${error.message}`)
     },
   })
 
@@ -357,7 +364,7 @@ function WorkspaceWithHostedAuth() {
 
       if (shortcut === 'toggle-sidebar') {
         event.preventDefault()
-        setIsSidebarCollapsed((current) => !current)
+        setIsLeftSidebarCollapsed((current) => !current)
         return
       }
 
@@ -402,20 +409,6 @@ function WorkspaceWithHostedAuth() {
     }
   }, [isAuthenticated])
 
-  useEffect(() => {
-    if (runNotice === null) {
-      return
-    }
-
-    const timeout = window.setTimeout(() => {
-      setRunNotice(null)
-    }, 2800)
-
-    return () => {
-      window.clearTimeout(timeout)
-    }
-  }, [runNotice])
-
   const openFileById = (fileId: string) => {
     setActiveFileId(fileId)
     setSaveError(null)
@@ -453,6 +446,26 @@ function WorkspaceWithHostedAuth() {
     })
   }
 
+  const closeOthers = (fileId: string) => {
+    setOpenFileIds([fileId])
+    setActiveFileId(fileId)
+    setDraftsByFileId((previous) => {
+      const next: Record<string, string> = {}
+      if (fileId in previous) next[fileId] = previous[fileId]
+      return next
+    })
+  }
+
+  const closeAll = () => {
+    setOpenFileIds([])
+    setActiveFileId(null)
+    setDraftsByFileId({})
+  }
+
+  if (isLoading && isAuthenticated) {
+    return <WorkspaceSkeleton />
+  }
+
   const lockedContentProps = isLocked
     ? ({
         'aria-hidden': true,
@@ -462,108 +475,96 @@ function WorkspaceWithHostedAuth() {
 
   return (
     <main className="workspace-fullscreen-shell">
-      <section className="workspace-shell flex h-full w-full min-h-0 min-w-[1280px] flex-col overflow-hidden">
+      <section className="workspace-shell">
         <div
-          className={`workspace-content relative flex min-h-0 flex-1 flex-col ${isLocked ? 'workspace-content--locked' : ''}`}
+          className={cn(
+            "workspace-content relative flex min-h-0 flex-1 flex-col",
+            isLocked && "workspace-content--locked"
+          )}
           {...lockedContentProps}
         >
-          <div className="workspace-toolbar grid items-center gap-3 border-b border-[var(--line)] bg-[rgba(255,255,255,0.58)] px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-            <div className="flex min-w-0 items-center gap-2">
+          {/* Top Bar Refined */}
+          <div className="workspace-toolbar grid items-center gap-3 border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.6)] backdrop-blur-md px-4 py-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 items-center gap-4">
               <button
                 type="button"
-                onClick={() => {
-                  void navigate({ to: '/projects' })
-                }}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink)]"
-                aria-label="Back to projects"
+                onClick={() => navigate({ to: '/projects' })}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--line)] bg-[rgba(255,255,255,0.05)] text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] transition-colors"
                 title="Back to projects"
               >
                 <ArrowLeft size={14} />
               </button>
 
-              <div className="min-w-0">
-                <p className="island-kicker mb-1">Workspace</p>
-                <h1 className="m-0 truncate text-lg font-bold text-[var(--sea-ink)] sm:text-xl">
+              <div className="min-w-0 flex flex-col">
+                <span className="text-[10px] uppercase tracking-widest font-bold text-[var(--sea-ink-soft)]">Workspace</span>
+                <h1 className="m-0 truncate text-sm font-extrabold text-[var(--sea-ink)] leading-none">
                   {selectedProject ? selectedProject.name : 'iTECify IDE'}
                 </h1>
               </div>
             </div>
 
             <div className="flex items-center justify-center">
-              <div className="workspace-segmented-control">
+              <div className="workspace-segmented-control bg-[rgba(var(--chip-bg-rgb),0.5)] backdrop-blur-md p-1 rounded-xl border border-[var(--line)] relative flex">
                 <button
                   type="button"
                   onClick={() => setCenterView('editor')}
-                  className={`workspace-segmented-option ${centerView === 'editor' ? 'is-active' : ''}`}
-                  title="Show editor"
+                  className={cn(
+                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
+                    centerView === 'editor' 
+                      ? "text-white" 
+                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                  )}
                 >
-                  <Monitor size={14} />
+                  <Code size={14} />
                   <span>Editor</span>
+                  {centerView === 'editor' && (
+                    <motion.div 
+                      layoutId="workspace-view-toggle"
+                      className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  )}
                 </button>
                 <button
                   type="button"
                   onClick={() => setCenterView('terminal')}
-                  className={`workspace-segmented-option ${centerView === 'terminal' ? 'is-active' : ''}`}
-                  title="Show terminal (Ctrl+`)"
+                  className={cn(
+                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
+                    centerView === 'terminal' 
+                      ? "text-white" 
+                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                  )}
                 >
-                  <SquareTerminal size={14} />
+                  <TerminalIcon size={14} />
                   <span>Terminal</span>
+                  {centerView === 'terminal' && (
+                    <motion.div 
+                      layoutId="workspace-view-toggle"
+                      className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  )}
                 </button>
               </div>
             </div>
 
-            <div className="flex items-center justify-end">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={!activeProjectId || createInviteMutation.isPending}
-                  onClick={() => {
-                    if (!activeProjectId) {
-                      return
-                    }
-
-                    void createInviteMutation.mutateAsync(activeProjectId)
-                  }}
-                  className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--sea-ink)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {createInviteMutation.isPending ? 'Creating invite...' : 'Share'}
+            <div className="flex items-center justify-end gap-3">
+              <div className="flex items-center gap-2 px-2 py-1 bg-[rgba(255,255,255,0.05)] border border-[var(--line)] rounded-lg">
+                <button className="p-1.5 text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] transition-colors">
+                  <Search size={14} />
                 </button>
-
-                <label className="rounded-lg border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1.5 text-xs text-[var(--sea-ink-soft)]">
-                  <span className="mr-2">Project</span>
-                  <select
-                    value={activeProjectId ?? ''}
-                    onChange={(event) => {
-                      const next = event.target.value.trim()
-                      setActiveProjectId(next.length > 0 ? next : null)
-                    }}
-                    className="bg-transparent text-xs font-semibold text-[var(--sea-ink)] outline-none"
-                  >
-                    {(projectsQuery.data ?? []).map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <RunButton
-                  onRunRequest={() => {
-                    setRunNotice({
-                      id: Date.now(),
-                      text: 'Run is not available yet.',
-                    })
-                  }}
+                <button className="p-1.5 text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] transition-colors">
+                  <Bell size={14} />
+                </button>
+                <div className="w-[1px] h-4 bg-[var(--line)]" />
+                <UserInfo 
+                  onLogout={() => {
+                    void logout({ logoutParams: { returnTo: window.location.origin } })
+                  }} 
                 />
               </div>
             </div>
           </div>
-
-          {inviteNotice ? (
-            <div className="border-b border-[var(--line)] bg-[rgba(255,255,255,0.52)] px-4 py-2 text-xs text-[var(--sea-ink-soft)]">
-              {inviteNotice}
-            </div>
-          ) : null}
 
           <FileTabs
             tabs={openTabs.map((file) => {
@@ -579,99 +580,117 @@ function WorkspaceWithHostedAuth() {
             })}
             onSelectTab={openFileById}
             onCloseTab={closeTabById}
+            onCloseOthers={closeOthers}
+            onCloseAll={closeAll}
           />
 
-          {runNotice ? (
-            <div className="workspace-run-notice rounded-xl border border-[rgba(50,143,151,0.25)] bg-[rgba(79,184,178,0.1)] px-4 py-3 text-sm text-[var(--sea-ink)]">
-              <div className="flex items-center justify-between gap-3">
-                <span key={runNotice.id} role="status" aria-live="polite">
-                  {runNotice.text}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setRunNotice(null)}
-                  className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1 text-xs font-semibold text-[var(--sea-ink)]"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {requestedProjectMissing ? (
-            <div className="mx-4 mt-3 rounded-xl border border-[rgba(210,140,60,0.35)] bg-[rgba(244,196,112,0.18)] px-4 py-3 text-sm text-[var(--sea-ink)]">
-              The requested project is not available. Showing the first available project instead.
-            </div>
-          ) : null}
-
-          <div className="workspace-main-panel flex min-h-0 flex-1 border-t border-[var(--line)]">
-            <div className={`workspace-sidebar-region ${isSidebarCollapsed ? 'is-collapsed' : ''}`}>
-              <button
-                type="button"
-                onClick={() => setIsSidebarCollapsed((current) => !current)}
-                className={`workspace-sidebar-toggle ${isSidebarCollapsed ? 'is-collapsed' : ''}`}
-                aria-label={isSidebarCollapsed ? 'Expand files sidebar' : 'Collapse files sidebar'}
-                title={isSidebarCollapsed ? 'Expand files sidebar (Ctrl+B)' : 'Collapse files sidebar (Ctrl+B)'}
-              >
-                {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-              </button>
-
-              {!isSidebarCollapsed ? (
-                <FilesSidebar
-                  files={files}
-                  activeFileId={activeFileId}
-                  isLoading={filesQuery.isLoading || projectsQuery.isLoading}
-                  errorMessage={
-                    projectsQuery.isError
-                      ? 'Could not load projects.'
-                      : filesQuery.isError
-                        ? 'Could not load files.'
-                        : createError
-                  }
-                  onOpenFile={openFileById}
-                  onCreateFile={(path) => {
-                    void createFileMutation.mutateAsync(path)
-                  }}
-                />
-              ) : null}
-            </div>
-
-            {centerView === 'editor' ? (
-              <EditorPane
-                file={activeFile}
-                initialValue={editorValue}
-                isDirty={isDirty}
-                isSaving={saveFileMutation.isPending}
-                saveError={saveError}
-                collabState={collabState}
-                onEditorMount={onEditorMount}
-                onChange={(nextValue) => {
-                  if (!activeFile) {
-                    return
-                  }
-
-                  setDraftsByFileId((previous) => {
-                    return {
-                      ...previous,
-                      [activeFile.id]: nextValue,
+          <Group autoSaveId="workspace-layout-panels" orientation="horizontal" className="flex-1 min-h-0">
+            {/* Left Sidebar Panel */}
+            {!isLeftSidebarCollapsed && (
+              <>
+                <Panel id="left-sidebar" order={1} defaultSize={20} minSize={15} maxSize={40} className="flex flex-col min-h-0">
+                  <FilesSidebar
+                    files={files}
+                    activeFileId={activeFileId}
+                    isLoading={filesQuery.isLoading || projectsQuery.isLoading}
+                    errorMessage={
+                      projectsQuery.isError
+                        ? 'Could not load projects.'
+                        : filesQuery.isError
+                          ? 'Could not load files.'
+                          : createError
                     }
-                  })
-                }}
-                onSave={() => {
-                  if (!activeFile || !isDirty) {
-                    return
-                  }
-
-                  void saveFileMutation.mutateAsync({
-                    fileId: activeFile.id,
-                    content: editorValue,
-                  })
-                }}
-              />
-            ) : (
-              <TerminalPane />
+                    onOpenFile={openFileById}
+                    onCreateFile={(path) => {
+                      void createFileMutation.mutateAsync(path)
+                    }}
+                  />
+                </Panel>
+                <Separator className="w-[1px] bg-[var(--line)] hover:bg-[var(--lagoon)] transition-colors hover:w-[2px] cursor-col-resize" />
+              </>
             )}
-          </div>
+
+            {/* Central Editor/Terminal Panel */}
+            <Panel id="main-editor" order={2} className="flex flex-col min-h-0 bg-[rgba(var(--bg-rgb),0.2)]">
+               <div className="relative flex-1 flex flex-col min-h-0">
+                  {/* Sidebar Toggle Handle for Left */}
+                  <button
+                    onClick={() => setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
+                    className={cn(
+                      "absolute left-0 top-1/2 -translate-y-1/2 z-10 p-1.5 py-3 bg-[var(--bg)] border border-[var(--line)] rounded-r-lg text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-md",
+                      isLeftSidebarCollapsed && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
+                    )}
+                  >
+                    {isLeftSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+                  </button>
+
+                  {/* Sidebar Toggle Handle for Right */}
+                  <button
+                    onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
+                    className={cn(
+                      "absolute right-0 top-1/2 -translate-y-1/2 z-10 p-1.5 py-3 bg-[var(--bg)] border border-[var(--line)] rounded-l-lg text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-md",
+                      !isRightSidebarOpen && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
+                    )}
+                  >
+                    {!isRightSidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+                  </button>
+
+                  {centerView === 'editor' ? (
+                    <EditorPane
+                      file={activeFile}
+                      initialValue={editorValue}
+                      isDirty={isDirty}
+                      isSaving={saveFileMutation.isPending}
+                      saveError={saveError}
+                      collabState={collabState}
+                      onEditorMount={onEditorMount}
+                      onChange={(nextValue) => {
+                        if (!activeFile) {
+                          return
+                        }
+
+                        setDraftsByFileId((previous) => {
+                          return {
+                            ...previous,
+                            [activeFile.id]: nextValue,
+                          }
+                        })
+                      }}
+                      onSave={() => {
+                        if (!activeFile || !isDirty) {
+                          return
+                        }
+
+                        void saveFileMutation.mutateAsync({
+                          fileId: activeFile.id,
+                          content: editorValue,
+                        })
+                      }}
+                    />
+                  ) : (
+                    <TerminalPane />
+                  )}
+               </div>
+            </Panel>
+
+            {/* Right Sidebar Panel */}
+            {isRightSidebarOpen && (
+              <>
+                <Separator className="w-[1px] bg-[var(--line)] hover:bg-[var(--lagoon)] transition-colors hover:w-[2px] cursor-col-resize" />
+                <Panel id="right-sidebar" order={3} defaultSize={20} minSize={15} maxSize={40} className="flex flex-col min-h-0">
+                  <RightSidebar 
+                    isOpen={isRightSidebarOpen} 
+                    onToggle={() => setIsRightSidebarOpen(!isRightSidebarOpen)} 
+                    activeTab={rightSidebarTab}
+                    setActiveTab={setRightSidebarTab}
+                  />
+                </Panel>
+              </>
+            )}
+          </Group>
+
+          {/* Bottom Drawers */}
+          <BottomDrawers />
         </div>
 
         <QuickOpenModal
@@ -698,13 +717,6 @@ function WorkspaceWithHostedAuth() {
               void startHostedAuth(mode, connection)
             }}
           />
-        ) : null}
-
-        {isLoading ? (
-          <div className="workspace-auth-loading">
-            <Lock size={14} />
-            <span>Checking session...</span>
-          </div>
         ) : null}
       </section>
     </main>

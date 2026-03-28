@@ -420,7 +420,7 @@ export class ProjectsRepository {
       })
     }
 
-    await this.prisma.$transaction(async (transaction) => {
+    await this.prisma.$transaction(async (transaction: unknown) => {
       const transactionProjectInvite = getProjectInviteModel(transaction as unknown as PrismaClient)
       const transactionProjectMember = getProjectMemberModel(transaction as unknown as PrismaClient)
 
