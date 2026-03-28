@@ -1,6 +1,6 @@
 import { Auth0Provider, type AppState } from '@auth0/auth0-react'
 import { createContext, useContext, type ReactNode } from 'react'
-import { auth0Config, isAuth0Configured } from '../lib/auth0-config'
+import { auth0Config, isAuth0Configured, sanitizeReturnToPath } from '../lib/auth0-config'
 
 interface AuthRuntimeContextValue {
   isConfigured: boolean
@@ -15,7 +15,9 @@ function onRedirectCallback(appState?: AppState) {
     return
   }
 
-  const returnTo = typeof appState?.returnTo === 'string' ? appState.returnTo : '/'
+  const rawReturnTo =
+    typeof appState?.returnTo === 'string' ? appState.returnTo : '/projects'
+  const returnTo = sanitizeReturnToPath(rawReturnTo, '/projects')
   window.location.replace(returnTo)
 }
 

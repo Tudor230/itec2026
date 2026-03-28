@@ -1,10 +1,9 @@
 import { useAuth0 } from '@auth0/auth0-react'
 import { useAuthRuntime } from '../../auth/AuthProvider'
-import { auth0Config, getCurrentReturnTo } from '../../lib/auth0-config'
+import { auth0Config } from '../../lib/auth0-config'
 
 interface LoginButtonProps {
   label?: string
-  returnTo?: string
   className?: string
 }
 
@@ -13,7 +12,6 @@ const defaultClassName =
 
 function AuthenticatedLoginButton({
   label = 'Log in',
-  returnTo,
   className = defaultClassName,
 }: LoginButtonProps) {
   const { isLoading, loginWithRedirect } = useAuth0()
@@ -21,7 +19,7 @@ function AuthenticatedLoginButton({
   function handleLogin() {
     void loginWithRedirect({
       appState: {
-        returnTo: returnTo ?? getCurrentReturnTo(),
+        returnTo: '/projects',
       },
       authorizationParams: {
         redirect_uri: auth0Config.redirectUri,

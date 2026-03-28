@@ -23,6 +23,24 @@ export const missingAuth0EnvVars = [
 
 export const isAuth0Configured = missingAuth0EnvVars.length === 0
 
+export function sanitizeReturnToPath(returnTo: string | undefined, fallback = '/') {
+  if (!returnTo) {
+    return fallback
+  }
+
+  const trimmed = returnTo.trim()
+
+  if (!trimmed.startsWith('/')) {
+    return fallback
+  }
+
+  if (trimmed.startsWith('//')) {
+    return fallback
+  }
+
+  return trimmed
+}
+
 export function getCurrentReturnTo(fallback = '/') {
   if (typeof window === 'undefined') {
     return fallback
