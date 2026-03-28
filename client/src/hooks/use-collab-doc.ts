@@ -5,6 +5,8 @@ import {
   CollabClient,
   type CollabDocDirtyStatePayload,
   type CollabFileCreatedPayload,
+  type CollabFileDeletedPayload,
+  type CollabFileUpdatedPayload,
   type WatchProjectCallbacks,
 } from '../lib/collab-client'
 import { auth0Config } from '../lib/auth0-config'
@@ -18,6 +20,8 @@ interface CollabDocParams {
   projectId: string | null
   fileId: string | null
   onFileCreated?: (payload: CollabFileCreatedPayload) => void
+  onFileUpdated?: (payload: CollabFileUpdatedPayload) => void
+  onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
 }
 
@@ -34,6 +38,8 @@ export function useCollabDoc({
   projectId,
   fileId,
   onFileCreated,
+  onFileUpdated,
+  onFileDeleted,
   onDirtyStateChanged,
 }: CollabDocParams) {
   const { getAccessTokenSilently } = useAuth0()
@@ -93,9 +99,11 @@ export function useCollabDoc({
   const watchCallbacks = useMemo<WatchProjectCallbacks>(() => {
     return {
       onFileCreated,
+      onFileUpdated,
+      onFileDeleted,
       onDirtyStateChanged,
     }
-  }, [onDirtyStateChanged, onFileCreated])
+  }, [onDirtyStateChanged, onFileCreated, onFileDeleted, onFileUpdated])
 
   useEffect(() => {
     if (projectWatchDestroyRef.current) {

@@ -9,12 +9,20 @@ export class FilesService {
     return this.repository.listByProject(actor, projectId)
   }
 
+  listByProjectForSync(projectId: string) {
+    return this.repository.listByProjectForSync(projectId)
+  }
+
   getById(actor: ActorContext, fileId: string) {
     return this.repository.getById(actor, fileId)
   }
 
   create(actor: ActorContext, input: FileInput) {
     return this.repository.create(actor, input)
+  }
+
+  createFromSync(input: FileInput, ownerSubject: string | null = null) {
+    return this.repository.createFromSync(input, ownerSubject)
   }
 
   update(
@@ -25,7 +33,18 @@ export class FilesService {
     return this.repository.update(actor, fileId, updates)
   }
 
+  updateFromSync(
+    fileId: string,
+    updates: Partial<Pick<FileInput, 'path' | 'content'>>,
+  ) {
+    return this.repository.updateFromSync(fileId, updates)
+  }
+
   remove(actor: ActorContext, fileId: string) {
     return this.repository.remove(actor, fileId)
+  }
+
+  removeFromSync(fileId: string) {
+    return this.repository.removeFromSync(fileId)
   }
 }
