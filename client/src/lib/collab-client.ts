@@ -73,6 +73,7 @@ export interface CollabTerminalStatePayload {
   projectId: string
   ownerSubject: string
   activeControllerSubject: string
+  isSessionOpen: boolean
   pendingRequests: Array<{
     requesterSubject: string
     requestedAt: string
@@ -503,12 +504,40 @@ export class CollabClient {
     })
   }
 
-  async sendTerminalInput(projectId: string, ownerSubject: string, command: string) {
+  async sendTerminalInput(projectId: string, ownerSubject: string, input: string) {
     const socket = await this.connect()
     socket.emit('collab:terminal:input', {
       projectId,
       ownerSubject,
-      command,
+      input,
+    })
+  }
+
+  async openTerminal(projectId: string, ownerSubject: string, size?: { cols: number; rows: number }) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:open', {
+      projectId,
+      ownerSubject,
+      cols: size?.cols,
+      rows: size?.rows,
+    })
+  }
+
+  async resizeTerminal(projectId: string, ownerSubject: string, size: { cols: number; rows: number }) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:resize', {
+      projectId,
+      ownerSubject,
+      cols: size.cols,
+      rows: size.rows,
+    })
+  }
+
+  async closeTerminal(projectId: string, ownerSubject: string) {
+    const socket = await this.connect()
+    socket.emit('collab:terminal:close', {
+      projectId,
+      ownerSubject,
     })
   }
 

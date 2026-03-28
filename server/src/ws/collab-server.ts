@@ -2,11 +2,6 @@ import type { Server as HttpServer } from 'node:http'
 import type { Socket } from 'socket.io'
 import type { PrismaClient } from '@prisma/client'
 import type { ActorContext } from '../modules/auth/actor-context.js'
-import {
-  emitCollabFileCreated,
-  emitCollabFileDeleted,
-  emitCollabFileUpdated,
-} from '../modules/collab/collab-events.js'
 import { YjsHistoryRepository } from '../modules/collab/yjs-history.repository.js'
 import { DockerSandboxManager } from '../modules/collab/terminal/docker-sandbox-manager.js'
 import { DockerShellRuntime } from '../modules/collab/terminal/docker-shell-runtime.js'
@@ -20,6 +15,7 @@ import {
   resolveProjectWorkspaceRoot,
 } from '../modules/projects/project-workspace-store.js'
 import { ProjectWorkspaceSyncService } from '../modules/projects/project-workspace-sync-service.js'
+import { ProjectWorkspaceLiveSync } from '../modules/projects/project-workspace-live-sync.js'
 import { createCollabGateway } from '../modules/collab/collab.gateway.js'
 import { canEditProject, canReadProject } from '../modules/projects/project-access.js'
 
@@ -33,6 +29,7 @@ export function createCollabServer(
   const yjsHistoryRepository = new YjsHistoryRepository(prisma)
   const filesService = new FilesService(new FilesRepository(prisma, blobStore))
   const workspaceSyncService = new ProjectWorkspaceSyncService(filesService, workspaceStore)
+  const workspaceLiveSync = new ProjectWorkspaceLiveSync(workspaceStore, workspaceSyncService)
   const dockerSandboxManager = new DockerSandboxManager(workspaceStore)
 
   void dockerSandboxManager.ping().then((ok) => {
@@ -46,40 +43,15 @@ export function createCollabServer(
   const terminalSessionManager = new TerminalSessionManager(
     ({ projectId, ownerSubject }) => new DockerShellRuntime(dockerSandboxManager, projectId, ownerSubject),
     {
-      beforeCommand: async ({ projectId }) => {
+      beforeSessionOpen: async ({ projectId }) => {
         await workspaceSyncService.hydrateProjectWorkspace(projectId)
       },
-      afterCommand: async ({ projectId }) => {
-        const sync = await workspaceSyncService.reconcileProjectWorkspace(projectId)
-
-        sync.created.forEach((file) => {
-          emitCollabFileCreated({
-            id: file.id,
-            projectId: file.projectId,
-            path: file.path,
-            createdAt: file.createdAt,
-            updatedAt: file.updatedAt,
-          })
-        })
-
-        sync.updated.forEach((file) => {
-          emitCollabFileUpdated({
-            id: file.id,
-            projectId: file.projectId,
-            path: file.path,
-            createdAt: file.createdAt,
-            updatedAt: file.updatedAt,
-          })
-        })
-
-        sync.deleted.forEach((file) => {
-          emitCollabFileDeleted({
-            id: file.id,
-            projectId: file.projectId,
-            path: file.path,
-            deletedAt: file.deletedAt,
-          })
-        })
+      afterSessionOpen: async ({ projectId }) => {
+        await workspaceLiveSync.start(projectId)
+      },
+      afterSessionClose: async ({ projectId }) => {
+        await workspaceLiveSync.reconcileNow(projectId)
+        await workspaceLiveSync.stop(projectId)
       },
     },
     {

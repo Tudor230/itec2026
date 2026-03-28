@@ -251,6 +251,25 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
   const activeOutput = activeOwnerSubject ? (outputsByOwner[activeOwnerSubject] ?? []) : []
   const activeRequestStatus = activeOwnerSubject ? (requestStatusByOwner[activeOwnerSubject] ?? 'idle') : 'idle'
 
+  useEffect(() => {
+    if (!projectId || !activeOwnerSubject || !activeTerminalState || !currentSubject) {
+      return
+    }
+
+    if (activeTerminalState.isSessionOpen) {
+      return
+    }
+
+    if (activeTerminalState.activeControllerSubject !== currentSubject) {
+      return
+    }
+
+    void collabClient.openTerminal(projectId, activeOwnerSubject, {
+      cols: 120,
+      rows: 36,
+    })
+  }, [activeOwnerSubject, activeTerminalState, collabClient, currentSubject, projectId])
+
   return {
     connectionState,
     message,
@@ -273,12 +292,26 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
         }
       })
     },
-    sendCommand: (command: string) => {
+    sendInput: (input: string) => {
       if (!projectId || !activeOwnerSubject) {
         return
       }
 
-      void collabClient.sendTerminalInput(projectId, activeOwnerSubject, command)
+      void collabClient.sendTerminalInput(projectId, activeOwnerSubject, input)
+    },
+    resizeActiveTerminal: (cols: number, rows: number) => {
+      if (!projectId || !activeOwnerSubject) {
+        return
+      }
+
+      void collabClient.resizeTerminal(projectId, activeOwnerSubject, { cols, rows })
+    },
+    openActiveTerminal: (cols: number, rows: number) => {
+      if (!projectId || !activeOwnerSubject) {
+        return
+      }
+
+      void collabClient.openTerminal(projectId, activeOwnerSubject, { cols, rows })
     },
     requestAccess: () => {
       if (!projectId || !activeOwnerSubject) {

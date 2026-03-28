@@ -1,4 +1,4 @@
-import type { RuntimeOutputChunk, TerminalRuntime } from './terminal-runtime.js'
+import type { RuntimeOutputChunk, RuntimeTerminalSize, TerminalRuntime } from './terminal-runtime.js'
 
 interface PendingRequest {
   requesterSubject: string
@@ -18,8 +18,9 @@ interface TerminalSession {
   cwd: string
   activeControllerSubject: string
   pendingRequests: Map<string, PendingRequest>
-  commandChain: Promise<void>
-  hydrated: boolean
+  operationChain: Promise<void>
+  emitOutput: ((ownerSubject: string, chunk: RuntimeOutputChunk) => void) | null
+  isSessionOpen: boolean
 }
 
 export interface TerminalDescriptor {
@@ -32,6 +33,7 @@ export interface TerminalStateSnapshot {
   projectId: string
   ownerSubject: string
   activeControllerSubject: string
+  isSessionOpen: boolean
   pendingRequests: PendingRequest[]
 }
 
@@ -55,7 +57,7 @@ interface DecisionResult {
   reason?: string
 }
 
-interface InputResult {
+interface OperationResult {
   accepted: boolean
   reason?: string
 }
@@ -65,9 +67,10 @@ interface RuntimeFactoryInput {
   ownerSubject: string
 }
 
-interface ProcessInputHooks {
-  beforeCommand?: (args: { projectId: string; ownerSubject: string }) => Promise<void>
-  afterCommand?: (args: { projectId: string; ownerSubject: string }) => Promise<void>
+interface SessionHooks {
+  beforeSessionOpen?: (args: { projectId: string; ownerSubject: string }) => Promise<void>
+  afterSessionOpen?: (args: { projectId: string; ownerSubject: string }) => Promise<void>
+  afterSessionClose?: (args: { projectId: string; ownerSubject: string }) => Promise<void>
 }
 
 interface TerminalSessionManagerOptions {
@@ -85,7 +88,7 @@ export class TerminalSessionManager {
 
   private readonly runtimeFactory: (input: RuntimeFactoryInput) => TerminalRuntime
 
-  private readonly processInputHooks: ProcessInputHooks
+  private readonly sessionHooks: SessionHooks
 
   private readonly defaultCwdResolver: (projectId: string) => string
 
@@ -93,11 +96,11 @@ export class TerminalSessionManager {
 
   constructor(
     runtimeFactory: (input: RuntimeFactoryInput) => TerminalRuntime,
-    processInputHooks?: ProcessInputHooks,
+    sessionHooks?: SessionHooks,
     options?: TerminalSessionManagerOptions,
   ) {
     this.runtimeFactory = runtimeFactory
-    this.processInputHooks = processInputHooks ?? {}
+    this.sessionHooks = sessionHooks ?? {}
     this.defaultCwdResolver = options?.resolveDefaultCwd ?? ((projectId) => this.resolveDefaultCwd(projectId))
   }
 
@@ -108,6 +111,25 @@ export class TerminalSessionManager {
     }
 
     return process.cwd()
+  }
+
+  private queueSessionOperation(session: TerminalSession, operation: () => Promise<void>) {
+    const next = session.operationChain.then(operation)
+    session.operationChain = next.catch(() => undefined)
+    return next
+  }
+
+  private emitRuntimeError(session: TerminalSession, error: unknown) {
+    if (!session.emitOutput) {
+      return
+    }
+
+    const message = error instanceof Error ? error.message : 'Unknown terminal runtime error'
+    session.emitOutput(session.ownerSubject, {
+      stream: 'stderr',
+      chunk: `${message}\n`,
+      timestamp: new Date().toISOString(),
+    })
   }
 
   markProjectJoined(projectId: string, subject: string) {
@@ -143,14 +165,6 @@ export class TerminalSessionManager {
     }
 
     const prewarmPromise = (async () => {
-      if (!session.hydrated) {
-        await this.processInputHooks.beforeCommand?.({
-          projectId,
-          ownerSubject,
-        })
-        session.hydrated = true
-      }
-
       if (session.runtime.prewarm) {
         await session.runtime.prewarm({
           cwd: session.cwd,
@@ -210,8 +224,31 @@ export class TerminalSessionManager {
       return
     }
 
-    session.runtime.dispose()
     this.sessions.delete(key)
+    session.emitOutput = null
+
+    const wasOpen = session.isSessionOpen
+    session.isSessionOpen = false
+
+    const context = {
+      cwd: session.cwd,
+      projectId: session.projectId,
+      ownerSubject: session.ownerSubject,
+    }
+
+    if (wasOpen) {
+      void session.runtime.closeSession(context).catch(() => undefined).finally(() => {
+        void this.sessionHooks.afterSessionClose?.({
+          projectId: session.projectId,
+          ownerSubject: session.ownerSubject,
+        }).catch(() => undefined).finally(() => {
+          session.runtime.dispose()
+        })
+      })
+      return
+    }
+
+    session.runtime.dispose()
   }
 
   listProjectTerminals(projectId: string): TerminalDescriptor[] {
@@ -244,10 +281,18 @@ export class TerminalSessionManager {
       return null
     }
 
-    const session = this.ensureSession(projectId, ownerSubject)
+    const existing = this.getExistingSession(projectId, ownerSubject)
+    if (existing) {
+      return {
+        created: false,
+        state: this.snapshotSession(existing),
+      }
+    }
+
+    const created = this.ensureSession(projectId, ownerSubject)
     return {
       created: true,
-      state: this.snapshotSession(session),
+      state: this.snapshotSession(created),
     }
   }
 
@@ -301,6 +346,7 @@ export class TerminalSessionManager {
           projectId,
           ownerSubject,
           activeControllerSubject: ownerSubject,
+          isSessionOpen: false,
           pendingRequests: [],
         },
         reason: 'Terminal session not found',
@@ -356,15 +402,14 @@ export class TerminalSessionManager {
     }
   }
 
-  async processInput(
+  async openSession(
     projectId: string,
     ownerSubject: string,
     senderSubject: string,
-    command: string,
     onOutput: (ownerSubject: string, chunk: RuntimeOutputChunk) => void,
-  ): Promise<InputResult> {
+    initialSize?: RuntimeTerminalSize,
+  ): Promise<OperationResult> {
     const session = this.ensureSession(projectId, ownerSubject)
-    const key = terminalKey(projectId, ownerSubject)
     if (!this.isProjectMember(projectId, senderSubject)) {
       return {
         accepted: false,
@@ -379,69 +424,225 @@ export class TerminalSessionManager {
       }
     }
 
-    const trimmed = command.trim()
-    if (!trimmed) {
-      return {
-        accepted: false,
-        reason: 'Command cannot be empty',
-      }
-    }
+    session.emitOutput = onOutput
 
-    if (trimmed.length > 1200) {
-      return {
-        accepted: false,
-        reason: 'Command payload is too large',
-      }
-    }
+    try {
+      await this.queueSessionOperation(session, async () => {
+        if (session.isSessionOpen) {
+          return
+        }
 
-    session.commandChain = session.commandChain.then(async () => {
-      const pendingPrewarm = this.pendingPrewarms.get(key)
-      if (pendingPrewarm) {
-        await pendingPrewarm
-      }
-
-      if (!session.hydrated) {
-        await this.processInputHooks.beforeCommand?.({
+        await this.sessionHooks.beforeSessionOpen?.({
           projectId,
           ownerSubject,
         })
-        session.hydrated = true
-      }
 
-      const prompt = `\n$ ${trimmed}\n`
-      onOutput(ownerSubject, {
-        stream: 'system',
-        chunk: prompt,
-        timestamp: new Date().toISOString(),
+        const pendingPrewarm = this.pendingPrewarms.get(terminalKey(projectId, ownerSubject))
+        if (pendingPrewarm) {
+          await pendingPrewarm
+        }
+
+        await session.runtime.openSession(
+          {
+            cwd: session.cwd,
+            projectId,
+            ownerSubject,
+          },
+          (chunk) => {
+            session.emitOutput?.(ownerSubject, chunk)
+          },
+          initialSize,
+        )
+
+        session.isSessionOpen = true
+
+        await this.sessionHooks.afterSessionOpen?.({
+          projectId,
+          ownerSubject,
+        })
       })
 
-      try {
-        const result = await session.runtime.execute(trimmed, {
+      return {
+        accepted: true,
+      }
+    } catch (error) {
+      this.emitRuntimeError(session, error)
+      return {
+        accepted: false,
+        reason: error instanceof Error ? error.message : 'Could not open terminal session',
+      }
+    }
+  }
+
+  async processInput(
+    projectId: string,
+    ownerSubject: string,
+    senderSubject: string,
+    input: string,
+  ): Promise<OperationResult> {
+    const session = this.ensureSession(projectId, ownerSubject)
+    if (!this.isProjectMember(projectId, senderSubject)) {
+      return {
+        accepted: false,
+        reason: 'Not authorized for this project',
+      }
+    }
+
+    if (session.activeControllerSubject !== senderSubject) {
+      return {
+        accepted: false,
+        reason: 'Terminal is read-only for this user',
+      }
+    }
+
+    if (!input) {
+      return {
+        accepted: false,
+        reason: 'Input cannot be empty',
+      }
+    }
+
+    if (input.length > 4096) {
+      return {
+        accepted: false,
+        reason: 'Terminal input payload is too large',
+      }
+    }
+
+    if (!session.isSessionOpen) {
+      return {
+        accepted: false,
+        reason: 'Terminal session is not open',
+      }
+    }
+
+    try {
+      await this.queueSessionOperation(session, async () => {
+        await session.runtime.writeInput(input, {
           cwd: session.cwd,
           projectId: session.projectId,
           ownerSubject: session.ownerSubject,
-        }, (chunk) => {
-          onOutput(ownerSubject, chunk)
         })
-
-        session.cwd = result.nextCwd
-      } finally {
-        await this.processInputHooks.afterCommand?.({
-          projectId,
-          ownerSubject,
-        })
-      }
-    }).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : 'Unknown terminal runtime error'
-      onOutput(ownerSubject, {
-        stream: 'stderr',
-        chunk: `${message}\n`,
-        timestamp: new Date().toISOString(),
       })
-    })
 
-    return {
-      accepted: true,
+      return {
+        accepted: true,
+      }
+    } catch (error) {
+      this.emitRuntimeError(session, error)
+      return {
+        accepted: false,
+        reason: error instanceof Error ? error.message : 'Could not process terminal input',
+      }
+    }
+  }
+
+  async resizeSession(
+    projectId: string,
+    ownerSubject: string,
+    senderSubject: string,
+    size: RuntimeTerminalSize,
+  ): Promise<OperationResult> {
+    const session = this.ensureSession(projectId, ownerSubject)
+    if (!this.isProjectMember(projectId, senderSubject)) {
+      return {
+        accepted: false,
+        reason: 'Not authorized for this project',
+      }
+    }
+
+    if (session.activeControllerSubject !== senderSubject) {
+      return {
+        accepted: false,
+        reason: 'Terminal is read-only for this user',
+      }
+    }
+
+    if (!Number.isFinite(size.cols) || !Number.isFinite(size.rows) || size.cols < 1 || size.rows < 1) {
+      return {
+        accepted: false,
+        reason: 'Invalid terminal size',
+      }
+    }
+
+    if (!session.isSessionOpen) {
+      return {
+        accepted: false,
+        reason: 'Terminal session is not open',
+      }
+    }
+
+    try {
+      await this.queueSessionOperation(session, async () => {
+        await session.runtime.resizeSession(size, {
+          cwd: session.cwd,
+          projectId: session.projectId,
+          ownerSubject: session.ownerSubject,
+        })
+      })
+
+      return {
+        accepted: true,
+      }
+    } catch (error) {
+      this.emitRuntimeError(session, error)
+      return {
+        accepted: false,
+        reason: error instanceof Error ? error.message : 'Could not resize terminal session',
+      }
+    }
+  }
+
+  async closeSession(
+    projectId: string,
+    ownerSubject: string,
+    senderSubject: string,
+  ): Promise<OperationResult> {
+    const session = this.ensureSession(projectId, ownerSubject)
+    if (!this.isProjectMember(projectId, senderSubject)) {
+      return {
+        accepted: false,
+        reason: 'Not authorized for this project',
+      }
+    }
+
+    if (senderSubject !== ownerSubject && session.activeControllerSubject !== senderSubject) {
+      return {
+        accepted: false,
+        reason: 'Terminal is read-only for this user',
+      }
+    }
+
+    try {
+      await this.queueSessionOperation(session, async () => {
+        if (!session.isSessionOpen) {
+          return
+        }
+
+        await session.runtime.closeSession({
+          cwd: session.cwd,
+          projectId: session.projectId,
+          ownerSubject: session.ownerSubject,
+        })
+
+        session.isSessionOpen = false
+        session.emitOutput = null
+
+        await this.sessionHooks.afterSessionClose?.({
+          projectId: session.projectId,
+          ownerSubject: session.ownerSubject,
+        })
+      })
+
+      return {
+        accepted: true,
+      }
+    } catch (error) {
+      this.emitRuntimeError(session, error)
+      return {
+        accepted: false,
+        reason: error instanceof Error ? error.message : 'Could not close terminal session',
+      }
     }
   }
 
@@ -459,8 +660,9 @@ export class TerminalSessionManager {
       cwd: this.defaultCwdResolver(projectId),
       activeControllerSubject: ownerSubject,
       pendingRequests: new Map<string, PendingRequest>(),
-      commandChain: Promise.resolve(),
-      hydrated: false,
+      operationChain: Promise.resolve(),
+      emitOutput: null,
+      isSessionOpen: false,
     }
 
     this.sessions.set(key, created)
@@ -477,6 +679,7 @@ export class TerminalSessionManager {
       projectId: session.projectId,
       ownerSubject: session.ownerSubject,
       activeControllerSubject: session.activeControllerSubject,
+      isSessionOpen: session.isSessionOpen,
       pendingRequests: [...session.pendingRequests.values()].sort((left, right) => {
         return left.requestedAt.localeCompare(right.requestedAt)
       }),

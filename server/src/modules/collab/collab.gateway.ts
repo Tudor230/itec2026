@@ -93,10 +93,29 @@ const terminalJoinSchema = z.object({
   ownerSubject: z.string().trim().min(1),
 })
 
+const terminalOpenSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+  cols: z.number().int().min(1).max(1000).optional(),
+  rows: z.number().int().min(1).max(1000).optional(),
+})
+
 const terminalInputSchema = z.object({
   projectId: z.string().trim().min(1),
   ownerSubject: z.string().trim().min(1),
-  command: z.string().trim().min(1).max(1200),
+  input: z.string().min(1).max(4096),
+})
+
+const terminalResizeSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+  cols: z.number().int().min(1).max(1000),
+  rows: z.number().int().min(1).max(1000),
+})
+
+const terminalCloseSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
 })
 
 const terminalAccessRequestSchema = z.object({
@@ -167,6 +186,7 @@ interface TerminalStatePayload {
   projectId: string
   ownerSubject: string
   activeControllerSubject: string
+  isSessionOpen: boolean
   pendingRequests: Array<{
     requesterSubject: string
     requestedAt: string
@@ -843,6 +863,104 @@ export function createCollabGateway(
         void socket.leave(room)
       })
 
+      socket.on('collab:terminal:open', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-open',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalOpenSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid terminal open payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join terminal first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          void terminalSessionManager.openSession(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+            (ownerSubject, chunk) => {
+              io.to(terminalRoom(parsed.data.projectId, ownerSubject)).emit('collab:terminal:output', {
+                projectId: parsed.data.projectId,
+                ownerSubject,
+                ...chunk,
+              } satisfies TerminalOutputPayload)
+            },
+            (parsed.data.cols && parsed.data.rows)
+              ? {
+                  cols: parsed.data.cols,
+                  rows: parsed.data.rows,
+                }
+              : undefined,
+          ).then((result) => {
+            if (!result.accepted) {
+              socket.emit('collab:error', {
+                message: result.reason ?? 'Could not open terminal session',
+              } satisfies ErrorEvent)
+              return
+            }
+
+            const state = terminalSessionManager.getTerminalState(
+              parsed.data.projectId,
+              parsed.data.ownerSubject,
+            )
+
+            io.to(room).emit('collab:terminal:state', {
+              projectId: parsed.data.projectId,
+              ownerSubject: parsed.data.ownerSubject,
+              activeControllerSubject: state.activeControllerSubject,
+              isSessionOpen: state.isSessionOpen,
+              pendingRequests: state.pendingRequests,
+            } satisfies TerminalStatePayload)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not open terminal session',
+            } satisfies ErrorEvent)
+          })
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
+      })
+
       socket.on('collab:terminal:input', (payload: unknown) => {
         const allowed = consumeRateLimit(
           rateCounters,
@@ -896,14 +1014,7 @@ export function createCollabGateway(
             parsed.data.projectId,
             parsed.data.ownerSubject,
             actorSubject,
-            parsed.data.command,
-            (ownerSubject, chunk) => {
-              io.to(terminalRoom(parsed.data.projectId, ownerSubject)).emit('collab:terminal:output', {
-                projectId: parsed.data.projectId,
-                ownerSubject,
-                ...chunk,
-              } satisfies TerminalOutputPayload)
-            },
+            parsed.data.input,
           ).then((result) => {
             if (result.accepted) {
               return
@@ -920,6 +1031,168 @@ export function createCollabGateway(
         }).catch(() => {
           socket.emit('collab:error', {
             message: 'Could not process terminal input',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:resize', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-resize',
+          maxTerminalInputsPerSecond,
+          1_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal inputs',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalResizeSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid terminal resize payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join terminal first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          void terminalSessionManager.resizeSession(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+            {
+              cols: parsed.data.cols,
+              rows: parsed.data.rows,
+            },
+          ).then((result) => {
+            if (result.accepted) {
+              return
+            }
+
+            socket.emit('collab:error', {
+              message: result.reason ?? 'Could not resize terminal session',
+            } satisfies ErrorEvent)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not resize terminal session',
+            } satisfies ErrorEvent)
+          })
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:close', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-close',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalCloseSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid terminal close payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join terminal first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          void terminalSessionManager.closeSession(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+          ).then((result) => {
+            if (!result.accepted) {
+              socket.emit('collab:error', {
+                message: result.reason ?? 'Could not close terminal session',
+              } satisfies ErrorEvent)
+              return
+            }
+
+            const state = terminalSessionManager.getTerminalState(
+              parsed.data.projectId,
+              parsed.data.ownerSubject,
+            )
+
+            io.to(room).emit('collab:terminal:state', {
+              projectId: parsed.data.projectId,
+              ownerSubject: parsed.data.ownerSubject,
+              activeControllerSubject: state.activeControllerSubject,
+              isSessionOpen: state.isSessionOpen,
+              pendingRequests: state.pendingRequests,
+            } satisfies TerminalStatePayload)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not close terminal session',
+            } satisfies ErrorEvent)
+          })
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
           } satisfies ErrorEvent)
         })
       })
@@ -1040,6 +1313,7 @@ export function createCollabGateway(
           projectId: parsed.data.projectId,
           ownerSubject: parsed.data.ownerSubject,
           activeControllerSubject: decision.state.activeControllerSubject,
+          isSessionOpen: decision.state.isSessionOpen,
           pendingRequests: decision.state.pendingRequests,
         } satisfies TerminalStatePayload)
 
@@ -1115,6 +1389,7 @@ export function createCollabGateway(
           projectId: parsed.data.projectId,
           ownerSubject: parsed.data.ownerSubject,
           activeControllerSubject: revokeResult.state.activeControllerSubject,
+          isSessionOpen: revokeResult.state.isSessionOpen,
           pendingRequests: revokeResult.state.pendingRequests,
         } satisfies TerminalStatePayload)
 
@@ -1338,6 +1613,7 @@ function emitTerminalStateToSocket(
     projectId,
     ownerSubject,
     activeControllerSubject: state.activeControllerSubject,
+    isSessionOpen: state.isSessionOpen,
     pendingRequests: state.pendingRequests,
   } satisfies TerminalStatePayload)
 }
