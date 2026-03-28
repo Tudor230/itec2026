@@ -8,7 +8,6 @@ import {
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import AuthProvider from '../auth/AuthProvider'
-import Footer from '../components/Footer'
 import Header from '../components/Header'
 import { THEME_INIT_SCRIPT } from '../lib/theme'
 import { ThemeProvider } from '../theme/ThemeProvider'
@@ -102,7 +101,6 @@ function AppFrame({ children }: { children: React.ReactNode }) {
     <>
       <Header />
       {children}
-      <Footer />
     </>
   )
 }
