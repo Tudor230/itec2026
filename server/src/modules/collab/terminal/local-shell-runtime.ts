@@ -61,7 +61,7 @@ async function directoryExists(path: string) {
 export class LocalShellRuntime implements TerminalRuntime {
   async execute(
     command: string,
-    context: { cwd: string },
+    context: { cwd: string; projectId: string; ownerSubject: string },
     onOutput: (chunk: RuntimeOutputChunk) => void,
   ): Promise<{ nextCwd: string }> {
     const trimmed = command.trim()

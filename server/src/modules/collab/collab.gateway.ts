@@ -4,7 +4,11 @@ import type { Socket } from 'socket.io'
 import * as Y from 'yjs'
 import { z } from 'zod'
 import type { ActorContext } from '../auth/actor-context.js'
-import { registerCollabFileCreatedListener } from './collab-events.js'
+import {
+  registerCollabFileCreatedListener,
+  registerCollabFileDeletedListener,
+  registerCollabFileUpdatedListener,
+} from './collab-events.js'
 import { TerminalSessionManager } from './terminal/terminal-session-manager.js'
 
 export type SocketActorResolver = (socket: Socket) => Promise<ActorContext>
@@ -45,6 +49,10 @@ export type YjsSnapshotSaver = (
   sequence: number,
   update: Uint8Array,
 ) => Promise<void>
+export type TerminalCommandAuthorizer = (
+  actor: ActorContext,
+  projectId: string,
+) => Promise<boolean>
 
 type ConnectedEvent = {
   actorType: ActorContext['type']
@@ -235,6 +243,8 @@ export function createCollabGateway(
   loadYjsHistory: YjsHistoryLoader,
   appendYjsUpdate: YjsUpdateAppender,
   saveYjsSnapshot: YjsSnapshotSaver,
+  canUseTerminal: TerminalCommandAuthorizer,
+  terminalSessionManager: TerminalSessionManager,
 ) {
   const io = new Server(httpServer, {
     cors: {
@@ -251,15 +261,21 @@ export function createCollabGateway(
   const snapshotIntervalUpdates = readPositiveInt(process.env.COLLAB_SNAPSHOT_INTERVAL_UPDATES, 200)
   const maxTerminalInputsPerSecond = readPositiveInt(process.env.COLLAB_MAX_TERMINAL_INPUTS_PER_SECOND, 10)
   const maxTerminalRequestsPerTenSeconds = readPositiveInt(process.env.COLLAB_MAX_TERMINAL_REQUESTS_PER_10S, 20)
-  const terminalSessionManager = new TerminalSessionManager()
-
   const unregisterFileCreatedListener = registerCollabFileCreatedListener((file) => {
     io.to(projectRoom(file.projectId)).emit('collab:file:created', file)
+  })
+  const unregisterFileUpdatedListener = registerCollabFileUpdatedListener((file) => {
+    io.to(projectRoom(file.projectId)).emit('collab:file:updated', file)
+  })
+  const unregisterFileDeletedListener = registerCollabFileDeletedListener((file) => {
+    io.to(projectRoom(file.projectId)).emit('collab:file:deleted', file)
   })
 
   const originalClose = io.close.bind(io)
   io.close = ((callback?: (error?: Error) => void) => {
     unregisterFileCreatedListener()
+    unregisterFileUpdatedListener()
+    unregisterFileDeletedListener()
     return originalClose(callback)
   }) as typeof io.close
 
@@ -311,11 +327,19 @@ export function createCollabGateway(
             return
           }
 
+          const terminalAllowed = await canUseTerminal(actor, parsedProjectId.data)
+
           const room = projectRoom(parsedProjectId.data)
           if (joinedRooms.has(room)) {
             emitCurrentDirtyStatesForProject(socket, dirtySocketsByDocRoom, parsedProjectId.data)
-            emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
-            if (actor.subject) {
+            if (terminalAllowed && actor.subject) {
+              const ownTerminalRoom = terminalRoom(parsedProjectId.data, actor.subject)
+              if (!joinedTerminalRooms.has(ownTerminalRoom)) {
+                joinedTerminalRooms.add(ownTerminalRoom)
+                void socket.join(ownTerminalRoom)
+              }
+
+              emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
               emitTerminalStateToSocket(
                 socket,
                 parsedProjectId.data,
@@ -330,18 +354,26 @@ export function createCollabGateway(
           void socket.join(room)
           terminalSessionManager.markProjectJoined(parsedProjectId.data, actor.subject)
 
-          const ownTerminalRoom = terminalRoom(parsedProjectId.data, actor.subject)
-          joinedTerminalRooms.add(ownTerminalRoom)
-          void socket.join(ownTerminalRoom)
+          if (terminalAllowed) {
+            void terminalSessionManager.prewarmTerminal(parsedProjectId.data, actor.subject)
+              .catch(() => {
+                // Keep join flow responsive even if prewarm fails.
+              })
+
+            const ownTerminalRoom = terminalRoom(parsedProjectId.data, actor.subject)
+            joinedTerminalRooms.add(ownTerminalRoom)
+            void socket.join(ownTerminalRoom)
+
+            emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
+            emitTerminalStateToSocket(
+              socket,
+              parsedProjectId.data,
+              actor.subject,
+              terminalSessionManager,
+            )
+          }
 
           emitCurrentDirtyStatesForProject(socket, dirtySocketsByDocRoom, parsedProjectId.data)
-          emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
-          emitTerminalStateToSocket(
-            socket,
-            parsedProjectId.data,
-            actor.subject,
-            terminalSessionManager,
-          )
 
           io.to(room).emit('collab:presence', {
             type: 'joined',
@@ -696,17 +728,32 @@ export function createCollabGateway(
           return
         }
 
-        if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actor.subject)) {
-          socket.emit('collab:error', {
-            message: 'Join project first',
-          } satisfies ErrorEvent)
-          return
-        }
+        const actorSubject = actor.subject
 
-        socket.emit('collab:terminal:list', {
-          projectId: parsed.data.projectId,
-          terminals: terminalSessionManager.listProjectTerminals(parsed.data.projectId),
-        } satisfies TerminalListPayload)
+        void canUseTerminal(actor, parsed.data.projectId).then((allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            socket.emit('collab:error', {
+              message: 'Not authorized for terminal access',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actorSubject)) {
+            socket.emit('collab:error', {
+              message: 'Join project first',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          socket.emit('collab:terminal:list', {
+            projectId: parsed.data.projectId,
+            terminals: terminalSessionManager.listProjectTerminals(parsed.data.projectId),
+          } satisfies TerminalListPayload)
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
       })
 
       socket.on('collab:terminal:join', (payload: unknown) => {
@@ -738,29 +785,44 @@ export function createCollabGateway(
           return
         }
 
-        if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actor.subject)) {
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then((allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            socket.emit('collab:error', {
+              message: 'Not authorized for terminal access',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actorSubject)) {
+            socket.emit('collab:error', {
+              message: 'Join project first',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const result = terminalSessionManager.joinTerminal(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+          )
+          if (!result) {
+            socket.emit('collab:error', {
+              message: 'Terminal owner is offline',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+          joinedTerminalRooms.add(room)
+          void socket.join(room)
+
+          socket.emit('collab:terminal:state', result.state satisfies TerminalStatePayload)
+        }).catch(() => {
           socket.emit('collab:error', {
-            message: 'Join project first',
+            message: 'Could not process terminal request',
           } satisfies ErrorEvent)
-          return
-        }
-
-        const result = terminalSessionManager.joinTerminal(
-          parsed.data.projectId,
-          parsed.data.ownerSubject,
-        )
-        if (!result) {
-          socket.emit('collab:error', {
-            message: 'Terminal owner is offline',
-          } satisfies ErrorEvent)
-          return
-        }
-
-        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
-        joinedTerminalRooms.add(room)
-        void socket.join(room)
-
-        socket.emit('collab:terminal:state', result.state satisfies TerminalStatePayload)
+        })
       })
 
       socket.on('collab:terminal:leave', (payload: unknown) => {
@@ -818,26 +880,43 @@ export function createCollabGateway(
           return
         }
 
-        void terminalSessionManager.processInput(
-          parsed.data.projectId,
-          parsed.data.ownerSubject,
-          actor.subject,
-          parsed.data.command,
-          (ownerSubject, chunk) => {
-            io.to(terminalRoom(parsed.data.projectId, ownerSubject)).emit('collab:terminal:output', {
-              projectId: parsed.data.projectId,
-              ownerSubject,
-              ...chunk,
-            } satisfies TerminalOutputPayload)
-          },
-        ).then((result) => {
-          if (result.accepted) {
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowed) => {
+          if (!allowed) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
             return
           }
 
-          socket.emit('collab:error', {
-            message: result.reason ?? 'Could not process terminal input',
-          } satisfies ErrorEvent)
+          void terminalSessionManager.processInput(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+            parsed.data.command,
+            (ownerSubject, chunk) => {
+              io.to(terminalRoom(parsed.data.projectId, ownerSubject)).emit('collab:terminal:output', {
+                projectId: parsed.data.projectId,
+                ownerSubject,
+                ...chunk,
+              } satisfies TerminalOutputPayload)
+            },
+          ).then((result) => {
+            if (result.accepted) {
+              return
+            }
+
+            socket.emit('collab:error', {
+              message: result.reason ?? 'Could not process terminal input',
+            } satisfies ErrorEvent)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not process terminal input',
+            } satisfies ErrorEvent)
+          })
         }).catch(() => {
           socket.emit('collab:error', {
             message: 'Could not process terminal input',

@@ -41,6 +41,8 @@ import {
 import {
   type CollabDocDirtyStatePayload,
   type CollabFileCreatedPayload,
+  type CollabFileDeletedPayload,
+  type CollabFileUpdatedPayload,
 } from '../lib/collab-client'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 import { cn } from '../lib/utils'
@@ -201,6 +203,42 @@ function WorkspaceWithHostedAuth() {
       ownerSubject: null,
     })
   }, [upsertFileInCache])
+
+  const onCollabFileUpdated = useCallback((payload: CollabFileUpdatedPayload) => {
+    queryClient.invalidateQueries({
+      queryKey: ['workspace', 'files', true, payload.projectId],
+    }).catch(() => undefined)
+  }, [queryClient])
+
+  const onCollabFileDeleted = useCallback((payload: CollabFileDeletedPayload) => {
+    queryClient.setQueryData<FileDto[]>(
+      ['workspace', 'files', true, payload.projectId],
+      (previous) => (previous ?? []).filter((file) => file.id !== payload.id),
+    )
+
+    setOpenFileIds((previous) => previous.filter((fileId) => fileId !== payload.id))
+    setDraftsByFileId((previous) => {
+      if (!(payload.id in previous)) {
+        return previous
+      }
+
+      const next = { ...previous }
+      delete next[payload.id]
+      return next
+    })
+
+    setCollabDirtyByFileId((previous) => {
+      if (!(payload.id in previous)) {
+        return previous
+      }
+
+      const next = { ...previous }
+      delete next[payload.id]
+      return next
+    })
+
+    setActiveFileId((previous) => (previous === payload.id ? null : previous))
+  }, [queryClient])
 
   const onCollabDirtyStateChanged = useCallback((payload: CollabDocDirtyStatePayload) => {
     setCollabDirtyByFileId((previous) => {
@@ -377,6 +415,8 @@ function WorkspaceWithHostedAuth() {
     projectId: activeProjectId,
     fileId: activeFileId,
     onFileCreated: onCollabFileCreated,
+    onFileUpdated: onCollabFileUpdated,
+    onFileDeleted: onCollabFileDeleted,
     onDirtyStateChanged: onCollabDirtyStateChanged,
   })
 

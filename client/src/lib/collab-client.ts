@@ -31,6 +31,21 @@ export interface CollabFileCreatedPayload {
   updatedAt: string
 }
 
+export interface CollabFileUpdatedPayload {
+  id: string
+  projectId: string
+  path: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CollabFileDeletedPayload {
+  id: string
+  projectId: string
+  path: string
+  deletedAt: string
+}
+
 export interface CollabDocDirtyStatePayload extends DocKey {
   isDirty: boolean
   updatedAt: string
@@ -38,6 +53,8 @@ export interface CollabDocDirtyStatePayload extends DocKey {
 
 export type WatchProjectCallbacks = {
   onFileCreated?: (payload: CollabFileCreatedPayload) => void
+  onFileUpdated?: (payload: CollabFileUpdatedPayload) => void
+  onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
 }
 
@@ -363,6 +380,22 @@ export class CollabClient {
       callbacks.onFileCreated?.(payload)
     }
 
+    const onFileUpdated = (payload: CollabFileUpdatedPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onFileUpdated?.(payload)
+    }
+
+    const onFileDeleted = (payload: CollabFileDeletedPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onFileDeleted?.(payload)
+    }
+
     const onDirtyStateChanged = (payload: CollabDocDirtyStatePayload) => {
       if (payload.projectId !== projectId) {
         return
@@ -372,12 +405,16 @@ export class CollabClient {
     }
 
     socket.on('collab:file:created', onFileCreated)
+    socket.on('collab:file:updated', onFileUpdated)
+    socket.on('collab:file:deleted', onFileDeleted)
     socket.on('collab:doc:dirty-state', onDirtyStateChanged)
     this.retainProject(socket, projectId)
 
     return () => {
       this.releaseProject(socket, projectId)
       socket.off('collab:file:created', onFileCreated)
+      socket.off('collab:file:updated', onFileUpdated)
+      socket.off('collab:file:deleted', onFileDeleted)
       socket.off('collab:doc:dirty-state', onDirtyStateChanged)
     }
   }

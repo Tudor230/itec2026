@@ -9,6 +9,8 @@ import { io as createClient, type Socket as ClientSocket } from 'socket.io-clien
 import type { ActorContext } from '../auth/actor-context.js'
 import { actorContextFromSocket } from '../auth/auth-socket-context.js'
 import { createCollabGateway } from './collab.gateway.js'
+import { LocalShellRuntime } from './terminal/local-shell-runtime.js'
+import { TerminalSessionManager } from './terminal/terminal-session-manager.js'
 
 const TEST_JWT_SECRET = 'test-jwt-secret'
 process.env.AUTH_JWT_HS256_SECRET = TEST_JWT_SECRET
@@ -68,6 +70,21 @@ type FileCreatedPayload = {
   path: string
   createdAt: string
   updatedAt: string
+}
+
+type FileUpdatedPayload = {
+  id: string
+  projectId: string
+  path: string
+  createdAt: string
+  updatedAt: string
+}
+
+type FileDeletedPayload = {
+  id: string
+  projectId: string
+  path: string
+  deletedAt: string
 }
 
 type TerminalListPayload = {
@@ -186,6 +203,7 @@ describe('collab gateway', () => {
   const clients: ClientSocket[] = []
   let persistedUpdateSequence = 0
   let snapshotSaveCount = 0
+  let prewarmCalls: Array<{ projectId: string; ownerSubject: string }> = []
 
   beforeEach(async () => {
     const httpServer = createServer()
@@ -247,6 +265,19 @@ describe('collab gateway', () => {
       return
     }
 
+    const canUseTerminal = async (_actor: ActorContext, projectId: string) => {
+      return projectId !== 'forbidden-project'
+    }
+
+    class SpyTerminalSessionManager extends TerminalSessionManager {
+      override prewarmTerminal(projectId: string, ownerSubject: string): Promise<void> {
+        prewarmCalls.push({ projectId, ownerSubject })
+        return super.prewarmTerminal(projectId, ownerSubject)
+      }
+    }
+
+    const terminalSessionManager = new SpyTerminalSessionManager(() => new LocalShellRuntime())
+
     const io = createCollabGateway(
       httpServer,
       (socket: Socket) => actorContextFromSocket(socket),
@@ -256,6 +287,8 @@ describe('collab gateway', () => {
       loadYjsHistory,
       appendYjsUpdate,
       saveYjsSnapshot,
+      canUseTerminal,
+      terminalSessionManager,
     )
 
     await new Promise<void>((resolve) => {
@@ -314,6 +347,38 @@ describe('collab gateway', () => {
   beforeEach(() => {
     persistedUpdateSequence = 0
     snapshotSaveCount = 0
+    prewarmCalls = []
+  })
+
+  it('prewarms terminal when project is joined', async () => {
+    const projectId = 'project-prewarm'
+    const ownerSubject = 'auth0|prewarm-user'
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-prewarm') },
+    })
+
+    clients.push(client)
+    client.connect()
+
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    const joined = waitForEvent<PresencePayload>(
+      client,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    client.emit('collab:join-project', projectId)
+    await joined
+
+    assert.equal(prewarmCalls.length, 1)
+    assert.deepEqual(prewarmCalls[0], {
+      projectId,
+      ownerSubject,
+    })
   })
 
   it('emits actor type on connect based on resolver', async () => {
@@ -1103,6 +1168,82 @@ describe('collab gateway', () => {
     await snapshotSeenByB
   })
 
+  it('broadcasts file updated and deleted events to project room peers', async () => {
+    const projectId = 'project-123'
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-a', 'jwt-file-events-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-b', 'jwt-file-events-b') },
+    })
+
+    clients.push(clientA, clientB)
+
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:join-project', projectId)
+    clientB.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(
+        clientA,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+      waitForEvent<PresencePayload>(
+        clientB,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+    ])
+
+    const { emitCollabFileUpdated, emitCollabFileDeleted } = await import('./collab-events.js')
+
+    const updatedSeen = waitForEvent<FileUpdatedPayload>(
+      clientB,
+      'collab:file:updated',
+      (payload) => payload.projectId === projectId && payload.id === 'file-updated-1',
+    )
+
+    emitCollabFileUpdated({
+      id: 'file-updated-1',
+      projectId,
+      path: 'src/updated.ts',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+
+    const updatedPayload = await updatedSeen
+    assert.equal(updatedPayload.path, 'src/updated.ts')
+
+    const deletedSeen = waitForEvent<FileDeletedPayload>(
+      clientB,
+      'collab:file:deleted',
+      (payload) => payload.projectId === projectId && payload.id === 'file-deleted-1',
+    )
+
+    emitCollabFileDeleted({
+      id: 'file-deleted-1',
+      projectId,
+      path: 'src/deleted.ts',
+      deletedAt: new Date().toISOString(),
+    })
+
+    const deletedPayload = await deletedSeen
+    assert.equal(deletedPayload.path, 'src/deleted.ts')
+  })
+
   it('publishes terminal list for joined project members', async () => {
     const projectId = 'project-123'
     const ownerSubject = 'auth0|terminal-owner'
@@ -1137,7 +1278,52 @@ describe('collab gateway', () => {
     owner.emit('collab:terminal:list', { projectId })
 
     const listPayload = await terminalList
-    assert.equal(listPayload.terminals[0]?.ownerSubject, ownerSubject)
+    assert.ok(listPayload.terminals.some((terminal) => terminal.ownerSubject === ownerSubject))
+    assert.equal(listPayload.terminals.find((terminal) => terminal.ownerSubject === ownerSubject)?.activeControllerSubject, ownerSubject)
+  })
+
+  it('blocks terminal list and join when terminal authorization is denied', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-denied-user'
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-denied-user') },
+    })
+
+    clients.push(client)
+
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    client.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      client,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    const denyListError = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      (payload) => payload.message === 'Not authorized for terminal access',
+    )
+
+    client.emit('collab:terminal:list', { projectId: 'forbidden-project' })
+    await denyListError
+
+    const denyJoinError = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      (payload) => payload.message === 'Not authorized for terminal access',
+    )
+
+    client.emit('collab:terminal:join', {
+      projectId: 'forbidden-project',
+      ownerSubject,
+    })
+    await denyJoinError
   })
 
   it('blocks terminal input from read-only viewers', async () => {
