@@ -42,7 +42,6 @@ services:
       DATABASE_URL: postgres://itec:itec@postgres:5432/itec2026
       CLIENT_ORIGIN: http://localhost:3000
       COLLAB_TERMINAL_DOCKER_IMAGE: node:20.0
-      COLLAB_TERMINAL_DOCKER_IMAGE: node:20.0
       FILES_STORAGE_ROOT: /data/files
       COLLAB_WORKSPACE_ROOT: /data/workspaces
       DOCKER_HOST: tcp://dockerd:2375
