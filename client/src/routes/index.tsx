@@ -8,7 +8,7 @@ export const Route = createFileRoute('/')({ component: App })
 
 function App() {
   return (
-    <main className="page-wrap px-4 pb-14 pt-14">
+    <main className="mx-auto w-full max-w-[1080px] px-4 pb-14 pt-14">
       <LandingHero />
       <div id="features">
         <FeatureBlocks />

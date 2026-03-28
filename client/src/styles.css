@@ -26,6 +26,9 @@
   --link-bg-hover: rgba(255, 255, 255, 0.9);
   --hero-a: rgba(79, 184, 178, 0.36);
   --hero-b: rgba(47, 106, 74, 0.2);
+  --bg-rgb: 231, 243, 236;
+  --chip-bg-rgb: 255, 255, 255;
+  --lagoon-rgb: 79, 184, 178;
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
@@ -83,6 +86,9 @@
   --link-bg-hover: rgba(24, 44, 49, 0.8);
   --hero-a: rgba(96, 215, 207, 0.18);
   --hero-b: rgba(110, 200, 154, 0.12);
+  --bg-rgb: 10, 20, 24;
+  --chip-bg-rgb: 13, 28, 32;
+  --lagoon-rgb: 96, 215, 207;
 
   --background: oklch(0.141 0.005 285.823);
   --foreground: oklch(0.985 0 0);
@@ -138,6 +144,9 @@
   --link-bg-hover: rgba(51, 43, 75, 0.8);
   --hero-a: rgba(255, 121, 198, 0.2);
   --hero-b: rgba(80, 250, 123, 0.12);
+  --bg-rgb: 15, 13, 23;
+  --chip-bg-rgb: 31, 27, 48;
+  --lagoon-rgb: 255, 121, 198;
   --background: oklch(0.16 0.02 304);
   --foreground: oklch(0.95 0.03 304);
   --card: oklch(0.2 0.02 304);
@@ -169,6 +178,9 @@
   --link-bg-hover: rgba(39, 58, 85, 0.78);
   --hero-a: rgba(136, 192, 208, 0.2);
   --hero-b: rgba(143, 188, 187, 0.14);
+  --bg-rgb: 11, 18, 28;
+  --chip-bg-rgb: 19, 31, 47;
+  --lagoon-rgb: 136, 192, 208;
   --background: oklch(0.17 0.01 260);
   --foreground: oklch(0.94 0.01 260);
   --card: oklch(0.22 0.01 260);
@@ -200,6 +212,9 @@
   --link-bg-hover: rgba(255, 255, 255, 0.95);
   --hero-a: rgba(38, 139, 210, 0.17);
   --hero-b: rgba(42, 161, 152, 0.14);
+  --bg-rgb: 243, 234, 211;
+  --chip-bg-rgb: 255, 253, 246;
+  --lagoon-rgb: 42, 161, 152;
   --background: oklch(0.98 0.01 95);
   --foreground: oklch(0.34 0.04 220);
   --card: oklch(0.99 0.01 95);
@@ -231,6 +246,9 @@
   --link-bg-hover: rgba(34, 54, 86, 0.78);
   --hero-a: rgba(93, 157, 255, 0.18);
   --hero-b: rgba(106, 199, 255, 0.12);
+  --bg-rgb: 6, 13, 25;
+  --chip-bg-rgb: 13, 24, 42;
+  --lagoon-rgb: 93, 157, 255;
   --background: oklch(0.14 0.02 258);
   --foreground: oklch(0.95 0.03 258);
   --card: oklch(0.2 0.02 258);
