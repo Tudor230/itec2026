@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getRobotHeadPose, mapZoomToBobAmplitude } from './useRobotHeadMotion'
+import { getRobotEyeTarget, getRobotHeadPose, mapZoomToBobAmplitude, resolveRobotEyeTarget, resolveRobotReactionPose } from './useRobotHeadMotion'
 
 describe('robot head motion helpers', () => {
   it('maps section to deterministic pose values', () => {
@@ -18,5 +18,25 @@ describe('robot head motion helpers', () => {
     const wideBob = Number.parseFloat(mapZoomToBobAmplitude(1))
 
     expect(wideBob).toBeGreaterThan(compactBob)
+  })
+
+  it('maps deterministic eye targets by section', () => {
+    const splitTarget = getRobotEyeTarget('split')
+    const authTarget = getRobotEyeTarget('auth')
+
+    expect(splitTarget.x).toBeLessThan(0)
+    expect(authTarget.x).toBeGreaterThan(0)
+    expect(Math.abs(splitTarget.y)).toBeGreaterThan(7)
+  })
+
+  it('exaggerates pose and eye target when focus lock is enabled', () => {
+    const relaxedPose = resolveRobotReactionPose('split', false)
+    const focusedPose = resolveRobotReactionPose('split', true)
+    const relaxedEyeTarget = resolveRobotEyeTarget('auth', false)
+    const focusedEyeTarget = resolveRobotEyeTarget('auth', true)
+
+    expect(Number.parseFloat(focusedPose.yaw)).toBeLessThan(Number.parseFloat(relaxedPose.yaw))
+    expect(Math.abs(focusedEyeTarget.x)).toBeGreaterThan(Math.abs(relaxedEyeTarget.x) * 2)
+    expect(Math.abs(focusedEyeTarget.y)).toBeGreaterThan(Math.abs(relaxedEyeTarget.y) * 2)
   })
 })

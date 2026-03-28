@@ -50,7 +50,8 @@ describe('landing timeline helpers', () => {
 
     expect(atPhilosophyWindow.robotX).toBeGreaterThan(18)
     expect(atScopeWindow.robotX).toBeLessThan(0)
-    expect(atStart.robotZoom).toBeGreaterThan(atEnd.robotZoom)
+    expect(atStart.robotZoom).toBeCloseTo(0.94)
+    expect(atEnd.robotZoom).toBeCloseTo(0.94)
 
     expect(atEnd.philosophyOpacity).toBe(0)
     expect(atEnd.scopeOpacity).toBe(1)

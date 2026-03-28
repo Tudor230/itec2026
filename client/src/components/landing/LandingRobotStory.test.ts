@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveLandingActionVariant, shouldRelockIntro } from './LandingRobotStory'
+import {
+  clampIntroProgress,
+  resolveLandingActionVariant,
+  resolveVisualProgress,
+  shouldRelockIntro,
+  shouldUnlockIntro,
+} from './LandingRobotStory'
 
 describe('LandingRobotStory action variant resolver', () => {
   it('returns guest when auth runtime is not configured', () => {
@@ -59,5 +65,18 @@ describe('LandingRobotStory relock predicate', () => {
 
   it('does not relock on downward scroll', () => {
     expect(shouldRelockIntro(false, true, 24)).toBe(false)
+  })
+})
+
+describe('LandingRobotStory intro progress gating', () => {
+  it('caps unlock progress and preserves visual progress cap', () => {
+    expect(clampIntroProgress(2)).toBeCloseTo(1.18)
+    expect(resolveVisualProgress(1.18)).toBe(1)
+  })
+
+  it('unlocks only after extra hold threshold', () => {
+    expect(shouldUnlockIntro(1)).toBe(false)
+    expect(shouldUnlockIntro(1.17)).toBe(false)
+    expect(shouldUnlockIntro(1.18)).toBe(true)
   })
 })
