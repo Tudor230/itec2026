@@ -18,6 +18,10 @@ export interface FileDto {
   updatedAt: string
 }
 
+export interface FolderDto {
+  path: string
+}
+
 export interface ProjectInviteDto {
   id: string
   projectId: string
@@ -76,6 +80,45 @@ export function updateFile(fileId: string, input: {
 }, accessToken?: string | null) {
   return apiRequest<FileDto>(`/api/files/${fileId}`, {
     method: 'PATCH',
+    body: input,
+    accessToken,
+  })
+}
+
+export function deleteFile(fileId: string, accessToken?: string | null) {
+  return apiRequest<{ deleted: boolean }>(`/api/files/${fileId}`, {
+    method: 'DELETE',
+    accessToken,
+  })
+}
+
+export function listFolders(projectId: string, accessToken?: string | null) {
+  const query = new URLSearchParams({ projectId })
+  return apiRequest<FolderDto[]>(`/api/files/folders?${query.toString()}`, { accessToken })
+}
+
+export function createFolder(input: { projectId: string; path: string }, accessToken?: string | null) {
+  return apiRequest<FolderDto>('/api/files/folders', {
+    method: 'POST',
+    body: input,
+    accessToken,
+  })
+}
+
+export function renameFolder(
+  input: { projectId: string; fromPath: string; toPath: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<{ renamed: boolean }>('/api/files/folders', {
+    method: 'PATCH',
+    body: input,
+    accessToken,
+  })
+}
+
+export function deleteFolder(input: { projectId: string; path: string }, accessToken?: string | null) {
+  return apiRequest<{ deleted: boolean }>('/api/files/folders', {
+    method: 'DELETE',
     body: input,
     accessToken,
   })

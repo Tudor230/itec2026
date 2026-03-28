@@ -4,7 +4,13 @@ import { asyncHandler } from '../../http/async-handler.js'
 import { actorFromRequest } from '../auth/request-actor.js'
 import { requireTokenPresent } from '../auth/require-token-present.middleware.js'
 import { emitCollabFileCreated } from '../collab/collab-events.js'
-import { createFileSchema, updateFileSchema } from './file.schema.js'
+import {
+  createFileSchema,
+  createFolderSchema,
+  deleteFolderSchema,
+  renameFolderSchema,
+  updateFileSchema,
+} from './file.schema.js'
 import { LocalFileBlobStore, resolveFilesStorageRoot, type FileBlobStore } from './file-blob-store.js'
 import { FilesRepository } from './files.repository.js'
 import { FilesService } from './files.service.js'
@@ -35,6 +41,25 @@ export function createFilesRouter({
     response.json({
       ok: true,
       data: files,
+    })
+  }))
+
+  router.get('/folders', requireTokenPresent, asyncHandler(async (request, response) => {
+    const projectId = request.query.projectId
+    if (typeof projectId !== 'string' || projectId.trim().length === 0) {
+      response.status(400).json({
+        ok: false,
+        error: { message: 'projectId query parameter is required', code: 'INVALID_QUERY' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const folders = await service.listFoldersByProject(actor, projectId)
+
+    response.json({
+      ok: true,
+      data: folders,
     })
   }))
 
@@ -82,6 +107,57 @@ export function createFilesRouter({
     })
   }))
 
+  router.post('/folders', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = createFolderSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FOLDER_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const folder = await service.createFolder(actor, parsed.data.projectId, parsed.data.path)
+
+    response.status(201).json({
+      ok: true,
+      data: folder,
+    })
+  }))
+
+  router.patch('/folders', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = renameFolderSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FOLDER_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const renamed = await service.renameFolder(
+      actor,
+      parsed.data.projectId,
+      parsed.data.fromPath,
+      parsed.data.toPath,
+    )
+
+    if (!renamed) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Folder not found', code: 'FOLDER_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: { renamed: true },
+    })
+  }))
+
   router.patch('/:fileId', requireTokenPresent, asyncHandler(async (request, response) => {
     const parsed = updateFileSchema.safeParse(request.body)
     if (!parsed.success) {
@@ -106,6 +182,33 @@ export function createFilesRouter({
     response.json({
       ok: true,
       data: file,
+    })
+  }))
+
+  router.delete('/folders', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = deleteFolderSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FOLDER_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const removed = await service.deleteFolder(actor, parsed.data.projectId, parsed.data.path)
+
+    if (!removed) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Folder not found', code: 'FOLDER_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: { deleted: true },
     })
   }))
 

@@ -258,6 +258,7 @@ function createPrismaDouble() {
 
   return {
     prisma: {
+      $transaction: async <T>(operations: Promise<T>[]) => Promise.all(operations),
       project: {
         findFirst: projects.findFirst.bind(projects),
       },
@@ -629,5 +630,131 @@ describe('files router', () => {
 
     assert.equal(conflicting.status, 409)
     assert.equal(blobStore?.size(), 1)
+  })
+
+  it('supports folder create/list/rename/delete lifecycle', async () => {
+    const ownerSubject = 'auth0|folder-user'
+    const token = createJwt(ownerSubject, 'jwt-folder-user')
+    const projectId = 'project-folder-user'
+    seedProject?.(projectId, ownerSubject)
+
+    const createFolderResponse = await fetch(`${baseUrl}/api/files/folders`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/utils',
+      }),
+    })
+    const createFolderPayload = await createFolderResponse.json()
+
+    const listAfterCreate = await fetch(`${baseUrl}/api/files/folders?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listAfterCreatePayload = await listAfterCreate.json()
+
+    const renamedFolderResponse = await fetch(`${baseUrl}/api/files/folders`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        fromPath: 'src/utils',
+        toPath: 'src/helpers',
+      }),
+    })
+    const renamedFolderPayload = await renamedFolderResponse.json()
+
+    const listAfterRename = await fetch(`${baseUrl}/api/files/folders?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listAfterRenamePayload = await listAfterRename.json()
+
+    const deleteFolderResponse = await fetch(`${baseUrl}/api/files/folders`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/helpers',
+      }),
+    })
+    const deleteFolderPayload = await deleteFolderResponse.json()
+
+    const listAfterDelete = await fetch(`${baseUrl}/api/files/folders?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listAfterDeletePayload = await listAfterDelete.json()
+
+    assert.equal(createFolderResponse.status, 201)
+    assert.equal(createFolderPayload.data.path, 'src/utils')
+    assert.equal(listAfterCreate.status, 200)
+    assert.equal(listAfterCreatePayload.data.some((folder: { path: string }) => folder.path === 'src/utils'), true)
+    assert.equal(renamedFolderResponse.status, 200)
+    assert.equal(renamedFolderPayload.data.renamed, true)
+    assert.equal(listAfterRename.status, 200)
+    assert.equal(listAfterRenamePayload.data.some((folder: { path: string }) => folder.path === 'src/helpers'), true)
+    assert.equal(deleteFolderResponse.status, 200)
+    assert.equal(deleteFolderPayload.data.deleted, true)
+    assert.equal(listAfterDelete.status, 200)
+    assert.equal(listAfterDeletePayload.data.some((folder: { path: string }) => folder.path === 'src/helpers'), false)
+  })
+
+  it('renames and deletes nested files through folder routes', async () => {
+    const ownerSubject = 'auth0|folder-nested-user'
+    const token = createJwt(ownerSubject, 'jwt-folder-nested-user')
+    const projectId = 'project-folder-nested-user'
+    seedProject?.(projectId, ownerSubject)
+
+    const createdFile = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/utils/math.ts',
+        content: 'export const add = (a, b) => a + b',
+      }),
+    })
+    const createdFilePayload = await createdFile.json()
+
+    const renameFolderResponse = await fetch(`${baseUrl}/api/files/folders`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        fromPath: 'src/utils',
+        toPath: 'src/helpers',
+      }),
+    })
+    const renameFolderPayload = await renameFolderResponse.json()
+
+    const listedAfterRename = await fetch(`${baseUrl}/api/files?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listedAfterRenamePayload = await listedAfterRename.json()
+
+    const deleteFolderResponse = await fetch(`${baseUrl}/api/files/folders`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/helpers',
+      }),
+    })
+    const deleteFolderPayload = await deleteFolderResponse.json()
+
+    const getDeletedFile = await fetch(`${baseUrl}/api/files/${createdFilePayload.data.id}`, {
+      headers: authHeaders(token),
+    })
+    const getDeletedFilePayload = await getDeletedFile.json()
+
+    assert.equal(renameFolderResponse.status, 200)
+    assert.equal(renameFolderPayload.data.renamed, true)
+    assert.equal(
+      listedAfterRenamePayload.data.some((file: { path: string }) => file.path === 'src/helpers/math.ts'),
+      true,
+    )
+    assert.equal(deleteFolderResponse.status, 200)
+    assert.equal(deleteFolderPayload.data.deleted, true)
+    assert.equal(getDeletedFile.status, 404)
+    assert.equal(getDeletedFilePayload.error.code, 'FILE_NOT_FOUND')
   })
 })
