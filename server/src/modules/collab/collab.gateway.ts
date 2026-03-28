@@ -21,6 +21,29 @@ export type FileContentLoader = (
   projectId: string,
   fileId: string,
 ) => Promise<string | null>
+export type YjsHistoryState = {
+  snapshot: Uint8Array | null
+  updates: Uint8Array[]
+  lastSequence: number
+}
+export type YjsHistoryLoader = (
+  actor: ActorContext,
+  projectId: string,
+  fileId: string,
+) => Promise<YjsHistoryState | null>
+export type YjsUpdateAppender = (
+  actor: ActorContext,
+  projectId: string,
+  fileId: string,
+  update: Uint8Array,
+) => Promise<{ sequence: number }>
+export type YjsSnapshotSaver = (
+  actor: ActorContext,
+  projectId: string,
+  fileId: string,
+  sequence: number,
+  update: Uint8Array,
+) => Promise<void>
 
 type ConnectedEvent = {
   actorType: ActorContext['type']
@@ -55,6 +78,9 @@ interface DocSession {
   doc: Y.Doc
   clients: Set<string>
   authorizedSubjects: Set<string>
+  lastSequence: number
+  updatesSinceSnapshot: number
+  snapshotInFlight: boolean
 }
 
 interface RateCounter {
@@ -131,6 +157,9 @@ export function createCollabGateway(
   canJoinProject: ProjectJoinAuthorizer,
   canJoinFile: FileJoinAuthorizer,
   loadFileContent: FileContentLoader,
+  loadYjsHistory: YjsHistoryLoader,
+  appendYjsUpdate: YjsUpdateAppender,
+  saveYjsSnapshot: YjsSnapshotSaver,
 ) {
   const io = new Server(httpServer, {
     cors: {
@@ -144,6 +173,7 @@ export function createCollabGateway(
   const maxDocsPerSocket = readPositiveInt(process.env.COLLAB_MAX_DOCS_PER_SOCKET, 12)
   const maxDocUpdatesPerSecond = readPositiveInt(process.env.COLLAB_MAX_DOC_UPDATES_PER_SECOND, 120)
   const maxJoinsPerTenSeconds = readPositiveInt(process.env.COLLAB_MAX_DOC_JOINS_PER_10S, 40)
+  const snapshotIntervalUpdates = readPositiveInt(process.env.COLLAB_SNAPSHOT_INTERVAL_UPDATES, 200)
 
   const unregisterFileCreatedListener = registerCollabFileCreatedListener((file) => {
     io.to(projectRoom(file.projectId)).emit('collab:file:created', file)
@@ -274,6 +304,7 @@ export function createCollabGateway(
           canJoinProject,
           canJoinFile,
           loadFileContent,
+          loadYjsHistory,
           maxDocSessions,
           maxDocsPerSocket,
         ).catch(() => {
@@ -386,6 +417,24 @@ export function createCollabGateway(
             return
           }
 
+          const canStillEdit = await canJoinFile(
+            actor,
+            parsedUpdate.data.projectId,
+            parsedUpdate.data.fileId,
+          )
+          if (!canStillEdit) {
+            joinedRooms.delete(room)
+            joinedDocRooms.delete(room)
+            clearDirtyStateForSocket(io, dirtySocketsByDocRoom, room, socket.id)
+            await socket.leave(room)
+            removeSocketFromDocSession(docSessions, room, socket.id)
+
+            socket.emit('collab:error', {
+              message: 'Not authorized for this file',
+            } satisfies ErrorEvent)
+            return
+          }
+
           try {
             Y.applyUpdate(session.doc, updateBytes, socket.id)
           } catch {
@@ -394,6 +443,15 @@ export function createCollabGateway(
             } satisfies ErrorEvent)
             return
           }
+
+          const persisted = await appendYjsUpdate(
+            actor,
+            parsedUpdate.data.projectId,
+            parsedUpdate.data.fileId,
+            updateBytes,
+          )
+          session.lastSequence = persisted.sequence
+          session.updatesSinceSnapshot += 1
 
           updateDirtyStateForSocket(
             io,
@@ -405,6 +463,27 @@ export function createCollabGateway(
           )
 
           socket.to(room).emit('collab:doc:update', parsedUpdate.data satisfies DocUpdatePayload)
+
+          if (!session.snapshotInFlight && session.updatesSinceSnapshot >= snapshotIntervalUpdates) {
+            session.snapshotInFlight = true
+            const snapshotUpdate = Y.encodeStateAsUpdate(session.doc)
+            const updatesCapturedBySnapshot = session.updatesSinceSnapshot
+
+            void saveYjsSnapshot(
+              actor,
+              parsedUpdate.data.projectId,
+              parsedUpdate.data.fileId,
+              session.lastSequence,
+              snapshotUpdate,
+            ).then(() => {
+              session.updatesSinceSnapshot = Math.max(
+                0,
+                session.updatesSinceSnapshot - updatesCapturedBySnapshot,
+              )
+            }).catch(() => undefined).finally(() => {
+              session.snapshotInFlight = false
+            })
+          }
         })().catch(() => {
           socket.emit('collab:error', {
             message: 'Could not process document update',
@@ -685,6 +764,7 @@ async function handleDocJoin(
   canJoinProject: ProjectJoinAuthorizer,
   canJoinFile: FileJoinAuthorizer,
   loadFileContent: FileContentLoader,
+  loadYjsHistory: YjsHistoryLoader,
   maxDocSessions: number,
   maxDocsPerSocket: number,
 ) {
@@ -734,6 +814,27 @@ async function handleDocJoin(
     pendingSessionInitializations,
     maxDocSessions,
     async () => {
+      const history = await loadYjsHistory(actor, payload.projectId, payload.fileId)
+      if (history) {
+        const doc = new Y.Doc()
+        if (history.snapshot) {
+          Y.applyUpdate(doc, history.snapshot)
+        }
+
+        history.updates.forEach((update) => {
+          Y.applyUpdate(doc, update)
+        })
+
+        return {
+          doc,
+          clients: new Set<string>(),
+          authorizedSubjects: new Set<string>(),
+          lastSequence: history.lastSequence,
+          updatesSinceSnapshot: 0,
+          snapshotInFlight: false,
+        }
+      }
+
       const initialContent = await loadFileContent(actor, payload.projectId, payload.fileId)
       if (initialContent === null) {
         return null
@@ -750,6 +851,9 @@ async function handleDocJoin(
         doc,
         clients: new Set<string>(),
         authorizedSubjects: new Set<string>(),
+        lastSequence: 0,
+        updatesSinceSnapshot: 0,
+        snapshotInFlight: false,
       }
     },
   )

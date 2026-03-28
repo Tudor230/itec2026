@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client'
 import type { ActorContext } from '../auth/actor-context.js'
 import { createId } from './id.js'
+import { createFileStorageKey, type FileBlobStore } from './file-blob-store.js'
 import { canEditProject, canReadProject } from './project-access.js'
 import type { FileInput, FileRecord } from './file.types.js'
 
@@ -8,11 +9,13 @@ function toFileRecord(file: {
   id: string
   projectId: string
   path: string
-  content: string
+  storageKey: string
+  contentHash: string
+  byteSize: number
   ownerSubject: string | null
   createdAt: Date
   updatedAt: Date
-}): FileRecord {
+}, content: string): FileRecord {
   const createdAt = file.createdAt.toISOString()
   const updatedAt = file.updatedAt.toISOString()
 
@@ -20,7 +23,10 @@ function toFileRecord(file: {
     id: file.id,
     projectId: file.projectId,
     path: file.path,
-    content: file.content,
+    content,
+    storageKey: file.storageKey,
+    contentHash: file.contentHash,
+    byteSize: file.byteSize,
     ownerSubject: file.ownerSubject,
     createdAt,
     updatedAt,
@@ -28,7 +34,10 @@ function toFileRecord(file: {
 }
 
 export class FilesRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly blobStore: FileBlobStore,
+  ) {}
 
   async listByProject(actor: ActorContext, projectId: string): Promise<FileRecord[]> {
     const ownerSubject = actor.subject
@@ -45,7 +54,9 @@ export class FilesRepository {
       id: string
       projectId: string
       path: string
-      content: string
+      storageKey: string
+      contentHash: string
+      byteSize: number
       ownerSubject: string | null
       createdAt: Date
       updatedAt: Date
@@ -58,15 +69,21 @@ export class FilesRepository {
       },
     })
 
-    return files.map((file: {
-      id: string
-      projectId: string
-      path: string
-      content: string
-      ownerSubject: string | null
-      createdAt: Date
-      updatedAt: Date
-    }) => toFileRecord(file))
+    const fileRecords = await Promise.all(files.map(async (file) => {
+      try {
+        const content = await this.blobStore.readText(file.storageKey)
+        return toFileRecord(file, content)
+      } catch (error) {
+        const errorLike = error as { code?: string }
+        if (errorLike.code === 'FILE_BLOB_NOT_FOUND') {
+          return null
+        }
+
+        throw error
+      }
+    }))
+
+    return fileRecords.filter((file): file is FileRecord => file !== null)
   }
 
   async getById(actor: ActorContext, id: string): Promise<FileRecord | null> {
@@ -78,12 +95,16 @@ export class FilesRepository {
       where: {
         id,
       },
-      include: {
-        project: {
-          select: {
-            id: true,
-          },
-        },
+      select: {
+        id: true,
+        projectId: true,
+        path: true,
+        storageKey: true,
+        contentHash: true,
+        byteSize: true,
+        ownerSubject: true,
+        createdAt: true,
+        updatedAt: true,
       },
     })
 
@@ -96,7 +117,8 @@ export class FilesRepository {
       return null
     }
 
-    return toFileRecord(file)
+    const content = await this.blobStore.readText(file.storageKey)
+    return toFileRecord(file, content)
   }
 
   async create(actor: ActorContext, input: FileInput): Promise<FileRecord> {
@@ -116,17 +138,38 @@ export class FilesRepository {
       })
     }
 
-    const file = await this.prisma.file.create({
-      data: {
-        id,
-        projectId: input.projectId,
-        path: input.path,
-        content: input.content,
-        ownerSubject,
-      },
-    })
+    const storageKey = createFileStorageKey(input.projectId, id)
+    const blobResult = await this.blobStore.writeText(storageKey, input.content)
 
-    return toFileRecord(file)
+    try {
+      const file = await this.prisma.file.create({
+        data: {
+          id,
+          projectId: input.projectId,
+          path: input.path,
+          storageKey,
+          contentHash: blobResult.contentHash,
+          byteSize: blobResult.byteSize,
+          ownerSubject,
+        },
+        select: {
+          id: true,
+          projectId: true,
+          path: true,
+          storageKey: true,
+          contentHash: true,
+          byteSize: true,
+          ownerSubject: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+
+      return toFileRecord(file, input.content)
+    } catch (error) {
+      await this.blobStore.remove(storageKey)
+      throw error
+    }
   }
 
   async update(
@@ -146,22 +189,29 @@ export class FilesRepository {
 
     const nextPath = updates.path ?? current.path
     const nextContent = updates.content ?? current.content
+    const blobResult = await this.blobStore.writeText(current.storageKey, nextContent)
 
-    const result = await this.prisma.file.updateMany({
-      where: {
-        id,
-      },
-      data: {
-        path: nextPath,
-        content: nextContent,
-      },
-    })
+    try {
+      const result = await this.prisma.file.updateMany({
+        where: {
+          id,
+        },
+        data: {
+          path: nextPath,
+          contentHash: blobResult.contentHash,
+          byteSize: blobResult.byteSize,
+        },
+      })
 
-    if (result.count === 0) {
-      return null
+      if (result.count === 0) {
+        return null
+      }
+
+      return this.getById(actor, id)
+    } catch (error) {
+      await this.blobStore.writeText(current.storageKey, current.content)
+      throw error
     }
-
-    return this.getById(actor, id)
   }
 
   async remove(actor: ActorContext, id: string): Promise<boolean> {
@@ -180,6 +230,10 @@ export class FilesRepository {
         id,
       },
     })
+
+    if (result.count > 0) {
+      await this.blobStore.remove(current.storageKey)
+    }
 
     return result.count > 0
   }

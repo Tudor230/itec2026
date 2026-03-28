@@ -18,6 +18,7 @@ process.env.COLLAB_MAX_DOC_SESSIONS = '3'
 process.env.COLLAB_MAX_DOCS_PER_SOCKET = '3'
 process.env.COLLAB_MAX_DOC_UPDATES_PER_SECOND = '4'
 process.env.COLLAB_MAX_DOC_JOINS_PER_10S = '20'
+process.env.COLLAB_SNAPSHOT_INTERVAL_UPDATES = '2'
 
 type ConnectedPayload = {
   actorType: 'anonymous' | 'token_present' | 'authenticated'
@@ -139,6 +140,8 @@ describe('collab gateway', () => {
   let baseUrl = ''
   let closeServer: (() => Promise<void>) | undefined
   const clients: ClientSocket[] = []
+  let persistedUpdateSequence = 0
+  let snapshotSaveCount = 0
 
   beforeEach(async () => {
     const httpServer = createServer()
@@ -171,12 +174,44 @@ describe('collab gateway', () => {
       return 'initial content'
     }
 
+    const loadYjsHistory = async (
+      _actor: ActorContext,
+      _projectId: string,
+      _fileId: string,
+    ) => {
+      return null
+    }
+
+    const appendYjsUpdate = async (
+      _actor: ActorContext,
+      _projectId: string,
+      _fileId: string,
+      _update: Uint8Array,
+    ) => {
+      persistedUpdateSequence += 1
+      return { sequence: persistedUpdateSequence }
+    }
+
+    const saveYjsSnapshot = async (
+      _actor: ActorContext,
+      _projectId: string,
+      _fileId: string,
+      _sequence: number,
+      _update: Uint8Array,
+    ) => {
+      snapshotSaveCount += 1
+      return
+    }
+
     const io = createCollabGateway(
       httpServer,
       (socket: Socket) => actorContextFromSocket(socket),
       canJoinProject,
       canJoinFile,
       loadFileContent,
+      loadYjsHistory,
+      appendYjsUpdate,
+      saveYjsSnapshot,
     )
 
     await new Promise<void>((resolve) => {
@@ -230,6 +265,11 @@ describe('collab gateway', () => {
       await closeServer()
       closeServer = undefined
     }
+  })
+
+  beforeEach(() => {
+    persistedUpdateSequence = 0
+    snapshotSaveCount = 0
   })
 
   it('emits actor type on connect based on resolver', async () => {
@@ -629,6 +669,40 @@ describe('collab gateway', () => {
 
     const payload = await errorEvent
     assert.equal(payload.message, 'Too many document updates')
+  })
+
+  it('creates snapshots periodically after persisted update threshold', async () => {
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|snapshot-user', 'jwt-snapshot-user') },
+    })
+
+    clients.push(client)
+
+    const connected = waitForEvent<ConnectedPayload>(client, 'collab:connected')
+    client.connect()
+    await connected
+
+    const sync = waitForEvent<DocSyncPayload>(client, 'collab:doc:sync')
+    client.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    await sync
+
+    client.emit('collab:doc:update', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      update: encodeYUpdate('first update'),
+    })
+
+    client.emit('collab:doc:update', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      update: encodeYUpdate('second update'),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    assert.equal(snapshotSaveCount, 1)
   })
 
   it('broadcasts project presence events within a project room', async () => {

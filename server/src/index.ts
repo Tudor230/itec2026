@@ -11,9 +11,12 @@ import { createProjectsRouter } from './modules/projects/projects.router.js'
 import { createFilesRouter } from './modules/projects/files.router.js'
 import { createInvitesRouter } from './modules/projects/invites.router.js'
 import { createRunnerRouter } from './modules/runner/runner.router.js'
+import { ensureFilesStorageRootExists, resolveFilesStorageRoot } from './modules/projects/file-blob-store.js'
 import { createCollabServer } from './ws/collab-server.js'
 
 async function bootstrap() {
+  await ensureFilesStorageRootExists(resolveFilesStorageRoot())
+
   const app = express()
   const server = createServer(app)
 
