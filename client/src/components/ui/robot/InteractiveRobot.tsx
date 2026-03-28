@@ -97,7 +97,7 @@ export function InteractiveRobot({ className, section, zoom = 1, progress }: Int
   return (
     <div className={`${className ?? ''} relative grid h-full w-full place-items-center [perspective:1100px]`.trim()} style={shellStyle}>
       <div
-        className="grid h-full [height:min(620px,100%)] [width:min(540px,92%)] [grid-template-rows:auto_auto] content-start justify-items-center [transform-style:preserve-3d] [filter:drop-shadow(0_22px_42px_color-mix(in_oklab,#000000_66%,var(--sea-ink)_34%))]"
+        className="grid h-full [height:min(620px,100%)] [width:min(540px,92%)] [grid-template-rows:auto_auto] content-center justify-items-center [transform-style:preserve-3d] [filter:drop-shadow(0_22px_42px_var(--robot-shadow))]"
         role="presentation"
         aria-hidden="true"
       >

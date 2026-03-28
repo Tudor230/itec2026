@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveLandingActionVariant } from './LandingRobotStory'
+import { resolveLandingActionVariant, shouldRelockIntro } from './LandingRobotStory'
 
 describe('LandingRobotStory action variant resolver', () => {
   it('returns guest when auth runtime is not configured', () => {
@@ -41,5 +41,23 @@ describe('LandingRobotStory action variant resolver', () => {
         isAuthenticated: false,
       }),
     ).toBe('guest')
+  })
+})
+
+describe('LandingRobotStory relock predicate', () => {
+  it('relocks when unlocked, at top, and scrolling upward', () => {
+    expect(shouldRelockIntro(false, true, -24)).toBe(true)
+  })
+
+  it('does not relock when already locked', () => {
+    expect(shouldRelockIntro(true, true, -24)).toBe(false)
+  })
+
+  it('does not relock when not at top', () => {
+    expect(shouldRelockIntro(false, false, -24)).toBe(false)
+  })
+
+  it('does not relock on downward scroll', () => {
+    expect(shouldRelockIntro(false, true, 24)).toBe(false)
   })
 })
