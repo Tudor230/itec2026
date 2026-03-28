@@ -52,6 +52,7 @@ import {
 } from '../lib/collab-client'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 import { cn } from '../lib/utils'
+import { workspaceHudChipClass } from '../components/workspace/ui-classes'
 
 const AUTOSAVE_DELAY_MS = 200
 
@@ -83,6 +84,9 @@ const SIDEBAR_LAYOUT = {
     maxSize: '40%',
   },
 }
+
+const workspaceControlButtonClass =
+  'border border-[color-mix(in_oklab,var(--chip-line)_76%,var(--line)_24%)] bg-[color-mix(in_oklab,var(--chip-bg)_80%,transparent_20%)] text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_rgba(255,255,255,0.4)] transition-[color,border-color,background-color,transform] duration-150 hover:text-[var(--sea-ink)] hover:border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--chip-line))] hover:-translate-y-px'
 
 function WorkspaceWithHostedAuth() {
   const navigate = useNavigate()
@@ -896,7 +900,7 @@ function WorkspaceWithHostedAuth() {
     : {}
 
   return (
-    <main className="workspace-atlas m-0 h-dvh w-screen p-0">
+    <main className="relative isolate m-0 h-dvh w-screen bg-[linear-gradient(160deg,color-mix(in_oklab,var(--bg-base)_88%,var(--foam)_12%)_0%,color-mix(in_oklab,var(--bg-base)_92%,black_8%)_100%)] p-0 before:pointer-events-none before:absolute before:inset-0 before:-z-[2] before:opacity-[0.34] before:[background:radial-gradient(circle_at_14%_16%,rgba(255,255,255,0.58),transparent_34%),radial-gradient(circle_at_84%_24%,color-mix(in_oklab,var(--lagoon)_38%,transparent),transparent_42%),radial-gradient(circle_at_48%_84%,color-mix(in_oklab,var(--palm)_28%,transparent),transparent_46%)] after:pointer-events-none after:absolute after:inset-0 after:-z-[1] after:opacity-[0.12] after:[background-image:linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] after:[background-size:26px_26px] after:[mask-image:radial-gradient(circle_at_50%_30%,black,transparent_78%)]">
       <section className="relative flex h-full min-h-0 flex-col">
         <div
           aria-hidden
@@ -909,16 +913,20 @@ function WorkspaceWithHostedAuth() {
         <div
           className={cn(
             'relative flex min-h-0 flex-1 flex-col overflow-hidden',
-            isLocked && 'pointer-events-none select-none [transform:scale(0.998)]'
+            isLocked && 'pointer-events-none select-none [transform:scale(0.998)] [filter:blur(12px)_saturate(0.86)]'
           )}
           {...lockedContentProps}
         >
-          <div className="workspace-topbar grid items-center gap-3 px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="grid items-center gap-3 border-b border-[color-mix(in_oklab,var(--line)_82%,var(--lagoon)_18%)] bg-[linear-gradient(90deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_76%,transparent))] px-4 py-2.5 shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_74%,transparent),0_8px_20px_rgba(12,28,34,0.14)] backdrop-blur-[16px] md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
                 onClick={() => navigate({ to: '/projects' })}
-                className="workspace-control-button inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
+                aria-label="Back to projects"
+                className={cn(
+                  workspaceControlButtonClass,
+                  'inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors'
+                )}
                 title="Back to projects"
               >
                 <ArrowLeft size={14} />
@@ -992,10 +1000,10 @@ function WorkspaceWithHostedAuth() {
 
             <div className="flex items-center justify-end gap-2">
               <div className="hidden items-center gap-1.5 lg:flex">
-                <span className="workspace-hud-chip">
+                <span className={workspaceHudChipClass}>
                   <GitBranch size={11} /> main
                 </span>
-                <span className="workspace-hud-chip">
+                <span className={workspaceHudChipClass}>
                   <Activity size={11} /> {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
                 </span>
               </div>
@@ -1003,14 +1011,16 @@ function WorkspaceWithHostedAuth() {
               <div className="flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.58)] p-1.5 shadow-[0_5px_14px_rgba(9,25,30,0.12)] backdrop-blur-sm">
                 <button
                   type="button"
-                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  aria-label="Search"
+                  className={cn(workspaceControlButtonClass, 'rounded-md p-1.5 transition-colors')}
                   title="Search"
                 >
                   <Search size={14} />
                 </button>
                 <button
                   type="button"
-                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  aria-label="Notifications"
+                  className={cn(workspaceControlButtonClass, 'rounded-md p-1.5 transition-colors')}
                   title="Notifications"
                 >
                   <Bell size={14} />
@@ -1083,7 +1093,7 @@ function WorkspaceWithHostedAuth() {
               defaultSize={SIDEBAR_LAYOUT.left.defaultSize}
               minSize={SIDEBAR_LAYOUT.left.minSize}
               maxSize={SIDEBAR_LAYOUT.left.maxSize}
-              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
+              className="flex min-h-0 min-w-0 flex-col border-t border-[color-mix(in_oklab,var(--line)_76%,transparent)] bg-[color-mix(in_oklab,var(--surface)_74%,transparent_26%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] backdrop-blur-[12px]"
             >
               <FilesSidebar
                 files={files}
@@ -1130,13 +1140,15 @@ function WorkspaceWithHostedAuth() {
             </Separator>
 
             {/* Central Editor/Terminal Panel */}
-            <Panel id="main-editor" className="workspace-main-surface flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
-               <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
+            <Panel id="main-editor" className="relative flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)] [background:linear-gradient(160deg,color-mix(in_oklab,var(--surface)_66%,transparent_34%)_0%,color-mix(in_oklab,var(--surface-strong)_52%,transparent_48%)_100%)] before:pointer-events-none before:absolute before:inset-0 before:opacity-[0.18] before:[background:radial-gradient(circle_at_16%_14%,color-mix(in_oklab,var(--lagoon)_34%,transparent),transparent_30%),radial-gradient(circle_at_86%_18%,color-mix(in_oklab,var(--palm)_30%,transparent),transparent_34%)]">
+                <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
                   {/* Sidebar Toggle Handle for Left */}
                    {isLeftSidebarCollapsed ? (
                     <button
+                     type="button"
+                     aria-label="Open files panel"
                      onClick={() => setIsLeftSidebarCollapsed(false)}
-                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border-l-0 px-2 py-5 transition-colors"
+                     className="absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border border-l-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
                      title="Open files panel"
                     >
                       <ChevronRight size={16} />
@@ -1146,8 +1158,10 @@ function WorkspaceWithHostedAuth() {
                   {/* Sidebar Toggle Handle for Right */}
                    {!isRightSidebarOpen ? (
                     <button
+                     type="button"
+                     aria-label="Open assistant panel"
                      onClick={() => setIsRightSidebarOpen(true)}
-                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border-r-0 px-2 py-5 transition-colors"
+                     className="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border border-r-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
                      title="Open assistant panel"
                     >
                       <ChevronLeft size={16} />
@@ -1196,7 +1210,7 @@ function WorkspaceWithHostedAuth() {
               defaultSize={SIDEBAR_LAYOUT.right.defaultSize}
               minSize={SIDEBAR_LAYOUT.right.minSize}
               maxSize={SIDEBAR_LAYOUT.right.maxSize}
-              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
+              className="flex min-h-0 min-w-0 flex-col border-t border-[color-mix(in_oklab,var(--line)_76%,transparent)] bg-[color-mix(in_oklab,var(--surface)_74%,transparent_26%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] backdrop-blur-[12px]"
             >
               <RightSidebar
                 isOpen={isRightSidebarOpen}

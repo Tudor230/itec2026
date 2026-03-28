@@ -15,6 +15,7 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { workspaceHudChipClass } from './ui-classes'
 
 export type SidebarTab = 'ai' | 'history'
 
@@ -83,6 +84,7 @@ export default function RightSidebar({ isOpen, onToggle, activeTab, setActiveTab
         <div className="flex items-center gap-1">
           <button
             type="button"
+            aria-label="Start new assistant thread"
             className="rounded-lg p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
             title="New thread"
           >
@@ -91,6 +93,7 @@ export default function RightSidebar({ isOpen, onToggle, activeTab, setActiveTab
           <button
             type="button"
             onClick={onToggle}
+            aria-label="Close assistant panel"
             className="rounded-lg p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
             title="Close assistant panel"
           >
@@ -116,7 +119,7 @@ export default function RightSidebar({ isOpen, onToggle, activeTab, setActiveTab
                       </div>
                     </div>
 
-                    <span className="workspace-hud-chip">
+                    <span className={workspaceHudChipClass}>
                       <Clock3 size={11} /> online
                     </span>
                   </div>
