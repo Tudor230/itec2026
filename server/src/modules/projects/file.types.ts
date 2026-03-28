@@ -3,6 +3,9 @@ export interface FileRecord {
   projectId: string
   path: string
   content: string
+  storageKey: string
+  contentHash: string
+  byteSize: number
   ownerSubject: string | null
   createdAt: string
   updatedAt: string

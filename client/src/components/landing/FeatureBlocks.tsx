@@ -25,10 +25,10 @@ export default function FeatureBlocks() {
       {featureBlocks.map((feature, index) => (
         <article
           key={feature.title}
-          className="island-shell feature-card rise-in rounded-2xl p-5"
+          className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,color-mix(in_oklab,var(--surface-strong)_93%,white_7%),var(--surface))] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_18px_34px_rgba(30,90,72,0.1),0_4px_14px_rgba(23,58,64,0.06)] transition-[background-color,color,border-color,transform] duration-180 hover:-translate-y-[2px] hover:border-[color-mix(in_oklab,var(--lagoon-deep)_35%,var(--line))] animate-in fade-in slide-in-from-bottom-2 duration-700"
           style={{ animationDelay: `${index * 100 + 70}ms` }}
         >
-          <p className="island-kicker mb-2">{feature.kicker}</p>
+          <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">{feature.kicker}</p>
           <h2 className="mb-2 text-base font-semibold text-[var(--sea-ink)]">
             {feature.title}
           </h2>

@@ -33,6 +33,10 @@ function mapStatusCode(error: DbLikeError | null) {
     return 404
   }
 
+  if (error.code === 'FILE_BLOB_NOT_FOUND') {
+    return 404
+  }
+
   return 500
 }
 
@@ -61,6 +65,10 @@ function mapErrorCode(error: DbLikeError | null) {
     return 'RESOURCE_NOT_FOUND'
   }
 
+  if (error.code === 'FILE_BLOB_NOT_FOUND') {
+    return 'FILE_CONTENT_MISSING'
+  }
+
   return 'INTERNAL_ERROR'
 }
 
@@ -78,6 +86,10 @@ function mapMessage(statusCode: number, error: DbLikeError | null) {
   }
 
   if (statusCode === 404) {
+    if (error?.code === 'FILE_BLOB_NOT_FOUND') {
+      return 'File content blob not found'
+    }
+
     return 'Resource not found'
   }
 

@@ -17,6 +17,24 @@ interface DocUpdatePayload extends DocKey {
   update: string
 }
 
+export interface CollabFileCreatedPayload {
+  id: string
+  projectId: string
+  path: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CollabDocDirtyStatePayload extends DocKey {
+  isDirty: boolean
+  updatedAt: string
+}
+
+export type WatchProjectCallbacks = {
+  onFileCreated?: (payload: CollabFileCreatedPayload) => void
+  onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
+}
+
 interface CollabDocSession {
   doc: Y.Doc
   destroy: () => void
@@ -64,6 +82,7 @@ export class CollabClient {
   private readonly getToken: TokenProvider
   private readonly onStatus: ((status: CollabStatus) => void) | undefined
   private socket: Socket | null = null
+  private connectPromise: Promise<Socket> | null = null
 
   constructor(options: CollabClientOptions) {
     this.getToken = options.getToken
@@ -71,6 +90,24 @@ export class CollabClient {
   }
 
   async connect() {
+    if (this.socket && this.socket.connected) {
+      return this.socket
+    }
+
+    if (this.connectPromise) {
+      return this.connectPromise
+    }
+
+    this.connectPromise = this.connectInternal()
+
+    try {
+      return await this.connectPromise
+    } finally {
+      this.connectPromise = null
+    }
+  }
+
+  private async connectInternal() {
     if (this.socket && this.socket.connected) {
       return this.socket
     }
@@ -249,6 +286,44 @@ export class CollabClient {
         doc.destroy()
       },
     }
+  }
+
+  async watchProject(projectId: string, callbacks: WatchProjectCallbacks): Promise<() => void> {
+    const socket = await this.connect()
+
+    const onFileCreated = (payload: CollabFileCreatedPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onFileCreated?.(payload)
+    }
+
+    const onDirtyStateChanged = (payload: CollabDocDirtyStatePayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onDirtyStateChanged?.(payload)
+    }
+
+    socket.on('collab:file:created', onFileCreated)
+    socket.on('collab:doc:dirty-state', onDirtyStateChanged)
+    socket.emit('collab:join-project', projectId)
+
+    return () => {
+      socket.emit('collab:leave-project', projectId)
+      socket.off('collab:file:created', onFileCreated)
+      socket.off('collab:doc:dirty-state', onDirtyStateChanged)
+    }
+  }
+
+  async markDocumentSaved(projectId: string, fileId: string) {
+    const socket = await this.connect()
+    socket.emit('collab:doc:saved', {
+      projectId,
+      fileId,
+    })
   }
 
   disconnect() {

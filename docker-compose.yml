@@ -24,6 +24,7 @@ services:
       PORT: 4000
       DATABASE_URL: postgres://itec:itec@postgres:5432/itec2026
       CLIENT_ORIGIN: http://localhost:3000
+      FILES_STORAGE_ROOT: /app/.data/files
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-itec2026.eu.auth0.com}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://itec2026-api}
     depends_on:
@@ -31,6 +32,8 @@ services:
         condition: service_healthy
     ports:
       - '4000:4000'
+    volumes:
+      - server_files_data:/app/.data/files
 
   client:
     build:
@@ -50,3 +53,4 @@ services:
 
 volumes:
   postgres_data:
+  server_files_data:

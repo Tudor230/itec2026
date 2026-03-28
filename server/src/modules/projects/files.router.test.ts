@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -7,6 +8,7 @@ import type { PrismaClient } from '@prisma/client'
 import express from 'express'
 import { errorHandler } from '../../http/error-handler.js'
 import { authBoundaryMiddleware } from '../auth/auth-boundary.middleware.js'
+import { registerCollabFileCreatedListener } from '../collab/collab-events.js'
 import { createFilesRouter } from './files.router.js'
 
 const TEST_JWT_SECRET = 'test-jwt-secret'
@@ -23,10 +25,59 @@ type FileRow = {
   id: string
   projectId: string
   path: string
-  content: string
+  storageKey: string
+  contentHash: string
+  byteSize: number
   ownerSubject: string | null
   createdAt: Date
   updatedAt: Date
+}
+
+class InMemoryBlobStore {
+  private readonly files = new Map<string, string>()
+  private failWrites = false
+
+  async readText(storageKey: string): Promise<string> {
+    const content = this.files.get(storageKey)
+    if (content === undefined) {
+      throw Object.assign(new Error('Stored file blob not found'), {
+        code: 'FILE_BLOB_NOT_FOUND',
+      })
+    }
+
+    return content
+  }
+
+  async writeText(storageKey: string, content: string) {
+    if (this.failWrites) {
+      throw Object.assign(new Error('blob write failed'), {
+        code: 'FILE_BLOB_WRITE_FAILED',
+      })
+    }
+
+    this.files.set(storageKey, content)
+
+    return {
+      contentHash: createHash('sha256').update(content, 'utf8').digest('hex'),
+      byteSize: Buffer.from(content, 'utf8').byteLength,
+    }
+  }
+
+  async remove(storageKey: string) {
+    this.files.delete(storageKey)
+  }
+
+  setWriteFailure(enabled: boolean) {
+    this.failWrites = enabled
+  }
+
+  hasStorageKey(storageKey: string) {
+    return this.files.has(storageKey)
+  }
+
+  size() {
+    return this.files.size
+  }
 }
 
 class InMemoryProjectsTable {
@@ -103,16 +154,29 @@ class InMemoryFilesTable {
       id: string
       projectId: string
       path: string
-      content: string
+      storageKey: string
+      contentHash: string
+      byteSize: number
       ownerSubject: string
     }
   }): Promise<FileRow> {
+    const hasPathConflict = this.rows.some((row) => {
+      return row.projectId === args.data.projectId && row.path === args.data.path
+    })
+    if (hasPathConflict) {
+      throw Object.assign(new Error('File path already exists'), {
+        code: 'P2002',
+      })
+    }
+
     const now = new Date()
     const row: FileRow = {
       id: args.data.id,
       projectId: args.data.projectId,
       path: args.data.path,
-      content: args.data.content,
+      storageKey: args.data.storageKey,
+      contentHash: args.data.contentHash,
+      byteSize: args.data.byteSize,
       ownerSubject: args.data.ownerSubject,
       createdAt: now,
       updatedAt: now,
@@ -129,7 +193,8 @@ class InMemoryFilesTable {
     }
     data: {
       path: string
-      content: string
+      contentHash: string
+      byteSize: number
     }
   }): Promise<{ count: number }> {
     let count = 0
@@ -149,7 +214,8 @@ class InMemoryFilesTable {
       return {
         ...row,
         path: args.data.path,
-        content: args.data.content,
+        contentHash: args.data.contentHash,
+        byteSize: args.data.byteSize,
         updatedAt: now,
       }
     })
@@ -188,6 +254,7 @@ class InMemoryFilesTable {
 function createPrismaDouble() {
   const projects = new InMemoryProjectsTable()
   const files = new InMemoryFilesTable()
+  const blobStore = new InMemoryBlobStore()
 
   return {
     prisma: {
@@ -202,20 +269,21 @@ function createPrismaDouble() {
         deleteMany: files.deleteMany.bind(files),
       },
     } as unknown as PrismaClient,
+    blobStore,
     seedProject: (projectId: string, ownerSubject: string) => {
       projects.seed({ id: projectId, ownerSubject })
     },
   }
 }
 
-async function startServer(prisma: PrismaClient): Promise<{
+async function startServer(prisma: PrismaClient, blobStore: InMemoryBlobStore): Promise<{
   baseUrl: string
   close: () => Promise<void>
 }> {
   const app = express()
   app.use(express.json())
   app.use(authBoundaryMiddleware)
-  app.use('/api/files', createFilesRouter({ prisma }))
+  app.use('/api/files', createFilesRouter({ prisma, blobStore }))
   app.use(errorHandler)
 
   const server = await new Promise<Server>((resolve) => {
@@ -273,16 +341,30 @@ describe('files router', () => {
   let baseUrl = ''
   let closeServer: (() => Promise<void>) | undefined
   let seedProject: ((projectId: string, ownerSubject: string) => void) | undefined
+  const createdEvents: Array<{ projectId: string; path: string }> = []
+  let unregisterFileCreatedListener: (() => void) | null = null
+  let blobStore: InMemoryBlobStore | undefined
 
   beforeEach(async () => {
+    createdEvents.length = 0
+    unregisterFileCreatedListener = registerCollabFileCreatedListener((file) => {
+      createdEvents.push({ projectId: file.projectId, path: file.path })
+    })
+
     const testDb = createPrismaDouble()
-    const started = await startServer(testDb.prisma)
+    const started = await startServer(testDb.prisma, testDb.blobStore)
     baseUrl = started.baseUrl
     closeServer = started.close
     seedProject = testDb.seedProject
+    blobStore = testDb.blobStore
   })
 
   afterEach(async () => {
+    if (unregisterFileCreatedListener) {
+      unregisterFileCreatedListener()
+      unregisterFileCreatedListener = null
+    }
+
     if (closeServer) {
       await closeServer()
       closeServer = undefined
@@ -366,6 +448,11 @@ describe('files router', () => {
     assert.equal(deletedPayload.data.deleted, true)
     assert.equal(afterDelete.status, 404)
     assert.equal(afterDeletePayload.error.code, 'FILE_NOT_FOUND')
+    assert.equal(createdEvents.length, 1)
+    assert.deepEqual(createdEvents[0], {
+      projectId,
+      path: 'src/main.ts',
+    })
   })
 
   it('isolates file access by subject owner', async () => {
@@ -508,5 +595,39 @@ describe('files router', () => {
     assert.equal(listedPayload.data.length, 1)
     assert.equal(listedPayload.data[0].id, createdPayload.data.id)
     assert.equal(fetchedPayload.data.ownerSubject, ownerSubject)
+  })
+
+  it('removes blob content when db create fails after blob write', async () => {
+    const ownerSubject = 'auth0|orphan-cleanup-user'
+    const token = createJwt(ownerSubject, 'jwt-orphan-cleanup')
+    const projectId = 'project-orphan-cleanup'
+    seedProject?.(projectId, ownerSubject)
+
+    const created = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/main.ts',
+        content: 'first',
+      }),
+    })
+    const createdPayload = await created.json()
+
+    const firstStorageKey = createdPayload.data.storageKey as string
+    assert.equal(blobStore?.hasStorageKey(firstStorageKey), true)
+
+    const conflicting = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/main.ts',
+        content: 'second',
+      }),
+    })
+
+    assert.equal(conflicting.status, 409)
+    assert.equal(blobStore?.size(), 1)
   })
 })

@@ -109,7 +109,7 @@ function AuthenticatedProfileButton() {
 
       {isOpen ? (
         <div
-          className="profile-modal-backdrop"
+          className="fixed inset-0 z-[70] grid place-items-center bg-[rgba(6,15,21,0.5)] p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="profile-modal-title"
@@ -117,7 +117,7 @@ function AuthenticatedProfileButton() {
         >
           <section
             ref={modalRef}
-            className="profile-modal-card"
+            className="relative w-[min(560px,calc(100%-1.25rem))] rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-4 shadow-[inset_0_1px_0_var(--inset-glint),0_24px_45px_rgba(10,25,31,0.28)]"
             onClick={(event) => {
               event.stopPropagation()
             }}
@@ -125,7 +125,7 @@ function AuthenticatedProfileButton() {
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              className="profile-modal-close"
+              className="absolute right-[0.6rem] top-[0.6rem] inline-flex h-[1.9rem] w-[1.9rem] items-center justify-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)]"
               aria-label="Close profile modal"
             >
               <X size={16} />
@@ -152,7 +152,7 @@ function AuthenticatedProfileButton() {
             </div>
 
             <div className="mb-4">
-              <p className="island-kicker mb-2">Theme</p>
+              <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Theme</p>
               <ThemePresetPicker compact />
             </div>
 

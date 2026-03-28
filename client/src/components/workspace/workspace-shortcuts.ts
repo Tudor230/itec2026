@@ -36,14 +36,14 @@ export function getWorkspaceShortcut(event: {
     return null
   }
 
-  if (isEditableTarget(event.target)) {
-    return null
-  }
-
   const key = event.key.toLowerCase()
 
   if (key === 's') {
     return 'save'
+  }
+
+  if (isEditableTarget(event.target)) {
+    return null
   }
 
   if (key === 'p') {
