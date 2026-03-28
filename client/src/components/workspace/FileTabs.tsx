@@ -1,7 +1,9 @@
-import { FileCode2, FileJson2, FileText, X } from 'lucide-react'
+import { FileText, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../../lib/utils'
+import { getFileIconComponent } from './file-icon-components'
+import { getFileIconMeta } from './file-icon-map'
 
 export interface TabItem {
   id: string
@@ -133,29 +135,6 @@ export default function FileTabs({
     onCloseTab(tabId)
   }
 
-  const getTabAccent = (path: string) => {
-    const extension = path.split('.').pop()?.toLowerCase() ?? ''
-
-    if (['ts', 'tsx', 'js', 'jsx'].includes(extension)) {
-      return {
-        Icon: FileCode2,
-        color: 'text-[color-mix(in_oklab,var(--lagoon-deep)_72%,var(--sea-ink)_28%)]',
-      }
-    }
-
-    if (['json', 'yaml', 'yml', 'toml'].includes(extension)) {
-      return {
-        Icon: FileJson2,
-        color: 'text-[color-mix(in_oklab,var(--palm)_62%,var(--sea-ink)_38%)]',
-      }
-    }
-
-    return {
-      Icon: FileText,
-      color: 'text-[var(--sea-ink-soft)]',
-    }
-  }
-
   return (
     <>
       <div
@@ -174,7 +153,10 @@ export default function FileTabs({
             No files opened
           </div>
         ) : tabs.map((tab) => {
-          const { Icon, color } = getTabAccent(tab.path)
+          const iconMeta = getFileIconMeta(tab.path)
+          const ResolvedIcon = getFileIconComponent(iconMeta.iconKey)
+          const isDefaultIcon = ResolvedIcon === null
+          const iconStyle = iconMeta.color ? { color: iconMeta.color } : undefined
 
           return (
             <div key={tab.id}>
@@ -221,10 +203,10 @@ export default function FileTabs({
                   <span
                     className={cn(
                       'grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border border-[color-mix(in_oklab,var(--line)_82%,transparent)] bg-[rgba(var(--chip-bg-rgb),0.65)]',
-                      color
+                      isDefaultIcon ? 'text-[var(--sea-ink-soft)]' : undefined
                     )}
                   >
-                    <Icon size={11} />
+                    {ResolvedIcon ? <ResolvedIcon size={11} style={iconStyle} /> : <FileText size={11} />}
                   </span>
                   <span className="truncate">{tab.path.split('/').pop()}</span>
                   {tab.isDirty && (

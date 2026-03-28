@@ -22,3 +22,32 @@ export const updateFileSchema = z.object({
 }).refine((value) => value.path !== undefined || value.content !== undefined, {
   message: 'At least one field must be provided',
 })
+
+const folderPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .refine((value) => {
+    return !value.includes('..') && !value.startsWith('/') && !value.startsWith('\\')
+  }, { message: 'Invalid folder path' })
+
+export const createFolderSchema = z.object({
+  projectId: z.string().trim().min(1),
+  path: folderPathSchema,
+})
+
+export const renameFolderSchema = z.object({
+  projectId: z.string().trim().min(1),
+  fromPath: folderPathSchema,
+  toPath: folderPathSchema,
+}).refine((value) => value.fromPath !== value.toPath, {
+  message: 'fromPath and toPath must differ',
+}).refine((value) => !value.toPath.startsWith(`${value.fromPath}/`), {
+  message: 'Cannot move folder into its own subtree',
+})
+
+export const deleteFolderSchema = z.object({
+  projectId: z.string().trim().min(1),
+  path: folderPathSchema,
+})

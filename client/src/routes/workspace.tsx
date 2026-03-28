@@ -13,7 +13,7 @@ import {
   Layers3,
   Activity,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
 import { motion } from 'framer-motion'
 import { useAuthRuntime } from '../auth/AuthProvider'
@@ -34,10 +34,15 @@ import WorkspaceAuthOverlay, {
 } from '../components/workspace/WorkspaceAuthOverlay'
 import { auth0Config } from '../lib/auth0-config'
 import {
+  createFolder,
   createProjectInvite,
   createFile,
+  deleteFile,
+  deleteFolder,
   listFiles,
+  listFolders,
   listProjects,
+  renameFolder,
   updateFile,
   type FileDto,
 } from '../services/projects-api'
@@ -182,6 +187,20 @@ function WorkspaceWithHostedAuth() {
     enabled: isAuthenticated && activeProjectId !== null,
   })
 
+  const foldersQuery = useQuery({
+    queryKey: ['workspace', 'folders', isAuthenticated, activeProjectId],
+    queryFn: async () => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId || !token) {
+        return [] as { path: string }[]
+      }
+
+      return listFolders(activeProjectId, token)
+    },
+    enabled: isAuthenticated && activeProjectId !== null,
+  })
+
   const upsertFileInCache = useCallback((incomingFile: FileDto) => {
     queryClient.setQueryData<FileDto[]>(
       ['workspace', 'files', true, incomingFile.projectId],
@@ -318,6 +337,178 @@ function WorkspaceWithHostedAuth() {
     },
   })
 
+  const renameFileMutation = useMutation({
+    mutationFn: async (input: { fileId: string; path: string }) => {
+      const token = await getApiAccessToken()
+      if (!token) {
+        throw new Error('Authentication token is required to rename files.')
+      }
+
+      return updateFile(input.fileId, { path: input.path }, token)
+    },
+    onSuccess: async (updated) => {
+      upsertFileInCache(updated)
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
+      success(`Renamed to ${updated.path.split('/').pop()}`)
+    },
+    onError: (error) => {
+      toastError(`Could not rename file: ${error.message}`)
+    },
+  })
+
+  const deleteFileMutation = useMutation({
+    mutationFn: async (fileId: string) => {
+      const token = await getApiAccessToken()
+      if (!token) {
+        throw new Error('Authentication token is required to delete files.')
+      }
+
+      return deleteFile(fileId, token)
+    },
+    onSuccess: async (_result, fileId) => {
+      closeTabById(fileId)
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
+      success('File deleted')
+    },
+    onError: (error) => {
+      toastError(`Could not delete file: ${error.message}`)
+    },
+  })
+
+  const createFolderMutation = useMutation({
+    mutationFn: async (path: string) => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId) {
+        throw new Error('Select a project before creating folders.')
+      }
+
+      if (!token) {
+        throw new Error('Authentication token is required to create folders.')
+      }
+
+      return createFolder({ projectId: activeProjectId, path }, token)
+    },
+    onSuccess: async (createdFolder) => {
+      if (activeProjectId) {
+        setVirtualFoldersByProjectId((previous) => {
+          const current = previous[activeProjectId] ?? []
+          if (current.includes(createdFolder.path)) {
+            return previous
+          }
+
+          return {
+            ...previous,
+            [activeProjectId]: [...current, createdFolder.path],
+          }
+        })
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      success('Folder created')
+    },
+    onError: (error) => {
+      toastError(`Could not create folder: ${error.message}`)
+    },
+  })
+
+  const renameFolderMutation = useMutation({
+    mutationFn: async (input: { fromPath: string; toPath: string }) => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId) {
+        throw new Error('Select a project before renaming folders.')
+      }
+
+      if (!token) {
+        throw new Error('Authentication token is required to rename folders.')
+      }
+
+      return renameFolder({ projectId: activeProjectId, fromPath: input.fromPath, toPath: input.toPath }, token)
+    },
+    onSuccess: async (_result, input) => {
+      if (activeProjectId) {
+        setVirtualFoldersByProjectId((previous) => {
+          const current = previous[activeProjectId] ?? []
+          const next = current.map((folderPath) => {
+            if (folderPath === input.fromPath) {
+              return input.toPath
+            }
+
+            if (folderPath.startsWith(`${input.fromPath}/`)) {
+              return `${input.toPath}${folderPath.slice(input.fromPath.length)}`
+            }
+
+            return folderPath
+          })
+
+          return {
+            ...previous,
+            [activeProjectId]: [...new Set(next)],
+          }
+        })
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      success('Folder renamed')
+    },
+    onError: (error) => {
+      toastError(`Could not rename folder: ${error.message}`)
+    },
+  })
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: async (path: string) => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId) {
+        throw new Error('Select a project before deleting folders.')
+      }
+
+      if (!token) {
+        throw new Error('Authentication token is required to delete folders.')
+      }
+
+      return deleteFolder({ projectId: activeProjectId, path }, token)
+    },
+    onSuccess: async (_result, folderPath) => {
+      if (activeProjectId) {
+        setVirtualFoldersByProjectId((previous) => {
+          const current = previous[activeProjectId] ?? []
+          const next = current.filter((entry) => {
+            return !(entry === folderPath || entry.startsWith(`${folderPath}/`))
+          })
+
+          return {
+            ...previous,
+            [activeProjectId]: next,
+          }
+        })
+      }
+
+      setOpenFileIds((previous) => {
+        const next = previous.filter((fileId) => {
+          const file = files.find((candidate) => candidate.id === fileId)
+          if (!file) {
+            return false
+          }
+
+          return !(file.path === folderPath || file.path.startsWith(`${folderPath}/`))
+        })
+
+        return next
+      })
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      success('Folder deleted')
+    },
+    onError: (error) => {
+      toastError(`Could not delete folder: ${error.message}`)
+    },
+  })
+
   const saveFileMutation = useMutation({
     mutationFn: async (input: { fileId: string; content: string }) => {
       const token = await getApiAccessToken()
@@ -431,7 +622,16 @@ function WorkspaceWithHostedAuth() {
     })
     .map((file) => file.id)
   const dirtyFileCount = dirtyFileIds.length
-  const virtualFolders = activeProjectId ? (virtualFoldersByProjectId[activeProjectId] ?? []) : []
+  const virtualFolders = useMemo(() => {
+    if (!activeProjectId) {
+      return []
+    }
+
+    const backendFolders = (foldersQuery.data ?? []).map((folder) => folder.path)
+    const localFolders = virtualFoldersByProjectId[activeProjectId] ?? []
+
+    return [...new Set([...backendFolders, ...localFolders])]
+  }, [activeProjectId, foldersQuery.data, virtualFoldersByProjectId])
 
   useMutation({
     mutationFn: async (projectId: string) => {
@@ -941,26 +1141,23 @@ function WorkspaceWithHostedAuth() {
                 onOpenFile={openFileById}
                 onCreateFile={async (path, type) => {
                   if (type === 'folder') {
-                    if (!activeProjectId) {
-                      return
-                    }
-
-                    setCreateError(null)
-                    setVirtualFoldersByProjectId((previous) => {
-                      const current = previous[activeProjectId] ?? []
-                      if (current.includes(path)) {
-                        return previous
-                      }
-
-                      return {
-                        ...previous,
-                        [activeProjectId]: [...current, path],
-                      }
-                    })
+                    await createFolderMutation.mutateAsync(path)
                     return
                   }
 
                   await createFileMutation.mutateAsync(path)
+                }}
+                onRenameFile={async (fileId, path) => {
+                  await renameFileMutation.mutateAsync({ fileId, path })
+                }}
+                onDeleteFile={async (fileId) => {
+                  await deleteFileMutation.mutateAsync(fileId)
+                }}
+                onRenameFolder={async (fromPath, toPath) => {
+                  await renameFolderMutation.mutateAsync({ fromPath, toPath })
+                }}
+                onDeleteFolder={async (path) => {
+                  await deleteFolderMutation.mutateAsync(path)
                 }}
                 onClose={() => setIsLeftSidebarCollapsed(true)}
               />

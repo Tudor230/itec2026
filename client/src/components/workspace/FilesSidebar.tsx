@@ -1,8 +1,11 @@
 import { FileText, Folder, FolderOpen, FolderPlus, Plus, Search, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { FileDto } from '../../services/projects-api'
 import { buildFileTree, filterFileTree, type FileTreeNode } from './files-tree'
 import { cn } from '../../lib/utils'
+import { getFileIconComponent } from './file-icon-components'
+import { getFileIconMeta } from './file-icon-map'
 
 interface FilesSidebarProps {
   files: FileDto[]
@@ -13,6 +16,10 @@ interface FilesSidebarProps {
   errorMessage: string | null
   onOpenFile: (fileId: string) => void
   onCreateFile: (path: string, type: 'file' | 'folder') => Promise<void> | void
+  onRenameFile?: (fileId: string, nextPath: string) => Promise<void> | void
+  onDeleteFile?: (fileId: string) => Promise<void> | void
+  onRenameFolder?: (fromPath: string, toPath: string) => Promise<void> | void
+  onDeleteFolder?: (path: string) => Promise<void> | void
   onClose?: () => void
 }
 
@@ -96,6 +103,25 @@ function getLeafName(path: string) {
   return parts[parts.length - 1] ?? ''
 }
 
+function FileNodeIcon({ fileName, className }: { fileName: string; className: string }) {
+  const iconMeta = getFileIconMeta(fileName)
+  const Icon = getFileIconComponent(iconMeta.iconKey)
+
+  if (!Icon || !iconMeta.iconKey) {
+    return (
+      <span data-file-icon-key="default" className="inline-flex items-center">
+        <FileText size={14} className={className} />
+      </span>
+    )
+  }
+
+  return (
+    <span data-file-icon-key={iconMeta.iconKey} className="inline-flex items-center">
+      <Icon size={14} className={className} style={iconMeta.color ? { color: iconMeta.color } : undefined} />
+    </span>
+  )
+}
+
 function NodeRow({
   node,
   depth,
@@ -107,6 +133,8 @@ function NodeRow({
   onOpenFile,
   onSelectFolder,
   onStartCreate,
+  onStartRename,
+  onDeleteNode,
   onPendingPathChange,
   onConfirmCreate,
   onCancelCreate,
@@ -121,11 +149,18 @@ function NodeRow({
   onOpenFile: (fileId: string) => void
   onSelectFolder: (folderPath: string | null) => void
   onStartCreate: (type: 'file' | 'folder', basePath: string) => void
+  onStartRename: (node: FileTreeNode) => void
+  onDeleteNode: (node: FileTreeNode) => void
   onPendingPathChange: (nextPath: string) => void
   onConfirmCreate: () => void
   onCancelCreate: () => void
 }) {
   const [isOpen, setIsOpen] = useState(true)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const holdTimerRef = useRef<number | null>(null)
+  const holdTriggeredRef = useRef(false)
   const isFile = node.type === 'file'
   const isActive = isFile && node.fileId === activeFileId
   const isSelectedFolder = !isFile && selectedFolderPath === node.path
@@ -144,6 +179,59 @@ function NodeRow({
 
   const renderInlineCreate = !isFile && isOpen && pendingParentPath === node.path
 
+  const clearHoldTimer = () => {
+    if (holdTimerRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(holdTimerRef.current)
+    holdTimerRef.current = null
+  }
+
+  const closeMenu = () => {
+    setMenuOpen(false)
+    setMenuPosition(null)
+  }
+
+  const openMenu = (left: number, top: number) => {
+    setMenuPosition({ left, top })
+    setMenuOpen(true)
+  }
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) {
+        closeMenu()
+        return
+      }
+
+      if (menuRef.current?.contains(target)) {
+        return
+      }
+
+      closeMenu()
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu()
+      }
+    }
+
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpen])
+
   return (
     <div className="relative">
       {depth > 0 ? (
@@ -158,6 +246,11 @@ function NodeRow({
         role="button"
         tabIndex={0}
         onClick={() => {
+          if (holdTriggeredRef.current) {
+            holdTriggeredRef.current = false
+            return
+          }
+
           if (isFile && node.fileId) {
             onSelectFolder(null)
             onOpenFile(node.fileId)
@@ -167,8 +260,40 @@ function NodeRow({
           onSelectFolder(node.path)
           setIsOpen((current) => !current)
         }}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          clearHoldTimer()
+          openMenu(event.clientX, event.clientY)
+        }}
+        onPointerDown={(event) => {
+          if (event.button !== 0) {
+            return
+          }
+
+          const rect = event.currentTarget.getBoundingClientRect()
+          clearHoldTimer()
+          holdTimerRef.current = window.setTimeout(() => {
+            holdTriggeredRef.current = true
+            openMenu(rect.left + 6, rect.bottom + 6)
+          }, 500)
+        }}
+        onPointerUp={() => {
+          clearHoldTimer()
+        }}
+        onPointerLeave={() => {
+          clearHoldTimer()
+        }}
+        onPointerCancel={() => {
+          clearHoldTimer()
+        }}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') {
+            if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+              event.preventDefault()
+              const rect = event.currentTarget.getBoundingClientRect()
+              openMenu(rect.left + 6, rect.bottom + 6)
+            }
+
             return
           }
 
@@ -200,7 +325,7 @@ function NodeRow({
           />
         ) : null}
         {isFile ? (
-          <FileText size={14} className={iconColor} />
+          <FileNodeIcon fileName={node.name} className={iconColor} />
         ) : isOpen ? (
           <FolderOpen size={14} className={iconColor} />
         ) : (
@@ -265,6 +390,8 @@ function NodeRow({
               onOpenFile={onOpenFile}
               onSelectFolder={onSelectFolder}
               onStartCreate={onStartCreate}
+              onStartRename={onStartRename}
+              onDeleteNode={onDeleteNode}
               onPendingPathChange={onPendingPathChange}
               onConfirmCreate={onConfirmCreate}
               onCancelCreate={onCancelCreate}
@@ -303,6 +430,71 @@ function NodeRow({
           </label>
         </div>
       ) : null}
+
+      {menuOpen && menuPosition
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              aria-label={`${isFile ? 'File' : 'Folder'} actions`}
+              style={{ left: `${menuPosition.left}px`, top: `${menuPosition.top}px` }}
+              className="fixed z-[120] min-w-[180px] rounded-xl border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.92)] p-1 backdrop-blur-xl shadow-2xl"
+            >
+              {!isFile ? (
+                <>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(true)
+                      onStartCreate('file', node.path)
+                      closeMenu()
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+                  >
+                    Add file
+                  </button>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(true)
+                      onStartCreate('folder', node.path)
+                      closeMenu()
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+                  >
+                    Add subfolder
+                  </button>
+                </>
+              ) : null}
+
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  onStartRename(node)
+                  closeMenu()
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+              >
+                Rename
+              </button>
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  onDeleteNode(node)
+                  closeMenu()
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold text-[var(--sea-ink-soft)] outline-none transition-colors hover:bg-[rgba(0,0,0,0.05)] hover:text-[var(--sea-ink)]"
+              >
+                {isFile ? 'Delete' : 'Delete folder'}
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -316,6 +508,10 @@ export default function FilesSidebar({
   errorMessage,
   onOpenFile,
   onCreateFile,
+  onRenameFile,
+  onDeleteFile,
+  onRenameFolder,
+  onDeleteFolder,
   onClose,
 }: FilesSidebarProps) {
   const [query, setQuery] = useState('')
@@ -325,6 +521,9 @@ export default function FilesSidebar({
   const [pendingCreateType, setPendingCreateType] = useState<'file' | 'folder' | null>(null)
   const [inlineError, setInlineError] = useState<string | null>(null)
   const [isCreatePending, setIsCreatePending] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<FileTreeNode | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [isRenamePending, setIsRenamePending] = useState(false)
 
   const tree = useMemo(() => buildFileTree(files, virtualFolders), [files, virtualFolders])
 
@@ -374,6 +573,85 @@ export default function FilesSidebar({
       setIsCreatePending(false)
     }
   }
+
+  const handleStartRename = (node: FileTreeNode) => {
+    setRenameTarget(node)
+    setRenameValue(getLeafName(node.path))
+    setInlineError(null)
+  }
+
+  const handleCancelRename = () => {
+    setRenameTarget(null)
+    setRenameValue('')
+    setInlineError(null)
+    setIsRenamePending(false)
+  }
+
+  const handleConfirmRename = async () => {
+    if (!renameTarget || isRenamePending) {
+      return
+    }
+
+    const nextLeafName = renameValue.trim()
+    if (!nextLeafName) {
+      setInlineError('Name cannot be empty.')
+      return
+    }
+
+    const parentPath = getParentPath(renameTarget.path)
+    const nextPath = parentPath ? `${parentPath}/${nextLeafName}` : nextLeafName
+
+    if (!isValidFilePath(nextPath)) {
+      setInlineError('Please provide a valid relative path.')
+      return
+    }
+
+    if (renameTarget.type === 'file' && renameTarget.fileId && onRenameFile) {
+      setIsRenamePending(true)
+      try {
+        await onRenameFile(renameTarget.fileId, nextPath)
+        handleCancelRename()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not rename file.'
+        setInlineError(message)
+      } finally {
+        setIsRenamePending(false)
+      }
+      return
+    }
+
+    if (renameTarget.type === 'folder' && onRenameFolder) {
+      setIsRenamePending(true)
+      try {
+        await onRenameFolder(renameTarget.path, nextPath)
+        handleCancelRename()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not rename folder.'
+        setInlineError(message)
+      } finally {
+        setIsRenamePending(false)
+      }
+      return
+    }
+  }
+
+  const handleDeleteNode = async (node: FileTreeNode) => {
+    try {
+      if (node.type === 'file' && node.fileId && onDeleteFile) {
+        await onDeleteFile(node.fileId)
+        return
+      }
+
+      if (node.type === 'folder' && onDeleteFolder) {
+        await onDeleteFolder(node.path)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not delete item.'
+      setInlineError(message)
+    }
+  }
+
+  const isBusy = isCreatePending || isRenamePending
 
   return (
     <aside className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))]">
@@ -488,6 +766,14 @@ export default function FilesSidebar({
                 onOpenFile={onOpenFile}
                 onSelectFolder={setSelectedFolderPath}
                 onStartCreate={handleStartCreate}
+                onStartRename={handleStartRename}
+                onDeleteNode={(node) => {
+                  if (isBusy) {
+                    return
+                  }
+
+                  void handleDeleteNode(node)
+                }}
                 onPendingPathChange={setPendingCreatePath}
                 onConfirmCreate={handleConfirmCreate}
                 onCancelCreate={() => {
@@ -499,6 +785,32 @@ export default function FilesSidebar({
               />
             ))
           : null}
+
+        {renameTarget ? (
+          <div className="px-2">
+            <label className="mt-2 flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
+              {renameTarget.type === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
+              <input
+                autoFocus
+                value={renameValue}
+                disabled={isRenamePending}
+                onChange={(event) => setRenameValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void handleConfirmRename()
+                  }
+
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    handleCancelRename()
+                  }
+                }}
+                className="w-full bg-transparent text-xs font-semibold text-[var(--sea-ink)] outline-none"
+              />
+            </label>
+          </div>
+        ) : null}
 
         {!isLoading && !errorMessage && filteredTree && filteredTree.children.length === 0 ? (
           <p className="px-2 text-sm text-[var(--sea-ink-soft)]">No files match your filter.</p>
