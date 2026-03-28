@@ -1,6 +1,6 @@
 # TanStack Start + Auth0
 
-This project keeps authentication inside a single TanStack Start app using React and the official Auth0 React SDK. No separate Express, Nest, or Fastify backend is required for the flow implemented here.
+This project keeps authentication inside a single TanStack Start app using React and the official Auth0 React SDK. A Phase 0 backend now exists for project/file APIs and real-time scaffolding, while auth enforcement remains client-side for now.
 
 ## Commands
 
@@ -26,6 +26,7 @@ Copy-Item .env.example .env
 Environment variables:
 
 ```bash
+VITE_API_BASE_URL=http://localhost:4000
 VITE_AUTH0_DOMAIN=your-tenant.us.auth0.com
 VITE_AUTH0_CLIENT_ID=your_auth0_client_id
 VITE_AUTH0_REDIRECT_URI=http://localhost:3000
@@ -48,7 +49,8 @@ If you change the local dev port, update both the Auth0 dashboard values and the
 
 - This repo already used the stable TanStack Start Vite plugin structure, so the app keeps that current file-based route layout instead of introducing a different scaffold shape.
 - Auth0 React SDK v2+ uses `authorizationParams` and `logoutParams`, so this setup uses those current APIs instead of older top-level redirect options.
-- Route protection is handled in the client with the Auth0 React SDK because your requirement explicitly avoids a separate backend unless it is necessary.
+- Route protection remains handled in the client with the Auth0 React SDK for the current phase.
+- Backend auth uses a boundary contract in Phase 0 (anonymous/token-present metadata only) so server-side verification can be added later with minimal changes.
 
 ## Folder Structure
 

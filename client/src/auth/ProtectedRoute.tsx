@@ -2,7 +2,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useAuthRuntime } from './AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
-import { auth0Config, getCurrentReturnTo } from '../lib/auth0-config'
+import { auth0Config } from '../lib/auth0-config'
 import { getUserRoles, hasRequiredRoles } from '../lib/auth-claims'
 
 interface ProtectedRouteProps {
@@ -13,7 +13,7 @@ interface ProtectedRouteProps {
 
 function UnauthorizedMessage({ requiredRoles }: { requiredRoles: string[] }) {
   return (
-    <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+    <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
       You are signed in, but you do not have access to this page.
       {requiredRoles.length > 0 ? (
         <div className="mt-3 text-xs uppercase tracking-[0.12em] text-[var(--kicker)]">
@@ -41,17 +41,18 @@ function ProtectedRouteContent({
 
     void loginWithRedirect({
       appState: {
-        returnTo: getCurrentReturnTo('/dashboard'),
+        returnTo: '/projects',
       },
       authorizationParams: {
         redirect_uri: auth0Config.redirectUri,
+        audience: auth0Config.audience,
       },
     })
   }, [isAuthenticated, isLoading, loginStarted, loginWithRedirect])
 
   if (isLoading) {
     return (
-      <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+      <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
         Checking your Auth0 session...
       </div>
     )
@@ -59,7 +60,7 @@ function ProtectedRouteContent({
 
   if (error) {
     return (
-      <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+      <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
         Auth0 returned an error: {error.message}
       </div>
     )
@@ -67,7 +68,7 @@ function ProtectedRouteContent({
 
   if (!isAuthenticated) {
     return (
-      <div className="island-shell rounded-2xl p-6 text-sm text-[var(--sea-ink-soft)]">
+      <div className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 text-sm text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
         Redirecting you to Auth0 login...
       </div>
     )

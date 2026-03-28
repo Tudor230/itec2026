@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id           String   @id
+  name         String
+  ownerSubject String?  @map("owner_subject")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  files        File[]
+  members      ProjectMember[]
+  invites      ProjectInvite[]
+
+  @@index([ownerSubject, updatedAt])
+  @@map("projects")
+}
+
+model File {
+  id           String   @id
+  projectId    String   @map("project_id")
+  path         String
+  storageKey   String   @map("storage_key")
+  contentHash  String   @default("") @map("content_hash")
+  byteSize     Int      @default(0) @map("byte_size")
+  ownerSubject String?  @map("owner_subject")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  yjsAggregate YjsAggregate?
+  yjsUpdates   YjsUpdate[]
+  yjsSnapshots YjsSnapshot[]
+
+  @@unique([projectId, path])
+  @@unique([storageKey])
+  @@index([ownerSubject, projectId, updatedAt])
+  @@map("files")
+}
+
+model YjsAggregate {
+  fileId       String   @id @map("file_id")
+  nextSequence Int      @default(0) @map("next_sequence")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  file         File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@map("yjs_aggregates")
+}
+
+model YjsUpdate {
+  id           String   @id
+  fileId       String   @map("file_id")
+  sequence     Int
+  updateBase64 String   @map("update_base64")
+  createdAt    DateTime @default(now()) @map("created_at")
+  file         File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, sequence])
+  @@index([fileId, createdAt])
+  @@map("yjs_updates")
+}
+
+model YjsSnapshot {
+  id           String   @id
+  fileId       String   @map("file_id")
+  sequence     Int
+  updateBase64 String   @map("update_base64")
+  createdAt    DateTime @default(now()) @map("created_at")
+  file         File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([fileId, sequence])
+  @@index([fileId, createdAt])
+  @@map("yjs_snapshots")
+}
+
+model ProjectMember {
+  id             String   @id
+  projectId      String   @map("project_id")
+  subject        String
+  role           String
+  addedBySubject String?  @map("added_by_subject")
+  createdAt      DateTime @default(now()) @map("created_at")
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, subject])
+  @@index([subject, createdAt])
+  @@map("project_members")
+}
+
+model ProjectInvite {
+  id               String    @id
+  projectId        String    @map("project_id")
+  tokenHash        String    @unique @map("token_hash")
+  role             String
+  createdBySubject String    @map("created_by_subject")
+  expiresAt        DateTime  @map("expires_at")
+  consumedAt       DateTime? @map("consumed_at")
+  consumedBySubject String?  @map("consumed_by_subject")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([expiresAt])
+  @@map("project_invites")
+}

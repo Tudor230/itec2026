@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: itec2026
+      POSTGRES_USER: itec
+      POSTGRES_PASSWORD: itec
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U itec -d itec2026']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    command: npm run start:docker
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://itec:itec@postgres:5432/itec2026
+      CLIENT_ORIGIN: http://localhost:3000
+      FILES_STORAGE_ROOT: /app/.data/files
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:-itec2026.eu.auth0.com}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://itec2026-api}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '4000:4000'
+    volumes:
+      - server_files_data:/app/.data/files
+
+  client:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    environment:
+      VITE_AUTH0_DOMAIN: itec2026.eu.auth0.com
+      VITE_AUTH0_CLIENT_ID: cuWoOEt45nXf53pMBpi1jzDsRwRKO1IB
+      VITE_AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://itec2026-api}
+      VITE_AUTH0_REDIRECT_URI: http://localhost:3000
+      VITE_AUTH0_LOGOUT_RETURN_TO: http://localhost:3000
+      VITE_AUTH0_ROLES_CLAIM: https://itec2026-api/roles
+    depends_on:
+      - server
+    ports:
+      - '3000:3000'
+
+volumes:
+  postgres_data:
+  server_files_data:

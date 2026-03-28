@@ -1,0 +1,147 @@
+import { Router } from 'express'
+import type { PrismaClient } from '@prisma/client'
+import { asyncHandler } from '../../http/async-handler.js'
+import { actorFromRequest } from '../auth/request-actor.js'
+import { requireTokenPresent } from '../auth/require-token-present.middleware.js'
+import {
+  createProjectInviteSchema,
+  createProjectSchema,
+  updateProjectSchema,
+} from './project.schema.js'
+import { ProjectsRepository } from './projects.repository.js'
+import { ProjectsService } from './projects.service.js'
+
+export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
+  const router = Router()
+  const service = new ProjectsService(new ProjectsRepository(prisma))
+
+  router.get('/', requireTokenPresent, asyncHandler(async (request, response) => {
+    const actor = actorFromRequest(request)
+    const projects = await service.list(actor)
+
+    response.json({
+      ok: true,
+      data: projects,
+    })
+  }))
+
+  router.get('/:projectId', requireTokenPresent, asyncHandler(async (request, response) => {
+    const actor = actorFromRequest(request)
+    const project = await service.getById(actor, request.params.projectId)
+
+    if (!project) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Project not found', code: 'PROJECT_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: project,
+    })
+  }))
+
+  router.post('/', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = createProjectSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_PROJECT_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const project = await service.create(actor, parsed.data)
+
+    response.status(201).json({
+      ok: true,
+      data: project,
+    })
+  }))
+
+  router.patch('/:projectId', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = updateProjectSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_PROJECT_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const project = await service.update(actor, request.params.projectId, parsed.data)
+
+    if (!project) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Project not found', code: 'PROJECT_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: project,
+    })
+  }))
+
+  router.delete('/:projectId', requireTokenPresent, asyncHandler(async (request, response) => {
+    const actor = actorFromRequest(request)
+    const removed = await service.remove(actor, request.params.projectId)
+
+    if (!removed) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Project not found', code: 'PROJECT_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: { deleted: true },
+    })
+  }))
+
+  router.post('/:projectId/invites', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = createProjectInviteSchema.safeParse(request.body ?? {})
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_INVITE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+
+    try {
+      const created = await service.createInvite(actor, request.params.projectId)
+      response.status(201).json({
+        ok: true,
+        data: {
+          ...created.invite,
+          inviteToken: created.inviteToken,
+        },
+      })
+    } catch (error) {
+      const dbLikeError = error as { code?: string }
+
+      if (dbLikeError.code === 'PROJECT_FORBIDDEN') {
+        response.status(403).json({
+          ok: false,
+          error: { message: 'Only project owners can create invites', code: 'PROJECT_FORBIDDEN' },
+        })
+        return
+      }
+
+      throw error
+    }
+  }))
+
+  return router
+}
