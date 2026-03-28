@@ -19,6 +19,10 @@ function makeChunk(stream: RuntimeOutputChunk['stream'], chunk: string): Runtime
 export class DockerShellRuntime implements TerminalRuntime {
   private interactiveSession: DockerInteractiveSessionHandle | null = null
 
+  private outputDecoder: TextDecoder | null = null
+
+  private emitOutput: ((chunk: RuntimeOutputChunk) => void) | null = null
+
   constructor(
     private readonly sandboxManager: DockerSandboxManager,
     private readonly projectId: string,
@@ -50,17 +54,41 @@ export class DockerShellRuntime implements TerminalRuntime {
       return
     }
 
-    this.interactiveSession = await this.sandboxManager.openInteractiveSession(
-      this.projectId,
-      this.ownerSubject,
-      context.cwd,
-      {
-        initialSize,
-        onOutput: (chunk) => {
-          onOutput(makeChunk('stdout', chunk.toString('utf8')))
+    this.outputDecoder = new TextDecoder('utf-8')
+    this.emitOutput = onOutput
+
+    const env = {
+      TERM: process.env.COLLAB_TERMINAL_TERM?.trim() || 'xterm-256color',
+      LANG: process.env.COLLAB_TERMINAL_LANG?.trim() || 'C.UTF-8',
+      LC_ALL: process.env.COLLAB_TERMINAL_LC_ALL?.trim() || 'C.UTF-8',
+    }
+
+    try {
+      this.interactiveSession = await this.sandboxManager.openInteractiveSession(
+        this.projectId,
+        this.ownerSubject,
+        context.cwd,
+        {
+          env,
+          initialSize,
+          onOutput: (chunk) => {
+            const decoded = this.outputDecoder
+              ? this.outputDecoder.decode(chunk, { stream: true })
+              : chunk.toString('utf8')
+
+            if (!decoded) {
+              return
+            }
+
+            this.emitOutput?.(makeChunk('stdout', decoded))
+          },
         },
-      },
-    )
+      )
+    } catch (error) {
+      this.outputDecoder = null
+      this.emitOutput = null
+      throw error
+    }
   }
 
   async writeInput(
@@ -110,11 +138,20 @@ export class DockerShellRuntime implements TerminalRuntime {
       return
     }
 
+    const flushed = this.outputDecoder?.decode() ?? ''
+    if (flushed) {
+      this.emitOutput?.(makeChunk('stdout', flushed))
+    }
+
     await this.interactiveSession.close()
     this.interactiveSession = null
+    this.outputDecoder = null
+    this.emitOutput = null
   }
 
   dispose() {
+    this.outputDecoder = null
+    this.emitOutput = null
     this.interactiveSession = null
     void this.sandboxManager.disposeSandbox(this.projectId, this.ownerSubject)
   }
