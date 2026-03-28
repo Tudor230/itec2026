@@ -7,7 +7,7 @@ interface SocketHandshakeAuth {
   token?: unknown
 }
 
-export function actorContextFromSocket(socket: Socket): ActorContext {
+export async function actorContextFromSocket(socket: Socket): Promise<ActorContext> {
   const auth = socket.handshake.auth as SocketHandshakeAuth | undefined
   const raw = typeof auth?.token === 'string' ? auth.token : undefined
 
@@ -22,9 +22,14 @@ export function actorContextFromSocket(socket: Socket): ActorContext {
     return anonymousActor
   }
 
+  const subject = await subjectFromToken(token)
+  if (!subject) {
+    return anonymousActor
+  }
+
   return {
     type: 'token_present',
-    subject: subjectFromToken(token),
+    subject,
     token,
   }
 }

@@ -2,12 +2,17 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
+import { createHmac } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import express from 'express'
 import { errorHandler } from '../../http/error-handler.js'
 import { authBoundaryMiddleware } from '../auth/auth-boundary.middleware.js'
-import { subjectFromToken } from '../auth/token-subject.js'
 import { createProjectsRouter } from './projects.router.js'
+
+const TEST_JWT_SECRET = 'test-jwt-secret'
+process.env.AUTH_JWT_HS256_SECRET = TEST_JWT_SECRET
+process.env.AUTH_JWT_ISSUER = 'https://issuer.test/'
+process.env.AUTH_JWT_AUDIENCE = 'https://audience.test'
 
 type ProjectRow = {
   id: string
@@ -29,7 +34,7 @@ type ProjectFindManyArgs = {
 type ProjectFindFirstArgs = {
   where: {
     id: string
-    ownerSubject: string
+    ownerSubject?: string
   }
 }
 
@@ -44,7 +49,7 @@ type ProjectCreateArgs = {
 type ProjectUpdateManyArgs = {
   where: {
     id: string
-    ownerSubject: string | null
+    ownerSubject?: string | null
   }
   data: {
     name: string
@@ -54,7 +59,7 @@ type ProjectUpdateManyArgs = {
 type ProjectDeleteManyArgs = {
   where: {
     id: string
-    ownerSubject: string
+    ownerSubject?: string
   }
 }
 
@@ -70,7 +75,11 @@ class InMemoryProjectTable {
 
   async findFirst(args: ProjectFindFirstArgs): Promise<ProjectRow | null> {
     const found = this.rows.find((row) => {
-      return row.id === args.where.id && row.ownerSubject === args.where.ownerSubject
+      if (args.where.ownerSubject !== undefined) {
+        return row.id === args.where.id && row.ownerSubject === args.where.ownerSubject
+      }
+
+      return row.id === args.where.id
     })
 
     return found ? this.cloneRow(found) : null
@@ -95,7 +104,11 @@ class InMemoryProjectTable {
     const now = new Date()
 
     this.rows = this.rows.map((row) => {
-      if (row.id !== args.where.id || row.ownerSubject !== args.where.ownerSubject) {
+      const ownerSubjectMatches = args.where.ownerSubject === undefined
+        ? true
+        : row.ownerSubject === args.where.ownerSubject
+
+      if (row.id !== args.where.id || !ownerSubjectMatches) {
         return row
       }
 
@@ -115,7 +128,11 @@ class InMemoryProjectTable {
     const beforeLength = this.rows.length
 
     this.rows = this.rows.filter((row) => {
-      return !(row.id === args.where.id && row.ownerSubject === args.where.ownerSubject)
+      const ownerSubjectMatches = args.where.ownerSubject === undefined
+        ? true
+        : row.ownerSubject === args.where.ownerSubject
+
+      return !(row.id === args.where.id && ownerSubjectMatches)
     })
 
     return { count: beforeLength - this.rows.length }
@@ -183,6 +200,24 @@ function authHeaders(token: string) {
   }
 }
 
+function createJwt(sub: string, jwtId: string) {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub,
+      jti: jwtId,
+      iss: process.env.AUTH_JWT_ISSUER,
+      aud: process.env.AUTH_JWT_AUDIENCE,
+    }),
+  ).toString('base64url')
+  const signingInput = `${header}.${payload}`
+  const signature = createHmac('sha256', TEST_JWT_SECRET)
+    .update(signingInput)
+    .digest('base64url')
+
+  return `${signingInput}.${signature}`
+}
+
 describe('projects router', () => {
   let baseUrl = ''
   let closeServer: (() => Promise<void>) | undefined
@@ -210,9 +245,11 @@ describe('projects router', () => {
     assert.equal(payload.error.code, 'AUTH_REQUIRED')
   })
 
-  it('creates and lists projects scoped by actor token', async () => {
-    const tokenA = 'token-alpha'
-    const tokenB = 'token-beta'
+  it('creates and lists projects scoped by actor subject', async () => {
+    const subjectA = 'auth0|user-alpha'
+    const subjectB = 'auth0|user-beta'
+    const tokenA = createJwt(subjectA, 'jwt-a')
+    const tokenB = createJwt(subjectB, 'jwt-b')
 
     const createdA = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
@@ -242,13 +279,45 @@ describe('projects router', () => {
     assert.equal(listedPayloadA.data.length, 1)
     assert.equal(listedPayloadA.data[0].id, payloadA.data.id)
     assert.equal(listedPayloadA.data[0].name, 'Alpha')
-    assert.equal(listedPayloadA.data[0].ownerSubject, subjectFromToken(tokenA))
+    assert.equal(listedPayloadA.data[0].ownerSubject, subjectA)
     assert.notEqual(payloadA.data.id, payloadB.data.id)
   })
 
+  it('keeps access for same user across different tokens', async () => {
+    const subject = 'auth0|stable-user'
+    const createToken = createJwt(subject, 'jwt-original')
+    const reloginToken = createJwt(subject, 'jwt-after-relogin')
+
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: authHeaders(createToken),
+      body: JSON.stringify({ name: 'Stable access project' }),
+    })
+
+    const createdPayload = await created.json()
+
+    const listed = await fetch(`${baseUrl}/api/projects`, {
+      headers: authHeaders(reloginToken),
+    })
+    const listedPayload = await listed.json()
+
+    const fetched = await fetch(`${baseUrl}/api/projects/${createdPayload.data.id}`, {
+      headers: authHeaders(reloginToken),
+    })
+    const fetchedPayload = await fetched.json()
+
+    assert.equal(created.status, 201)
+    assert.equal(listed.status, 200)
+    assert.equal(fetched.status, 200)
+    assert.equal(listedPayload.data.length, 1)
+    assert.equal(listedPayload.data[0].id, createdPayload.data.id)
+    assert.equal(fetchedPayload.data.id, createdPayload.data.id)
+    assert.equal(fetchedPayload.data.ownerSubject, subject)
+  })
+
   it('does not allow reading a project owned by another actor', async () => {
-    const ownerToken = 'owner-token'
-    const otherToken = 'other-token'
+    const ownerToken = createJwt('auth0|owner', 'jwt-owner')
+    const otherToken = createJwt('auth0|other', 'jwt-other')
 
     const created = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
@@ -270,7 +339,7 @@ describe('projects router', () => {
   })
 
   it('validates update input and supports update-delete lifecycle', async () => {
-    const token = 'project-token'
+    const token = createJwt('auth0|project-user', 'jwt-project')
 
     const created = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',

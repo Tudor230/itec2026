@@ -3,7 +3,11 @@ import type { PrismaClient } from '@prisma/client'
 import { asyncHandler } from '../../http/async-handler.js'
 import { actorFromRequest } from '../auth/request-actor.js'
 import { requireTokenPresent } from '../auth/require-token-present.middleware.js'
-import { createProjectSchema, updateProjectSchema } from './project.schema.js'
+import {
+  createProjectInviteSchema,
+  createProjectSchema,
+  updateProjectSchema,
+} from './project.schema.js'
 import { ProjectsRepository } from './projects.repository.js'
 import { ProjectsService } from './projects.service.js'
 
@@ -101,6 +105,42 @@ export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
       ok: true,
       data: { deleted: true },
     })
+  }))
+
+  router.post('/:projectId/invites', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = createProjectInviteSchema.safeParse(request.body ?? {})
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_INVITE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+
+    try {
+      const created = await service.createInvite(actor, request.params.projectId)
+      response.status(201).json({
+        ok: true,
+        data: {
+          ...created.invite,
+          inviteToken: created.inviteToken,
+        },
+      })
+    } catch (error) {
+      const dbLikeError = error as { code?: string }
+
+      if (dbLikeError.code === 'PROJECT_FORBIDDEN') {
+        response.status(403).json({
+          ok: false,
+          error: { message: 'Only project owners can create invites', code: 'PROJECT_FORBIDDEN' },
+        })
+        return
+      }
+
+      throw error
+    }
   }))
 
   return router

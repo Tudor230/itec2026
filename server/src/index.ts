@@ -9,6 +9,7 @@ import { actorContextFromSocket } from './modules/auth/auth-socket-context.js'
 import { createAiRouter } from './modules/ai/ai.router.js'
 import { createProjectsRouter } from './modules/projects/projects.router.js'
 import { createFilesRouter } from './modules/projects/files.router.js'
+import { createInvitesRouter } from './modules/projects/invites.router.js'
 import { createRunnerRouter } from './modules/runner/runner.router.js'
 import { createCollabServer } from './ws/collab-server.js'
 
@@ -35,12 +36,13 @@ async function bootstrap() {
 
   app.use('/api/projects', createProjectsRouter({ prisma }))
   app.use('/api/files', createFilesRouter({ prisma }))
+  app.use('/api/invites', createInvitesRouter({ prisma }))
   app.use('/api/runner', createRunnerRouter())
   app.use('/api/ai', createAiRouter())
   app.use(notFoundHandler)
   app.use(errorHandler)
 
-  createCollabServer(server, actorContextFromSocket)
+  createCollabServer(server, prisma, actorContextFromSocket)
 
   const port = Number(process.env.PORT ?? 4000)
   server.listen(port, () => {

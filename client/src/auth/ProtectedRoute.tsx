@@ -2,7 +2,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useAuthRuntime } from './AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
-import { auth0Config, getCurrentReturnTo } from '../lib/auth0-config'
+import { auth0Config } from '../lib/auth0-config'
 import { getUserRoles, hasRequiredRoles } from '../lib/auth-claims'
 
 interface ProtectedRouteProps {
@@ -41,10 +41,11 @@ function ProtectedRouteContent({
 
     void loginWithRedirect({
       appState: {
-        returnTo: getCurrentReturnTo('/dashboard'),
+        returnTo: '/projects',
       },
       authorizationParams: {
         redirect_uri: auth0Config.redirectUri,
+        audience: auth0Config.audience,
       },
     })
   }, [isAuthenticated, isLoading, loginStarted, loginWithRedirect])

@@ -1,5 +1,11 @@
 import type { ActorContext } from '../auth/actor-context.js'
-import type { ProjectInput, ProjectUpdateInput } from './project.types.js'
+import type {
+  CreateProjectInviteResult,
+  InvitePreviewRecord,
+  ProjectInput,
+  ProjectRecord,
+  ProjectUpdateInput,
+} from './project.types.js'
 import { ProjectsRepository } from './projects.repository.js'
 
 export class ProjectsService {
@@ -23,5 +29,17 @@ export class ProjectsService {
 
   remove(actor: ActorContext, projectId: string) {
     return this.repository.remove(actor, projectId)
+  }
+
+  createInvite(actor: ActorContext, projectId: string): Promise<CreateProjectInviteResult> {
+    return this.repository.createInvite(actor, projectId)
+  }
+
+  getInvitePreview(token: string): Promise<InvitePreviewRecord | null> {
+    return this.repository.getInvitePreview(token)
+  }
+
+  acceptInvite(actor: ActorContext, token: string): Promise<ProjectRecord> {
+    return this.repository.acceptInvite(actor, token)
   }
 }
