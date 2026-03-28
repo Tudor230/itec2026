@@ -53,7 +53,7 @@ export default function QuickOpenModal({
 
   return (
     <div
-      className="absolute inset-0 z-[18] grid place-items-start bg-[rgba(7,17,23,0.36)] pt-[4.8rem]"
+      className="absolute inset-0 z-[18] grid place-items-center bg-[rgba(7,17,23,0.36)] p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="workspace-quick-open-title"

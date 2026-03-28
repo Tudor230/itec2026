@@ -15,6 +15,23 @@ services:
       timeout: 5s
       retries: 5
 
+  dockerd:
+    image: docker:27-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ''
+    command:
+      - --host=tcp://0.0.0.0:2375
+      - --host=unix:///var/run/docker.sock
+    healthcheck:
+      test: ['CMD', 'docker', 'info']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - dockerd_data:/var/lib/docker
+      - server_workspaces_data:/data/workspaces
+
   server:
     build:
       context: .
@@ -24,16 +41,26 @@ services:
       PORT: 4000
       DATABASE_URL: postgres://itec:itec@postgres:5432/itec2026
       CLIENT_ORIGIN: http://localhost:3000
-      FILES_STORAGE_ROOT: /app/.data/files
+      FILES_STORAGE_ROOT: /data/files
+      COLLAB_WORKSPACE_ROOT: /data/workspaces
+      DOCKER_HOST: tcp://dockerd:2375
+      COLLAB_DOCKER_LOG_LEVEL: debug
+      COLLAB_TERMINAL_DOCKER_AUTO_PULL: 'true'
+      COLLAB_TERMINAL_DOCKER_UID: '1000'
+      COLLAB_TERMINAL_DOCKER_GID: '1000'
+      COLLAB_WORKSPACE_EXCLUDED_DIRS: node_modules,.git,dist,build,.next,coverage,.cache
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-itec2026.eu.auth0.com}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://itec2026-api}
     depends_on:
       postgres:
         condition: service_healthy
+      dockerd:
+        condition: service_healthy
     ports:
       - '4000:4000'
     volumes:
-      - server_files_data:/app/.data/files
+      - server_files_data:/data/files
+      - server_workspaces_data:/data/workspaces
 
   client:
     build:
@@ -53,4 +80,6 @@ services:
 
 volumes:
   postgres_data:
+  dockerd_data:
   server_files_data:
+  server_workspaces_data:

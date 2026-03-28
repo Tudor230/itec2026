@@ -4,7 +4,12 @@ import type { Socket } from 'socket.io'
 import * as Y from 'yjs'
 import { z } from 'zod'
 import type { ActorContext } from '../auth/actor-context.js'
-import { registerCollabFileCreatedListener } from './collab-events.js'
+import {
+  registerCollabFileCreatedListener,
+  registerCollabFileDeletedListener,
+  registerCollabFileUpdatedListener,
+} from './collab-events.js'
+import { TerminalSessionManager } from './terminal/terminal-session-manager.js'
 
 export type SocketActorResolver = (socket: Socket) => Promise<ActorContext>
 export type ProjectJoinAuthorizer = (
@@ -44,10 +49,15 @@ export type YjsSnapshotSaver = (
   sequence: number,
   update: Uint8Array,
 ) => Promise<void>
+export type TerminalCommandAuthorizer = (
+  actor: ActorContext,
+  projectId: string,
+) => Promise<boolean>
 
 type ConnectedEvent = {
   actorType: ActorContext['type']
   socketId: string
+  subject?: string
 }
 
 type ErrorEvent = {
@@ -73,6 +83,57 @@ const docSavedSchema = z.object({
 })
 
 const projectLeaveSchema = z.string().trim().min(1)
+
+const terminalListSchema = z.object({
+  projectId: z.string().trim().min(1),
+})
+
+const terminalJoinSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+})
+
+const terminalOpenSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+  cols: z.number().int().min(1).max(1000).optional(),
+  rows: z.number().int().min(1).max(1000).optional(),
+})
+
+const terminalInputSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+  input: z.string().min(1).max(4096),
+})
+
+const terminalResizeSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+  cols: z.number().int().min(1).max(1000),
+  rows: z.number().int().min(1).max(1000),
+})
+
+const terminalCloseSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+})
+
+const terminalAccessRequestSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+})
+
+const terminalAccessDecisionSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+  requesterSubject: z.string().trim().min(1),
+  approve: z.boolean(),
+})
+
+const terminalRevokeControlSchema = z.object({
+  projectId: z.string().trim().min(1),
+  ownerSubject: z.string().trim().min(1),
+})
 
 interface DocSession {
   doc: Y.Doc
@@ -110,6 +171,48 @@ interface DocDirtyStatePayload {
   fileId: string
   isDirty: boolean
   updatedAt: string
+}
+
+interface TerminalListPayload {
+  projectId: string
+  terminals: Array<{
+    ownerSubject: string
+    activeControllerSubject: string
+    pendingRequestCount: number
+  }>
+}
+
+interface TerminalStatePayload {
+  projectId: string
+  ownerSubject: string
+  activeControllerSubject: string
+  isSessionOpen: boolean
+  pendingRequests: Array<{
+    requesterSubject: string
+    requestedAt: string
+  }>
+}
+
+interface TerminalOutputPayload {
+  projectId: string
+  ownerSubject: string
+  stream: 'stdout' | 'stderr' | 'system'
+  chunk: string
+  timestamp: string
+}
+
+interface TerminalAccessRequestedPayload {
+  projectId: string
+  ownerSubject: string
+  requesterSubject: string
+  requestedAt: string
+}
+
+interface TerminalAccessDecisionPayload {
+  projectId: string
+  ownerSubject: string
+  requesterSubject: string
+  status: 'approved' | 'rejected' | 'revoked'
 }
 
 function readPositiveInt(value: string | undefined, fallback: number) {
@@ -160,6 +263,8 @@ export function createCollabGateway(
   loadYjsHistory: YjsHistoryLoader,
   appendYjsUpdate: YjsUpdateAppender,
   saveYjsSnapshot: YjsSnapshotSaver,
+  canUseTerminal: TerminalCommandAuthorizer,
+  terminalSessionManager: TerminalSessionManager,
 ) {
   const io = new Server(httpServer, {
     cors: {
@@ -174,20 +279,30 @@ export function createCollabGateway(
   const maxDocUpdatesPerSecond = readPositiveInt(process.env.COLLAB_MAX_DOC_UPDATES_PER_SECOND, 120)
   const maxJoinsPerTenSeconds = readPositiveInt(process.env.COLLAB_MAX_DOC_JOINS_PER_10S, 40)
   const snapshotIntervalUpdates = readPositiveInt(process.env.COLLAB_SNAPSHOT_INTERVAL_UPDATES, 200)
-
+  const maxTerminalInputsPerSecond = readPositiveInt(process.env.COLLAB_MAX_TERMINAL_INPUTS_PER_SECOND, 10)
+  const maxTerminalRequestsPerTenSeconds = readPositiveInt(process.env.COLLAB_MAX_TERMINAL_REQUESTS_PER_10S, 20)
   const unregisterFileCreatedListener = registerCollabFileCreatedListener((file) => {
     io.to(projectRoom(file.projectId)).emit('collab:file:created', file)
+  })
+  const unregisterFileUpdatedListener = registerCollabFileUpdatedListener((file) => {
+    io.to(projectRoom(file.projectId)).emit('collab:file:updated', file)
+  })
+  const unregisterFileDeletedListener = registerCollabFileDeletedListener((file) => {
+    io.to(projectRoom(file.projectId)).emit('collab:file:deleted', file)
   })
 
   const originalClose = io.close.bind(io)
   io.close = ((callback?: (error?: Error) => void) => {
     unregisterFileCreatedListener()
+    unregisterFileUpdatedListener()
+    unregisterFileDeletedListener()
     return originalClose(callback)
   }) as typeof io.close
 
   io.on('connection', (socket) => {
     const joinedRooms = new Set<string>()
     const joinedDocRooms = new Set<string>()
+    const joinedTerminalRooms = new Set<string>()
     const rateCounters = new Map<string, RateCounter>()
 
     void (async () => {
@@ -232,9 +347,51 @@ export function createCollabGateway(
             return
           }
 
+          const terminalAllowed = await canUseTerminal(actor, parsedProjectId.data)
+
           const room = projectRoom(parsedProjectId.data)
+          if (joinedRooms.has(room)) {
+            emitCurrentDirtyStatesForProject(socket, dirtySocketsByDocRoom, parsedProjectId.data)
+            if (terminalAllowed && actor.subject) {
+              const ownTerminalRoom = terminalRoom(parsedProjectId.data, actor.subject)
+              if (!joinedTerminalRooms.has(ownTerminalRoom)) {
+                joinedTerminalRooms.add(ownTerminalRoom)
+                void socket.join(ownTerminalRoom)
+              }
+
+              emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
+              emitTerminalStateToSocket(
+                socket,
+                parsedProjectId.data,
+                actor.subject,
+                terminalSessionManager,
+              )
+            }
+            return
+          }
+
           joinedRooms.add(room)
           void socket.join(room)
+          terminalSessionManager.markProjectJoined(parsedProjectId.data, actor.subject)
+
+          if (terminalAllowed) {
+            void terminalSessionManager.prewarmTerminal(parsedProjectId.data, actor.subject)
+              .catch(() => {
+                // Keep join flow responsive even if prewarm fails.
+              })
+
+            const ownTerminalRoom = terminalRoom(parsedProjectId.data, actor.subject)
+            joinedTerminalRooms.add(ownTerminalRoom)
+            void socket.join(ownTerminalRoom)
+
+            emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
+            emitTerminalStateToSocket(
+              socket,
+              parsedProjectId.data,
+              actor.subject,
+              terminalSessionManager,
+            )
+          }
 
           emitCurrentDirtyStatesForProject(socket, dirtySocketsByDocRoom, parsedProjectId.data)
 
@@ -267,6 +424,20 @@ export function createCollabGateway(
 
         joinedRooms.delete(room)
         void socket.leave(room)
+
+        if (actor.subject) {
+          terminalSessionManager.markProjectLeft(parsedProjectId.data, actor.subject)
+          const roomPrefix = `${terminalRoomPrefix(parsedProjectId.data)}`
+          joinedTerminalRooms.forEach((joinedTerminalRoom) => {
+            if (!joinedTerminalRoom.startsWith(roomPrefix)) {
+              return
+            }
+
+            joinedTerminalRooms.delete(joinedTerminalRoom)
+            void socket.leave(joinedTerminalRoom)
+          })
+          emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
+        }
 
         io.to(room).emit('collab:presence', {
           type: 'left',
@@ -548,7 +719,712 @@ export function createCollabGateway(
         })
       })
 
+      socket.on('collab:terminal:list', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-list',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalListSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'projectId is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then((allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            socket.emit('collab:error', {
+              message: 'Not authorized for terminal access',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actorSubject)) {
+            socket.emit('collab:error', {
+              message: 'Join project first',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          socket.emit('collab:terminal:list', {
+            projectId: parsed.data.projectId,
+            terminals: terminalSessionManager.listProjectTerminals(parsed.data.projectId),
+          } satisfies TerminalListPayload)
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:join', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-join',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalJoinSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'projectId and ownerSubject are required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then((allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            socket.emit('collab:error', {
+              message: 'Not authorized for terminal access',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actorSubject)) {
+            socket.emit('collab:error', {
+              message: 'Join project first',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const result = terminalSessionManager.joinTerminal(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+          )
+          if (!result) {
+            socket.emit('collab:error', {
+              message: 'Terminal owner is offline',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+          joinedTerminalRooms.add(room)
+          void socket.join(room)
+
+          socket.emit('collab:terminal:state', result.state satisfies TerminalStatePayload)
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:leave', (payload: unknown) => {
+        const parsed = terminalJoinSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'projectId and ownerSubject are required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          return
+        }
+
+        joinedTerminalRooms.delete(room)
+        void socket.leave(room)
+      })
+
+      socket.on('collab:terminal:open', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-open',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalOpenSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid terminal open payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join terminal first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          void terminalSessionManager.openSession(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+            (ownerSubject, chunk) => {
+              io.to(terminalRoom(parsed.data.projectId, ownerSubject)).emit('collab:terminal:output', {
+                projectId: parsed.data.projectId,
+                ownerSubject,
+                ...chunk,
+              } satisfies TerminalOutputPayload)
+            },
+            (parsed.data.cols && parsed.data.rows)
+              ? {
+                  cols: parsed.data.cols,
+                  rows: parsed.data.rows,
+                }
+              : undefined,
+          ).then((result) => {
+            if (!result.accepted) {
+              socket.emit('collab:error', {
+                message: result.reason ?? 'Could not open terminal session',
+              } satisfies ErrorEvent)
+              return
+            }
+
+            const state = terminalSessionManager.getTerminalState(
+              parsed.data.projectId,
+              parsed.data.ownerSubject,
+            )
+
+            io.to(room).emit('collab:terminal:state', {
+              projectId: parsed.data.projectId,
+              ownerSubject: parsed.data.ownerSubject,
+              activeControllerSubject: state.activeControllerSubject,
+              isSessionOpen: state.isSessionOpen,
+              pendingRequests: state.pendingRequests,
+            } satisfies TerminalStatePayload)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not open terminal session',
+            } satisfies ErrorEvent)
+          })
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:input', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-input',
+          maxTerminalInputsPerSecond,
+          1_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal inputs',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalInputSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid terminal input payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join terminal first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowed) => {
+          if (!allowed) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          void terminalSessionManager.processInput(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+            parsed.data.input,
+          ).then((result) => {
+            if (result.accepted) {
+              return
+            }
+
+            socket.emit('collab:error', {
+              message: result.reason ?? 'Could not process terminal input',
+            } satisfies ErrorEvent)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not process terminal input',
+            } satisfies ErrorEvent)
+          })
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal input',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:resize', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-resize',
+          maxTerminalInputsPerSecond,
+          1_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal inputs',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalResizeSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid terminal resize payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join terminal first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          void terminalSessionManager.resizeSession(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+            {
+              cols: parsed.data.cols,
+              rows: parsed.data.rows,
+            },
+          ).then((result) => {
+            if (result.accepted) {
+              return
+            }
+
+            socket.emit('collab:error', {
+              message: result.reason ?? 'Could not resize terminal session',
+            } satisfies ErrorEvent)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not resize terminal session',
+            } satisfies ErrorEvent)
+          })
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:close', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-close',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalCloseSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid terminal close payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)
+        if (!joinedTerminalRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join terminal first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const actorSubject = actor.subject
+
+        void canUseTerminal(actor, parsed.data.projectId).then(async (allowedForTerminal) => {
+          if (!allowedForTerminal) {
+            joinedTerminalRooms.delete(room)
+            await socket.leave(room)
+            socket.emit('collab:error', {
+              message: 'Not authorized for this project',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          void terminalSessionManager.closeSession(
+            parsed.data.projectId,
+            parsed.data.ownerSubject,
+            actorSubject,
+          ).then((result) => {
+            if (!result.accepted) {
+              socket.emit('collab:error', {
+                message: result.reason ?? 'Could not close terminal session',
+              } satisfies ErrorEvent)
+              return
+            }
+
+            const state = terminalSessionManager.getTerminalState(
+              parsed.data.projectId,
+              parsed.data.ownerSubject,
+            )
+
+            io.to(room).emit('collab:terminal:state', {
+              projectId: parsed.data.projectId,
+              ownerSubject: parsed.data.ownerSubject,
+              activeControllerSubject: state.activeControllerSubject,
+              isSessionOpen: state.isSessionOpen,
+              pendingRequests: state.pendingRequests,
+            } satisfies TerminalStatePayload)
+          }).catch(() => {
+            socket.emit('collab:error', {
+              message: 'Could not close terminal session',
+            } satisfies ErrorEvent)
+          })
+        }).catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not process terminal request',
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:terminal:access:request', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-access-request',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalAccessRequestSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'projectId and ownerSubject are required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const requested = terminalSessionManager.requestAccess(
+          parsed.data.projectId,
+          parsed.data.ownerSubject,
+          actor.subject,
+        )
+
+        if (!requested) {
+          socket.emit('collab:error', {
+            message: 'Access request cannot be created',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        io.to(terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)).emit('collab:terminal:access:requested', {
+          projectId: parsed.data.projectId,
+          ownerSubject: parsed.data.ownerSubject,
+          requesterSubject: actor.subject,
+          requestedAt: requested.requestedAt,
+        } satisfies TerminalAccessRequestedPayload)
+
+        io.to(projectRoom(parsed.data.projectId)).emit('collab:terminal:list', {
+          projectId: parsed.data.projectId,
+          terminals: terminalSessionManager.listProjectTerminals(parsed.data.projectId),
+        } satisfies TerminalListPayload)
+      })
+
+      socket.on('collab:terminal:access:decision', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-access-decision',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalAccessDecisionSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid access decision payload',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.subject !== parsed.data.ownerSubject) {
+          socket.emit('collab:error', {
+            message: 'Only owner can decide access requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actor.subject)) {
+          socket.emit('collab:error', {
+            message: 'Join project first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const decision = terminalSessionManager.decideAccess(
+          parsed.data.projectId,
+          parsed.data.ownerSubject,
+          parsed.data.requesterSubject,
+          parsed.data.approve,
+        )
+
+        if (!decision.ok) {
+          socket.emit('collab:error', {
+            message: decision.reason ?? 'Could not process terminal access decision',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        io.to(terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)).emit('collab:terminal:state', {
+          projectId: parsed.data.projectId,
+          ownerSubject: parsed.data.ownerSubject,
+          activeControllerSubject: decision.state.activeControllerSubject,
+          isSessionOpen: decision.state.isSessionOpen,
+          pendingRequests: decision.state.pendingRequests,
+        } satisfies TerminalStatePayload)
+
+        io.to(terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)).emit('collab:terminal:access:decision', {
+          projectId: parsed.data.projectId,
+          ownerSubject: parsed.data.ownerSubject,
+          requesterSubject: parsed.data.requesterSubject,
+          status: decision.status,
+        } satisfies TerminalAccessDecisionPayload)
+
+        io.to(projectRoom(parsed.data.projectId)).emit('collab:terminal:list', {
+          projectId: parsed.data.projectId,
+          terminals: terminalSessionManager.listProjectTerminals(parsed.data.projectId),
+        } satisfies TerminalListPayload)
+      })
+
+      socket.on('collab:terminal:control:revoke', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'terminal-control-revoke',
+          maxTerminalRequestsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many terminal requests',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsed = terminalRevokeControlSchema.safeParse(payload)
+        if (!parsed.success) {
+          socket.emit('collab:error', {
+            message: 'projectId and ownerSubject are required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          socket.emit('collab:error', {
+            message: 'Authentication is required',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (actor.subject !== parsed.data.ownerSubject) {
+          socket.emit('collab:error', {
+            message: 'Only owner can revoke control',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        if (!terminalSessionManager.isProjectMember(parsed.data.projectId, actor.subject)) {
+          socket.emit('collab:error', {
+            message: 'Join project first',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const revokeResult = terminalSessionManager.revokeControl(
+          parsed.data.projectId,
+          parsed.data.ownerSubject,
+        )
+
+        if (!revokeResult.ok || !revokeResult.state) {
+          socket.emit('collab:error', {
+            message: revokeResult.reason ?? 'Could not revoke terminal control',
+          } satisfies ErrorEvent)
+          return
+        }
+
+        io.to(terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)).emit('collab:terminal:state', {
+          projectId: parsed.data.projectId,
+          ownerSubject: parsed.data.ownerSubject,
+          activeControllerSubject: revokeResult.state.activeControllerSubject,
+          isSessionOpen: revokeResult.state.isSessionOpen,
+          pendingRequests: revokeResult.state.pendingRequests,
+        } satisfies TerminalStatePayload)
+
+        if (revokeResult.revokedSubject) {
+          io.to(terminalRoom(parsed.data.projectId, parsed.data.ownerSubject)).emit('collab:terminal:access:decision', {
+            projectId: parsed.data.projectId,
+            ownerSubject: parsed.data.ownerSubject,
+            requesterSubject: revokeResult.revokedSubject,
+            status: 'revoked',
+          } satisfies TerminalAccessDecisionPayload)
+        }
+
+        io.to(projectRoom(parsed.data.projectId)).emit('collab:terminal:list', {
+          projectId: parsed.data.projectId,
+          terminals: terminalSessionManager.listProjectTerminals(parsed.data.projectId),
+        } satisfies TerminalListPayload)
+      })
+
       socket.on('disconnect', () => {
+        const actorSubject = actor.subject
+        if (actorSubject) {
+          const affectedProjectIds = new Set<string>()
+          joinedRooms.forEach((room) => {
+            const projectId = parseProjectRoom(room)
+            if (projectId) {
+              affectedProjectIds.add(projectId)
+            }
+          })
+
+          affectedProjectIds.forEach((projectId) => {
+            terminalSessionManager.markProjectLeft(projectId, actorSubject)
+            emitTerminalList(io, projectId, terminalSessionManager)
+          })
+        }
+
         joinedRooms.forEach((room) => {
           clearDirtyStateForSocket(io, dirtySocketsByDocRoom, room, socket.id)
           removeSocketFromDocSession(docSessions, room, socket.id)
@@ -578,6 +1454,7 @@ export function createCollabGateway(
       socket.emit('collab:connected', {
         actorType: actor.type,
         socketId: socket.id,
+        subject: actor.subject,
       } satisfies ConnectedEvent)
     })()
   })
@@ -587,6 +1464,22 @@ export function createCollabGateway(
 
 function projectRoom(projectId: string) {
   return `project:${projectId}`
+}
+
+function terminalRoomPrefix(projectId: string) {
+  return `terminal:${projectId}:`
+}
+
+function terminalRoom(projectId: string, ownerSubject: string) {
+  return `${terminalRoomPrefix(projectId)}${ownerSubject}`
+}
+
+function parseProjectRoom(room: string): string | null {
+  if (!room.startsWith('project:')) {
+    return null
+  }
+
+  return room.slice('project:'.length) || null
 }
 
 function docRoom(projectId: string, fileId: string) {
@@ -696,6 +1589,33 @@ function emitCurrentDirtyStatesForProject(
       updatedAt: new Date().toISOString(),
     } satisfies DocDirtyStatePayload)
   })
+}
+
+function emitTerminalList(
+  io: Server,
+  projectId: string,
+  terminalSessionManager: TerminalSessionManager,
+) {
+  io.to(projectRoom(projectId)).emit('collab:terminal:list', {
+    projectId,
+    terminals: terminalSessionManager.listProjectTerminals(projectId),
+  } satisfies TerminalListPayload)
+}
+
+function emitTerminalStateToSocket(
+  socket: Socket,
+  projectId: string,
+  ownerSubject: string,
+  terminalSessionManager: TerminalSessionManager,
+) {
+  const state = terminalSessionManager.getTerminalState(projectId, ownerSubject)
+  socket.emit('collab:terminal:state', {
+    projectId,
+    ownerSubject,
+    activeControllerSubject: state.activeControllerSubject,
+    isSessionOpen: state.isSessionOpen,
+    pendingRequests: state.pendingRequests,
+  } satisfies TerminalStatePayload)
 }
 
 function parseDocRoom(room: string): DocJoinPayload | null {

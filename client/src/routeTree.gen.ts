@@ -16,6 +16,9 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ProfileThemeRouteImport } from './routes/profile.theme'
+import { Route as ProfileSettingsRouteImport } from './routes/profile.settings'
+import { Route as ProfileAccountRouteImport } from './routes/profile.account'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as DemoTanstackQueryRouteImport } from './routes/demo/tanstack-query'
 
@@ -54,6 +57,21 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProfileThemeRoute = ProfileThemeRouteImport.update({
+  id: '/theme',
+  path: '/theme',
+  getParentRoute: () => ProfileRoute,
+} as any)
+const ProfileSettingsRoute = ProfileSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => ProfileRoute,
+} as any)
+const ProfileAccountRoute = ProfileAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => ProfileRoute,
+} as any)
 const InviteTokenRoute = InviteTokenRouteImport.update({
   id: '/invite/$token',
   path: '/invite/$token',
@@ -70,22 +88,28 @@ export interface FileRoutesByFullPath {
   '/about': typeof AboutRoute
   '/auth': typeof AuthRoute
   '/dashboard': typeof DashboardRoute
-  '/profile': typeof ProfileRoute
+  '/profile': typeof ProfileRouteWithChildren
   '/projects': typeof ProjectsRoute
   '/workspace': typeof WorkspaceRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/invite/$token': typeof InviteTokenRoute
+  '/profile/account': typeof ProfileAccountRoute
+  '/profile/settings': typeof ProfileSettingsRoute
+  '/profile/theme': typeof ProfileThemeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/auth': typeof AuthRoute
   '/dashboard': typeof DashboardRoute
-  '/profile': typeof ProfileRoute
+  '/profile': typeof ProfileRouteWithChildren
   '/projects': typeof ProjectsRoute
   '/workspace': typeof WorkspaceRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/invite/$token': typeof InviteTokenRoute
+  '/profile/account': typeof ProfileAccountRoute
+  '/profile/settings': typeof ProfileSettingsRoute
+  '/profile/theme': typeof ProfileThemeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -93,11 +117,14 @@ export interface FileRoutesById {
   '/about': typeof AboutRoute
   '/auth': typeof AuthRoute
   '/dashboard': typeof DashboardRoute
-  '/profile': typeof ProfileRoute
+  '/profile': typeof ProfileRouteWithChildren
   '/projects': typeof ProjectsRoute
   '/workspace': typeof WorkspaceRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/invite/$token': typeof InviteTokenRoute
+  '/profile/account': typeof ProfileAccountRoute
+  '/profile/settings': typeof ProfileSettingsRoute
+  '/profile/theme': typeof ProfileThemeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -111,6 +138,9 @@ export interface FileRouteTypes {
     | '/workspace'
     | '/demo/tanstack-query'
     | '/invite/$token'
+    | '/profile/account'
+    | '/profile/settings'
+    | '/profile/theme'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -122,6 +152,9 @@ export interface FileRouteTypes {
     | '/workspace'
     | '/demo/tanstack-query'
     | '/invite/$token'
+    | '/profile/account'
+    | '/profile/settings'
+    | '/profile/theme'
   id:
     | '__root__'
     | '/'
@@ -133,6 +166,9 @@ export interface FileRouteTypes {
     | '/workspace'
     | '/demo/tanstack-query'
     | '/invite/$token'
+    | '/profile/account'
+    | '/profile/settings'
+    | '/profile/theme'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -140,7 +176,7 @@ export interface RootRouteChildren {
   AboutRoute: typeof AboutRoute
   AuthRoute: typeof AuthRoute
   DashboardRoute: typeof DashboardRoute
-  ProfileRoute: typeof ProfileRoute
+  ProfileRoute: typeof ProfileRouteWithChildren
   ProjectsRoute: typeof ProjectsRoute
   WorkspaceRoute: typeof WorkspaceRoute
   DemoTanstackQueryRoute: typeof DemoTanstackQueryRoute
@@ -198,6 +234,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/profile/theme': {
+      id: '/profile/theme'
+      path: '/theme'
+      fullPath: '/profile/theme'
+      preLoaderRoute: typeof ProfileThemeRouteImport
+      parentRoute: typeof ProfileRoute
+    }
+    '/profile/settings': {
+      id: '/profile/settings'
+      path: '/settings'
+      fullPath: '/profile/settings'
+      preLoaderRoute: typeof ProfileSettingsRouteImport
+      parentRoute: typeof ProfileRoute
+    }
+    '/profile/account': {
+      id: '/profile/account'
+      path: '/account'
+      fullPath: '/profile/account'
+      preLoaderRoute: typeof ProfileAccountRouteImport
+      parentRoute: typeof ProfileRoute
+    }
     '/invite/$token': {
       id: '/invite/$token'
       path: '/invite/$token'
@@ -215,12 +272,27 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface ProfileRouteChildren {
+  ProfileAccountRoute: typeof ProfileAccountRoute
+  ProfileSettingsRoute: typeof ProfileSettingsRoute
+  ProfileThemeRoute: typeof ProfileThemeRoute
+}
+
+const ProfileRouteChildren: ProfileRouteChildren = {
+  ProfileAccountRoute: ProfileAccountRoute,
+  ProfileSettingsRoute: ProfileSettingsRoute,
+  ProfileThemeRoute: ProfileThemeRoute,
+}
+
+const ProfileRouteWithChildren =
+  ProfileRoute._addFileChildren(ProfileRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
   AuthRoute: AuthRoute,
   DashboardRoute: DashboardRoute,
-  ProfileRoute: ProfileRoute,
+  ProfileRoute: ProfileRouteWithChildren,
   ProjectsRoute: ProjectsRoute,
   WorkspaceRoute: WorkspaceRoute,
   DemoTanstackQueryRoute: DemoTanstackQueryRoute,

@@ -1,4 +1,5 @@
 import { useAuth0 } from '@auth0/auth0-react'
+import { Link } from '@tanstack/react-router'
 import { useAuthRuntime } from '../../auth/AuthProvider'
 import { getUserRoles } from '../../lib/auth-claims'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
@@ -68,7 +69,7 @@ function AuthenticatedUserInfo({ compact = false, onLogout }: UserInfoProps) {
             <p className="text-[10px] text-[var(--sea-ink-soft)] truncate">{email}</p>
             {roles.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1">
-                {roles.map(role => (
+                {roles.map((role) => (
                   <span key={role} className="text-[8px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full bg-[rgba(var(--lagoon-rgb),0.1)] text-[var(--lagoon-deep)]">
                     {role}
                   </span>
@@ -77,19 +78,34 @@ function AuthenticatedUserInfo({ compact = false, onLogout }: UserInfoProps) {
             )}
           </div>
 
-          <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] rounded-lg outline-none cursor-pointer transition-colors">
-            <User size={14} />
-            Account Info
+          <DropdownMenu.Item asChild>
+            <Link
+              to="/profile/account"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] rounded-lg outline-none cursor-pointer transition-colors no-underline"
+            >
+              <User size={14} />
+              Account Info
+            </Link>
           </DropdownMenu.Item>
           
-          <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] rounded-lg outline-none cursor-pointer transition-colors">
-            <Settings size={14} />
-            Settings
+          <DropdownMenu.Item asChild>
+            <Link
+              to="/profile/settings"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] rounded-lg outline-none cursor-pointer transition-colors no-underline"
+            >
+              <Settings size={14} />
+              Settings
+            </Link>
           </DropdownMenu.Item>
 
-          <DropdownMenu.Item className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] rounded-lg outline-none cursor-pointer transition-colors">
-            <Palette size={14} />
-            Theme
+          <DropdownMenu.Item asChild>
+            <Link
+              to="/profile/theme"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] rounded-lg outline-none cursor-pointer transition-colors no-underline"
+            >
+              <Palette size={14} />
+              Theme
+            </Link>
           </DropdownMenu.Item>
 
           <DropdownMenu.Separator className="h-[1px] bg-[var(--line)] my-1" />

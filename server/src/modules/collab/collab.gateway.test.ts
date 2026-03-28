@@ -9,6 +9,8 @@ import { io as createClient, type Socket as ClientSocket } from 'socket.io-clien
 import type { ActorContext } from '../auth/actor-context.js'
 import { actorContextFromSocket } from '../auth/auth-socket-context.js'
 import { createCollabGateway } from './collab.gateway.js'
+import { LocalShellRuntime } from './terminal/local-shell-runtime.js'
+import { TerminalSessionManager } from './terminal/terminal-session-manager.js'
 
 const TEST_JWT_SECRET = 'test-jwt-secret'
 process.env.AUTH_JWT_HS256_SECRET = TEST_JWT_SECRET
@@ -19,10 +21,13 @@ process.env.COLLAB_MAX_DOCS_PER_SOCKET = '3'
 process.env.COLLAB_MAX_DOC_UPDATES_PER_SECOND = '4'
 process.env.COLLAB_MAX_DOC_JOINS_PER_10S = '20'
 process.env.COLLAB_SNAPSHOT_INTERVAL_UPDATES = '2'
+process.env.COLLAB_MAX_TERMINAL_INPUTS_PER_SECOND = '20'
+process.env.COLLAB_MAX_TERMINAL_REQUESTS_PER_10S = '50'
 
 type ConnectedPayload = {
   actorType: 'anonymous' | 'token_present' | 'authenticated'
   socketId: string
+  subject?: string
 }
 
 type PresencePayload = {
@@ -65,6 +70,63 @@ type FileCreatedPayload = {
   path: string
   createdAt: string
   updatedAt: string
+}
+
+type FileUpdatedPayload = {
+  id: string
+  projectId: string
+  path: string
+  createdAt: string
+  updatedAt: string
+}
+
+type FileDeletedPayload = {
+  id: string
+  projectId: string
+  path: string
+  deletedAt: string
+}
+
+type TerminalListPayload = {
+  projectId: string
+  terminals: Array<{
+    ownerSubject: string
+    activeControllerSubject: string
+    pendingRequestCount: number
+  }>
+}
+
+type TerminalStatePayload = {
+  projectId: string
+  ownerSubject: string
+  activeControllerSubject: string
+  isSessionOpen: boolean
+  pendingRequests: Array<{
+    requesterSubject: string
+    requestedAt: string
+  }>
+}
+
+type TerminalOutputPayload = {
+  projectId: string
+  ownerSubject: string
+  stream: 'stdout' | 'stderr' | 'system'
+  chunk: string
+  timestamp: string
+}
+
+type TerminalAccessRequestedPayload = {
+  projectId: string
+  ownerSubject: string
+  requesterSubject: string
+  requestedAt: string
+}
+
+type TerminalAccessDecisionPayload = {
+  projectId: string
+  ownerSubject: string
+  requesterSubject: string
+  status: 'approved' | 'rejected' | 'revoked'
 }
 
 function makeTimeoutError(message: string) {
@@ -136,12 +198,50 @@ async function waitForEvent<T>(
   })
 }
 
+async function assertNoEvent<T>(
+  socket: ClientSocket,
+  eventName: string,
+  predicate: (payload: T) => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, timeoutMs)
+
+    const onEvent = (payload: T) => {
+      if (!predicate(payload)) {
+        return
+      }
+
+      cleanup()
+      reject(new Error(`Unexpected ${eventName}`))
+    }
+
+    const onError = (error: unknown) => {
+      cleanup()
+      reject(error instanceof Error ? error : new Error(String(error)))
+    }
+
+    const cleanup = () => {
+      clearTimeout(timeout)
+      socket.off(eventName, onEvent)
+      socket.off('connect_error', onError)
+    }
+
+    socket.on(eventName, onEvent)
+    socket.on('connect_error', onError)
+  })
+}
+
 describe('collab gateway', () => {
   let baseUrl = ''
   let closeServer: (() => Promise<void>) | undefined
   const clients: ClientSocket[] = []
   let persistedUpdateSequence = 0
   let snapshotSaveCount = 0
+  let prewarmCalls: Array<{ projectId: string; ownerSubject: string }> = []
 
   beforeEach(async () => {
     const httpServer = createServer()
@@ -203,6 +303,19 @@ describe('collab gateway', () => {
       return
     }
 
+    const canUseTerminal = async (_actor: ActorContext, projectId: string) => {
+      return projectId !== 'forbidden-project'
+    }
+
+    class SpyTerminalSessionManager extends TerminalSessionManager {
+      override prewarmTerminal(projectId: string, ownerSubject: string): Promise<void> {
+        prewarmCalls.push({ projectId, ownerSubject })
+        return super.prewarmTerminal(projectId, ownerSubject)
+      }
+    }
+
+    const terminalSessionManager = new SpyTerminalSessionManager(() => new LocalShellRuntime())
+
     const io = createCollabGateway(
       httpServer,
       (socket: Socket) => actorContextFromSocket(socket),
@@ -212,6 +325,8 @@ describe('collab gateway', () => {
       loadYjsHistory,
       appendYjsUpdate,
       saveYjsSnapshot,
+      canUseTerminal,
+      terminalSessionManager,
     )
 
     await new Promise<void>((resolve) => {
@@ -270,6 +385,38 @@ describe('collab gateway', () => {
   beforeEach(() => {
     persistedUpdateSequence = 0
     snapshotSaveCount = 0
+    prewarmCalls = []
+  })
+
+  it('prewarms terminal when project is joined', async () => {
+    const projectId = 'project-prewarm'
+    const ownerSubject = 'auth0|prewarm-user'
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-prewarm') },
+    })
+
+    clients.push(client)
+    client.connect()
+
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    const joined = waitForEvent<PresencePayload>(
+      client,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    client.emit('collab:join-project', projectId)
+    await joined
+
+    assert.equal(prewarmCalls.length, 1)
+    assert.deepEqual(prewarmCalls[0], {
+      projectId,
+      ownerSubject,
+    })
   })
 
   it('emits actor type on connect based on resolver', async () => {
@@ -1057,5 +1204,506 @@ describe('collab gateway', () => {
 
     clientB.emit('collab:join-project', projectId)
     await snapshotSeenByB
+  })
+
+  it('broadcasts file updated and deleted events to project room peers', async () => {
+    const projectId = 'project-123'
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-a', 'jwt-file-events-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|socket-user-b', 'jwt-file-events-b') },
+    })
+
+    clients.push(clientA, clientB)
+
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:join-project', projectId)
+    clientB.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(
+        clientA,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+      waitForEvent<PresencePayload>(
+        clientB,
+        'collab:presence',
+        (payload) => payload.type === 'joined' && payload.projectId === projectId,
+      ),
+    ])
+
+    const { emitCollabFileUpdated, emitCollabFileDeleted } = await import('./collab-events.js')
+
+    const updatedSeen = waitForEvent<FileUpdatedPayload>(
+      clientB,
+      'collab:file:updated',
+      (payload) => payload.projectId === projectId && payload.id === 'file-updated-1',
+    )
+
+    emitCollabFileUpdated({
+      id: 'file-updated-1',
+      projectId,
+      path: 'src/updated.ts',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+
+    const updatedPayload = await updatedSeen
+    assert.equal(updatedPayload.path, 'src/updated.ts')
+
+    const deletedSeen = waitForEvent<FileDeletedPayload>(
+      clientB,
+      'collab:file:deleted',
+      (payload) => payload.projectId === projectId && payload.id === 'file-deleted-1',
+    )
+
+    emitCollabFileDeleted({
+      id: 'file-deleted-1',
+      projectId,
+      path: 'src/deleted.ts',
+      deletedAt: new Date().toISOString(),
+    })
+
+    const deletedPayload = await deletedSeen
+    assert.equal(deletedPayload.path, 'src/deleted.ts')
+  })
+
+  it('publishes terminal list for joined project members', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-owner'
+
+    const owner = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-owner') },
+    })
+
+    clients.push(owner)
+
+    owner.connect()
+    await waitForEvent<ConnectedPayload>(owner, 'collab:connected')
+
+    owner.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      owner,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    const terminalList = waitForEvent<TerminalListPayload>(
+      owner,
+      'collab:terminal:list',
+      (payload) => {
+        return payload.projectId === projectId
+          && payload.terminals.some((terminal) => terminal.ownerSubject === ownerSubject)
+      },
+    )
+
+    owner.emit('collab:terminal:list', { projectId })
+
+    const listPayload = await terminalList
+    assert.ok(listPayload.terminals.some((terminal) => terminal.ownerSubject === ownerSubject))
+    assert.equal(listPayload.terminals.find((terminal) => terminal.ownerSubject === ownerSubject)?.activeControllerSubject, ownerSubject)
+  })
+
+  it('blocks terminal list and join when terminal authorization is denied', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-denied-user'
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-denied-user') },
+    })
+
+    clients.push(client)
+
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    client.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      client,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    const denyListError = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      (payload) => payload.message === 'Not authorized for terminal access',
+    )
+
+    client.emit('collab:terminal:list', { projectId: 'forbidden-project' })
+    await denyListError
+
+    const denyJoinError = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      (payload) => payload.message === 'Not authorized for terminal access',
+    )
+
+    client.emit('collab:terminal:join', {
+      projectId: 'forbidden-project',
+      ownerSubject,
+    })
+    await denyJoinError
+  })
+
+  it('blocks terminal input from read-only viewers', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-owner-a'
+
+    const owner = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-owner-a') },
+    })
+    const viewer = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|terminal-viewer-a', 'jwt-terminal-viewer-a') },
+    })
+
+    clients.push(owner, viewer)
+
+    owner.connect()
+    viewer.connect()
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(owner, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(viewer, 'collab:connected'),
+    ])
+
+    owner.emit('collab:join-project', projectId)
+    viewer.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(owner, 'collab:presence', (payload) => payload.projectId === projectId),
+      waitForEvent<PresencePayload>(viewer, 'collab:presence', (payload) => payload.projectId === projectId),
+    ])
+
+    viewer.emit('collab:terminal:join', {
+      projectId,
+      ownerSubject,
+    })
+
+    await waitForEvent<TerminalStatePayload>(
+      viewer,
+      'collab:terminal:state',
+      (payload) => payload.projectId === projectId && payload.ownerSubject === ownerSubject,
+    )
+
+    const errorPayload = waitForEvent<{ message: string }>(
+      viewer,
+      'collab:error',
+      (payload) => payload.message === 'Terminal is read-only for this user',
+    )
+
+    viewer.emit('collab:terminal:input', {
+      projectId,
+      ownerSubject,
+      input: 'echo denied\n',
+    })
+
+    const error = await errorPayload
+    assert.equal(error.message, 'Terminal is read-only for this user')
+  })
+
+  it('allows owner to approve access requests and enables input', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-owner-b'
+    const viewerSubject = 'auth0|terminal-viewer-b'
+
+    const owner = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-owner-b') },
+    })
+    const viewer = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(viewerSubject, 'jwt-terminal-viewer-b') },
+    })
+
+    clients.push(owner, viewer)
+
+    owner.connect()
+    viewer.connect()
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(owner, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(viewer, 'collab:connected'),
+    ])
+
+    owner.emit('collab:join-project', projectId)
+    viewer.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(owner, 'collab:presence', (payload) => payload.projectId === projectId),
+      waitForEvent<PresencePayload>(viewer, 'collab:presence', (payload) => payload.projectId === projectId),
+    ])
+
+    owner.emit('collab:terminal:join', {
+      projectId,
+      ownerSubject,
+    })
+    viewer.emit('collab:terminal:join', {
+      projectId,
+      ownerSubject,
+    })
+
+    await Promise.all([
+      waitForEvent<TerminalStatePayload>(owner, 'collab:terminal:state', (payload) => payload.ownerSubject === ownerSubject),
+      waitForEvent<TerminalStatePayload>(viewer, 'collab:terminal:state', (payload) => payload.ownerSubject === ownerSubject),
+    ])
+
+    const requestSeenByOwner = waitForEvent<TerminalAccessRequestedPayload>(
+      owner,
+      'collab:terminal:access:requested',
+      (payload) => payload.ownerSubject === ownerSubject && payload.requesterSubject === viewerSubject,
+    )
+
+    viewer.emit('collab:terminal:access:request', {
+      projectId,
+      ownerSubject,
+    })
+
+    await requestSeenByOwner
+
+    const decisionSeenByViewer = waitForEvent<TerminalAccessDecisionPayload>(
+      viewer,
+      'collab:terminal:access:decision',
+      (payload) => payload.ownerSubject === ownerSubject && payload.requesterSubject === viewerSubject,
+    )
+
+    owner.emit('collab:terminal:access:decision', {
+      projectId,
+      ownerSubject,
+      requesterSubject: viewerSubject,
+      approve: true,
+    })
+
+    const decisionPayload = await decisionSeenByViewer
+    assert.equal(decisionPayload.status, 'approved')
+
+    const openedStateSeenByViewer = waitForEvent<TerminalStatePayload>(
+      viewer,
+      'collab:terminal:state',
+      (payload) => payload.ownerSubject === ownerSubject && payload.isSessionOpen,
+    )
+
+    viewer.emit('collab:terminal:open', {
+      projectId,
+      ownerSubject,
+      cols: 120,
+      rows: 40,
+    })
+
+    await openedStateSeenByViewer
+
+    const outputSeenByOwner = waitForEvent<TerminalOutputPayload>(
+      owner,
+      'collab:terminal:output',
+      (payload) => payload.ownerSubject === ownerSubject,
+      3000,
+    )
+
+    viewer.emit('collab:terminal:input', {
+      projectId,
+      ownerSubject,
+      input: 'echo test-from-viewer\n',
+    })
+
+    const outputPayload = await outputSeenByOwner
+    assert.equal(outputPayload.ownerSubject, ownerSubject)
+
+    owner.emit('collab:terminal:input', {
+      projectId,
+      ownerSubject,
+      input: 'echo test-from-owner\n',
+    })
+
+    await assertNoEvent<{ message: string }>(
+      owner,
+      'collab:error',
+      (payload) => payload.message === 'Terminal is read-only for this user',
+      600,
+    )
+  })
+
+  it('allows owner to reject terminal access requests', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-owner-c'
+    const viewerSubject = 'auth0|terminal-viewer-c'
+
+    const owner = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-owner-c') },
+    })
+    const viewer = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(viewerSubject, 'jwt-terminal-viewer-c') },
+    })
+
+    clients.push(owner, viewer)
+
+    owner.connect()
+    viewer.connect()
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(owner, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(viewer, 'collab:connected'),
+    ])
+
+    owner.emit('collab:join-project', projectId)
+    viewer.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(owner, 'collab:presence', (payload) => payload.projectId === projectId),
+      waitForEvent<PresencePayload>(viewer, 'collab:presence', (payload) => payload.projectId === projectId),
+    ])
+
+    viewer.emit('collab:terminal:join', {
+      projectId,
+      ownerSubject,
+    })
+
+    await waitForEvent<TerminalStatePayload>(
+      viewer,
+      'collab:terminal:state',
+      (payload) => payload.ownerSubject === ownerSubject,
+    )
+
+    viewer.emit('collab:terminal:access:request', {
+      projectId,
+      ownerSubject,
+    })
+
+    await waitForEvent<TerminalAccessRequestedPayload>(
+      owner,
+      'collab:terminal:access:requested',
+      (payload) => payload.ownerSubject === ownerSubject && payload.requesterSubject === viewerSubject,
+    )
+
+    const decisionSeenByViewer = waitForEvent<TerminalAccessDecisionPayload>(
+      viewer,
+      'collab:terminal:access:decision',
+      (payload) => payload.ownerSubject === ownerSubject && payload.requesterSubject === viewerSubject,
+    )
+
+    owner.emit('collab:terminal:access:decision', {
+      projectId,
+      ownerSubject,
+      requesterSubject: viewerSubject,
+      approve: false,
+    })
+
+    const decisionPayload = await decisionSeenByViewer
+    assert.equal(decisionPayload.status, 'rejected')
+  })
+
+  it('rejects terminal access decision when request is not pending', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-owner-d'
+    const viewerSubject = 'auth0|terminal-viewer-d'
+
+    const owner = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-owner-d') },
+    })
+    const viewer = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(viewerSubject, 'jwt-terminal-viewer-d') },
+    })
+
+    clients.push(owner, viewer)
+
+    owner.connect()
+    viewer.connect()
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(owner, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(viewer, 'collab:connected'),
+    ])
+
+    owner.emit('collab:join-project', projectId)
+    viewer.emit('collab:join-project', projectId)
+
+    await Promise.all([
+      waitForEvent<PresencePayload>(owner, 'collab:presence', (payload) => payload.projectId === projectId),
+      waitForEvent<PresencePayload>(viewer, 'collab:presence', (payload) => payload.projectId === projectId),
+    ])
+
+    owner.emit('collab:terminal:join', {
+      projectId,
+      ownerSubject,
+    })
+
+    await waitForEvent<TerminalStatePayload>(
+      owner,
+      'collab:terminal:state',
+      (payload) => payload.ownerSubject === ownerSubject,
+    )
+
+    const errorPayload = waitForEvent<{ message: string }>(
+      owner,
+      'collab:error',
+      (payload) => payload.message === 'No pending access request',
+    )
+
+    owner.emit('collab:terminal:access:decision', {
+      projectId,
+      ownerSubject,
+      requesterSubject: viewerSubject,
+      approve: true,
+    })
+
+    const error = await errorPayload
+    assert.equal(error.message, 'No pending access request')
+  })
+
+  it('rejects revoke control when owner is not in project room', async () => {
+    const projectId = 'project-123'
+    const ownerSubject = 'auth0|terminal-owner-e'
+
+    const owner = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt(ownerSubject, 'jwt-terminal-owner-e') },
+    })
+
+    clients.push(owner)
+
+    owner.connect()
+    await waitForEvent<ConnectedPayload>(owner, 'collab:connected')
+
+    const errorPayload = waitForEvent<{ message: string }>(
+      owner,
+      'collab:error',
+      (payload) => payload.message === 'Join project first',
+    )
+
+    owner.emit('collab:terminal:control:revoke', {
+      projectId,
+      ownerSubject,
+    })
+
+    const error = await errorPayload
+    assert.equal(error.message, 'Join project first')
   })
 })

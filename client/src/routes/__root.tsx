@@ -10,9 +10,9 @@ import { TanStackDevtools } from '@tanstack/react-devtools'
 import AuthProvider from '../auth/AuthProvider'
 import Footer from '../components/Footer'
 import Header from '../components/Header'
+import { ToastProvider } from '../components/ToastProvider'
 import { THEME_INIT_SCRIPT } from '../lib/theme'
 import { ThemeProvider } from '../theme/ThemeProvider'
-import { ToastProvider } from '../components/ToastProvider'
 
 import TanStackQueryProvider from '../integrations/tanstack-query/root-provider'
 
