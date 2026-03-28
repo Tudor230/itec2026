@@ -26,7 +26,7 @@ import TerminalPane from '../components/workspace/TerminalPane'
 import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
 import BottomDrawers from '../components/workspace/BottomDrawers'
 import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
-import UserInfo from '../components/auth/UserInfo'
+import ProfileButton from '../components/profile/ProfileButton'
 import { useToast } from '../components/ToastProvider'
 import { getWorkspaceShortcut } from '../components/workspace/workspace-shortcuts'
 import WorkspaceAuthOverlay, {
@@ -810,7 +810,7 @@ function WorkspaceWithHostedAuth() {
                   <Bell size={14} />
                 </button>
                 <div className="w-[1px] h-4 bg-[var(--line)]" />
-                <UserInfo 
+                <ProfileButton 
                   onLogout={() => {
                     void logout({ logoutParams: { returnTo: window.location.origin } })
                   }} 
@@ -899,7 +899,7 @@ function WorkspaceWithHostedAuth() {
               disabled={isLeftSidebarCollapsed}
               className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
             >
-              <div className="h-full w-[1px] bg-[var(--line)] transition-all group-hover:w-[3px] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:w-[1px] data-[disabled]:opacity-30" />
+              <div className="h-full w-[0.5px] bg-[color-mix(in_oklab,var(--line)_88%,transparent)] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:opacity-30" />
             </Separator>
 
             {/* Central Editor/Terminal Panel */}
@@ -968,7 +968,7 @@ function WorkspaceWithHostedAuth() {
               disabled={!isRightSidebarOpen}
               className="group relative z-20 flex w-3 shrink-0 cursor-col-resize items-center justify-center bg-transparent outline-none data-[disabled]:w-0 data-[disabled]:cursor-default data-[disabled]:pointer-events-none"
             >
-              <div className="h-full w-[1px] bg-[var(--line)] transition-all group-hover:w-[3px] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:w-[1px] data-[disabled]:opacity-30" />
+              <div className="h-full w-[0.5px] bg-[color-mix(in_oklab,var(--line)_88%,transparent)] group-hover:bg-[var(--lagoon)] group-active:bg-[var(--lagoon-deep)] data-[disabled]:opacity-30" />
             </Separator>
             <Panel
               id="right-sidebar"

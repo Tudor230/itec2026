@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { 
   History, 
   Play, 
@@ -33,18 +32,28 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
   const isDragging = useRef(false)
+  const isOpen = activeTab !== null
 
   const toggleTab = (tab: DrawerTab) => {
-    if (activeTab === tab) {
-      setActiveTab(null)
-      setIsExpanded(false)
-      onClose?.()
-    } else {
-      setActiveTab(tab)
-    }
+    setActiveTab((current) => {
+      if (current === tab) {
+        setIsExpanded(false)
+        onClose?.()
+        return null
+      }
+
+      return tab
+    })
+  }
+
+  const closeDrawer = () => {
+    setActiveTab(null)
+    setIsExpanded(false)
+    onClose?.()
   }
 
   const activeItem = DRAWER_ITEMS.find((item) => item.id === activeTab) ?? null
+  const drawerHeight = isExpanded ? '80vh' : `${height}px`
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -74,7 +83,7 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
 
   return (
     <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-50 flex flex-col justify-end">
-      <div className="relative z-10 mx-4 flex items-end gap-2 pointer-events-auto">
+      <div className="pointer-events-auto relative z-10 flex items-end gap-1.5 pl-5 pr-2">
         {DRAWER_ITEMS.map((item) => {
           const Icon = item.icon
           const isActive = activeTab === item.id
@@ -85,64 +94,58 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
               key={item.id}
               onClick={() => toggleTab(item.id)}
               className={cn(
-                'group relative flex h-[36px] items-center gap-2 rounded-t-xl border border-b-0 px-4 transition-all duration-200',
+                'group relative flex h-8 items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[11px] transition-colors',
                 isActive 
-                  ? 'z-20 h-[42px] border-[var(--line)] bg-[rgba(var(--bg-rgb),0.94)] pb-1 text-[var(--lagoon-deep)] shadow-[0_-8px_22px_rgba(8,22,28,0.2)] backdrop-blur-xl'
-                  : 'z-10 border-transparent bg-transparent text-[var(--sea-ink-soft)] hover:bg-[rgba(var(--bg-rgb),0.42)] hover:text-[var(--sea-ink)]'
+                  ? 'z-30 -mb-px h-9 border-[color-mix(in_oklab,var(--chip-line)_70%,var(--line))] bg-[color-mix(in_oklab,var(--surface-strong)_78%,transparent)] text-[var(--sea-ink)]'
+                  : 'z-10 border-transparent bg-[rgba(var(--chip-bg-rgb),0.08)] text-[var(--sea-ink-soft)] hover:bg-[rgba(var(--chip-bg-rgb),0.28)] hover:text-[var(--sea-ink)]'
               )}
             >
               {isActive ? (
                 <span
                   aria-hidden
-                  className="absolute inset-x-3 top-0 h-[2px] rounded-full bg-[linear-gradient(90deg,var(--lagoon),var(--lagoon-deep))]"
+                  className="absolute inset-x-2 top-0 h-[1px] rounded-full bg-[var(--lagoon)]"
                 />
               ) : null}
 
-              <Icon size={14} className={cn("transition-transform", isActive ? "scale-110" : "group-hover:scale-110")} />
+              <span
+                className={cn(
+                  'grid h-4 w-4 shrink-0 place-items-center rounded-sm',
+                  isActive
+                    ? 'text-[var(--lagoon-deep)]'
+                    : 'text-[var(--sea-ink-soft)]'
+                )}
+              >
+                <Icon size={12} />
+              </span>
               
-              <div className="relative flex items-center h-full">
-                <span className={cn(
-                  'text-[10px] font-bold uppercase tracking-widest',
-                  isActive ? "" : "invisible" 
-                )}>
+              <div className="min-w-0 text-left">
+                <span className="block truncate text-[10px] font-bold uppercase tracking-[0.1em]">
                   {item.label}
                 </span>
-                
-                {!isActive && (
-                  <span className="text-[10px] font-bold uppercase tracking-widest absolute left-0 whitespace-nowrap opacity-70 group-hover:opacity-100 transition-opacity">
-                    {item.label}
-                  </span>
-                )}
               </div>
             </button>
           )
         })}
       </div>
 
-      <AnimatePresence mode="wait">
-        {activeTab && (
-          <motion.div
-            key={activeTab}
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: isExpanded ? '80vh' : height, opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className={cn(
-              'relative z-0 mx-4 mb-4 flex flex-col overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.95)] pointer-events-auto backdrop-blur-xl',
-              'shadow-[0_26px_44px_rgba(8,22,28,0.28)]'
-            )}
-          >
+      {isOpen ? (
+        <div
+          style={{ height: drawerHeight }}
+          className={cn(
+            'relative z-0 mx-0 mb-0 flex flex-col overflow-hidden rounded-t-xl rounded-b-none border-x border-t border-b-0 border-[var(--line)] bg-[color-mix(in_oklab,var(--surface)_88%,var(--bg-base))] pointer-events-auto backdrop-blur-md'
+          )}
+        >
             <div 
-              className="group flex h-3 w-full cursor-ns-resize items-center justify-center border-b border-[var(--line)] transition-colors hover:bg-[rgba(255,255,255,0.05)]"
+              className="group flex h-3 w-full cursor-ns-resize items-center justify-center border-b border-[var(--line)]"
               onMouseDown={() => {
                 isDragging.current = true
                 document.body.style.cursor = 'ns-resize'
               }}
             >
-              <div className="w-12 h-1 bg-[var(--line)] group-hover:bg-[var(--lagoon)] rounded-full transition-colors" />
+              <div className="h-[0.5px] w-16 rounded-full bg-[var(--line)] group-hover:bg-[var(--lagoon-deep)]" />
             </div>
 
-            <div className="relative z-10 flex items-center justify-between border-b border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.34)] px-4 py-2.5">
+            <div className="relative z-10 flex items-center justify-between border-b border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.22)] px-4 py-2">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.62)] text-[var(--lagoon-deep)]">
                   {activeItem ? <activeItem.icon size={15} /> : <Sparkles size={15} />}
@@ -174,9 +177,7 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab(null)
-                    setIsExpanded(false)
-                    onClose?.()
+                    closeDrawer()
                   }}
                   className="rounded-md p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
                   title="Close panel"
@@ -186,7 +187,7 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
               </div>
             </div>
 
-            <div className="mt-2 flex-1 overflow-y-auto p-4">
+            <div key={activeTab} className="mt-2 flex-1 overflow-y-auto p-4">
               {activeTab === 'timeline' && (
                 <div className="space-y-3">
                   {[
@@ -289,9 +290,8 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
                 </div>
               )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        </div>
+      ) : null}
     </div>
   )
 }

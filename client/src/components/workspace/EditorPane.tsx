@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Check, X, Pencil, GripVertical, Sparkles, Command, FileCode2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useToast } from '../ToastProvider'
+import { useThemePreset } from '../../theme/ThemeProvider'
+import { defineMonacoThemes, getMonacoThemeForPreset } from '../../lib/workspace-monaco-theme'
 
 interface EditorPaneProps {
   file: FileDto | null
@@ -37,6 +39,8 @@ export default function EditorPane({
 }: EditorPaneProps) {
   const [showAiBlock, setShowAiBlock] = useState(false)
   const { success } = useToast()
+  const { preset } = useThemePreset()
+  const monacoTheme = getMonacoThemeForPreset(preset)
   
   const language = useMemo(() => {
     if (!file) return 'plaintext'
@@ -132,6 +136,10 @@ export default function EditorPane({
                 onMount={(editor) => {
                   onEditorMount?.(editor)
                 }}
+                beforeMount={(monaco) => {
+                  defineMonacoThemes(monaco)
+                }}
+                theme={monacoTheme}
                 options={{
                   automaticLayout: true,
                   minimap: { enabled: true },
