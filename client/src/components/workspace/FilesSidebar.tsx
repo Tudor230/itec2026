@@ -1,4 +1,4 @@
-import { FileText, Folder, FolderOpen, Search, Plus } from 'lucide-react'
+import { FileText, Folder, FolderOpen, FolderPlus, Plus, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { FileDto } from '../../services/projects-api'
 import { buildFileTree, filterFileTree, type FileTreeNode } from './files-tree'
@@ -6,12 +6,14 @@ import { cn } from '../../lib/utils'
 
 interface FilesSidebarProps {
   files: FileDto[]
+  virtualFolders?: string[]
   activeFileId: string | null
   dirtyFileIds?: string[]
   isLoading: boolean
   errorMessage: string | null
   onOpenFile: (fileId: string) => void
-  onCreateFile: (path: string) => void
+  onCreateFile: (path: string, type: 'file' | 'folder') => Promise<void> | void
+  onClose?: () => void
 }
 
 function isValidFilePath(path: string): boolean {
@@ -35,28 +37,112 @@ function isValidFilePath(path: string): boolean {
   return true
 }
 
+function toJoinedPath(basePath: string, name: string) {
+  if (!basePath) {
+    return name
+  }
+
+  if (!name) {
+    return `${basePath}/`
+  }
+
+  return `${basePath}/${name}`
+}
+
+function getInitialCreatePath(
+  createType: 'file' | 'folder',
+  activeFileId: string | null,
+  files: FileDto[],
+  tree: FileTreeNode | null,
+) {
+  if (activeFileId) {
+    const activeFile = files.find((candidate) => candidate.id === activeFileId)
+    if (activeFile) {
+      const segments = activeFile.path.split('/')
+      const parentPath = segments.slice(0, -1).join('/')
+      return toJoinedPath(parentPath, createType === 'file' ? '' : 'new-folder')
+    }
+  }
+
+  const firstFolder = tree?.children.find((child) => child.type === 'folder')
+  if (firstFolder) {
+    return toJoinedPath(firstFolder.path, createType === 'file' ? '' : 'new-folder')
+  }
+
+  return createType === 'file' ? '' : 'new-folder'
+}
+
+function getParentPath(path: string) {
+  const normalized = path.endsWith('/') ? path.slice(0, -1) : path
+  if (!normalized) {
+    return ''
+  }
+
+  const parts = normalized.split('/')
+  if (parts.length <= 1) {
+    return ''
+  }
+
+  return parts.slice(0, -1).join('/')
+}
+
+function getLeafName(path: string) {
+  const normalized = path.endsWith('/') ? path.slice(0, -1) : path
+  if (!normalized) {
+    return ''
+  }
+
+  const parts = normalized.split('/')
+  return parts[parts.length - 1] ?? ''
+}
+
 function NodeRow({
   node,
   depth,
   activeFileId,
   dirtyFileIds,
+  pendingCreatePath,
+  pendingCreateType,
+  selectedFolderPath,
   onOpenFile,
+  onSelectFolder,
+  onStartCreate,
+  onPendingPathChange,
+  onConfirmCreate,
+  onCancelCreate,
 }: {
   node: FileTreeNode
   depth: number
   activeFileId: string | null
   dirtyFileIds: Set<string>
+  pendingCreatePath: string | null
+  pendingCreateType: 'file' | 'folder' | null
+  selectedFolderPath: string | null
   onOpenFile: (fileId: string) => void
+  onSelectFolder: (folderPath: string | null) => void
+  onStartCreate: (type: 'file' | 'folder', basePath: string) => void
+  onPendingPathChange: (nextPath: string) => void
+  onConfirmCreate: () => void
+  onCancelCreate: () => void
 }) {
   const [isOpen, setIsOpen] = useState(true)
   const isFile = node.type === 'file'
   const isActive = isFile && node.fileId === activeFileId
+  const isSelectedFolder = !isFile && selectedFolderPath === node.path
   const isDirty = isFile && !!node.fileId && dirtyFileIds.has(node.fileId)
+  const pendingParentPath = pendingCreatePath
+    ? pendingCreatePath
+        .split('/')
+        .slice(0, -1)
+        .join('/')
+    : null
   const iconColor = isFile
     ? isActive
       ? 'text-[var(--lagoon-deep)]'
       : 'text-[var(--sea-ink-soft)]'
     : 'text-[color-mix(in_oklab,var(--palm)_62%,var(--sea-ink)_38%)]'
+
+  const renderInlineCreate = !isFile && isOpen && pendingParentPath === node.path
 
   return (
     <div className="relative">
@@ -68,20 +154,41 @@ function NodeRow({
         />
       ) : null}
 
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => {
           if (isFile && node.fileId) {
+            onSelectFolder(null)
             onOpenFile(node.fileId)
             return
           }
 
+          onSelectFolder(node.path)
+          setIsOpen((current) => !current)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') {
+            return
+          }
+
+          event.preventDefault()
+
+          if (isFile && node.fileId) {
+            onSelectFolder(null)
+            onOpenFile(node.fileId)
+            return
+          }
+
+          onSelectFolder(node.path)
           setIsOpen((current) => !current)
         }}
         className={cn(
           'group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-all',
           isActive
             ? 'bg-[color-mix(in_oklab,var(--chip-bg)_62%,rgba(var(--lagoon-rgb),0.28)_38%)] text-[var(--sea-ink)] shadow-[0_6px_16px_rgba(8,22,28,0.14)]'
+            : isSelectedFolder
+              ? 'bg-[rgba(var(--lagoon-rgb),0.16)] text-[var(--sea-ink)]'
             : 'text-[var(--sea-ink-soft)] hover:bg-[color-mix(in_oklab,var(--chip-bg)_66%,rgba(var(--lagoon-rgb),0.16)_34%)] hover:text-[var(--sea-ink)]'
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
@@ -105,7 +212,44 @@ function NodeRow({
             *
           </span>
         ) : null}
-      </button>
+
+        {!isFile ? (
+          <span className="ml-auto inline-flex w-9 shrink-0 items-center justify-end gap-0.5">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                setIsOpen(true)
+                onStartCreate('file', node.path)
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation()
+              }}
+              className="grid h-4 w-4 place-items-center text-[var(--sea-ink-soft)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-[var(--sea-ink)]"
+              title="New file in folder"
+              aria-label="New file in folder"
+            >
+              <Plus size={10} />
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                setIsOpen(true)
+                onStartCreate('folder', node.path)
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation()
+              }}
+              className="grid h-4 w-4 place-items-center text-[var(--sea-ink-soft)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-[var(--sea-ink)]"
+              title="New folder in folder"
+              aria-label="New folder in folder"
+            >
+              <FolderPlus size={10} />
+            </button>
+          </span>
+        ) : null}
+      </div>
 
       {!isFile && isOpen
         ? node.children.map((child) => (
@@ -115,46 +259,121 @@ function NodeRow({
               depth={depth + 1}
               activeFileId={activeFileId}
               dirtyFileIds={dirtyFileIds}
+              pendingCreatePath={pendingCreatePath}
+              pendingCreateType={pendingCreateType}
+              selectedFolderPath={selectedFolderPath}
               onOpenFile={onOpenFile}
+              onSelectFolder={onSelectFolder}
+              onStartCreate={onStartCreate}
+              onPendingPathChange={onPendingPathChange}
+              onConfirmCreate={onConfirmCreate}
+              onCancelCreate={onCancelCreate}
             />
           ))
         : null}
+
+      {renderInlineCreate ? (
+        <div style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }} className="mt-1">
+          <label className="flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
+            {pendingCreateType === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
+            <input
+              autoFocus
+              value={pendingCreatePath.split('/').pop() ?? ''}
+              onChange={(event) => {
+                const currentName = pendingCreatePath.split('/').pop() ?? ''
+                const parentPath = pendingCreatePath.endsWith(`/${currentName}`)
+                  ? pendingCreatePath.slice(0, Math.max(0, pendingCreatePath.length - currentName.length - 1))
+                  : ''
+                const nextName = event.target.value
+                onPendingPathChange(parentPath ? `${parentPath}/${nextName}` : nextName)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  onConfirmCreate()
+                }
+
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  onCancelCreate()
+                }
+              }}
+              className="w-full bg-transparent text-xs font-semibold text-[var(--sea-ink)] outline-none"
+            />
+          </label>
+        </div>
+      ) : null}
     </div>
   )
 }
 
 export default function FilesSidebar({
   files,
+  virtualFolders,
   activeFileId,
   dirtyFileIds,
   isLoading,
   errorMessage,
   onOpenFile,
   onCreateFile,
+  onClose,
 }: FilesSidebarProps) {
   const [query, setQuery] = useState('')
   const dirtyIds = useMemo(() => new Set(dirtyFileIds ?? []), [dirtyFileIds])
+  const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null)
+  const [pendingCreatePath, setPendingCreatePath] = useState<string | null>(null)
+  const [pendingCreateType, setPendingCreateType] = useState<'file' | 'folder' | null>(null)
+  const [inlineError, setInlineError] = useState<string | null>(null)
+  const [isCreatePending, setIsCreatePending] = useState(false)
+
+  const tree = useMemo(() => buildFileTree(files, virtualFolders), [files, virtualFolders])
 
   const filteredTree = useMemo(() => {
-    const fullTree = buildFileTree(files)
-    return filterFileTree(fullTree, query)
-  }, [files, query])
+    return filterFileTree(tree, query)
+  }, [tree, query])
 
-  const folderCount = useMemo(() => {
-    const uniqueFolders = new Set<string>()
+  const handleStartCreate = (type: 'file' | 'folder', basePath: string) => {
+    const defaultName = type === 'file' ? '' : 'new-folder'
+    const nextPath = toJoinedPath(basePath, defaultName)
+    setSelectedFolderPath(basePath)
+    setPendingCreateType(type)
+    setPendingCreatePath(nextPath)
+    setInlineError(null)
+  }
 
-    for (const file of files) {
-      const segments = file.path.split('/')
-      let currentPath = ''
+  const handleTopLevelCreate = (type: 'file' | 'folder') => {
+    const initialPath = getInitialCreatePath(type, activeFileId, files, tree)
+    setSelectedFolderPath(null)
+    setPendingCreateType(type)
+    setPendingCreatePath(initialPath)
+    setInlineError(null)
+  }
 
-      for (let index = 0; index < segments.length - 1; index += 1) {
-        currentPath = currentPath ? `${currentPath}/${segments[index]}` : segments[index]
-        uniqueFolders.add(currentPath)
-      }
+  const shouldShowRootInlineCreate = pendingCreatePath !== null && !pendingCreatePath.includes('/')
+
+  const handleConfirmCreate = async () => {
+    if (pendingCreatePath === null || !pendingCreateType || isCreatePending) {
+      return
     }
 
-    return uniqueFolders.size
-  }, [files])
+    const nextPath = pendingCreatePath.trim()
+
+    if (!isValidFilePath(nextPath)) {
+      setInlineError('Please provide a valid relative path.')
+      return
+    }
+
+    setIsCreatePending(true)
+
+    try {
+      await onCreateFile(nextPath, pendingCreateType)
+      setPendingCreatePath(null)
+      setPendingCreateType(null)
+      setInlineError(null)
+    } finally {
+      setIsCreatePending(false)
+    }
+  }
 
   return (
     <aside className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))]">
@@ -167,34 +386,36 @@ export default function FilesSidebar({
           <p className="m-0 text-xs font-semibold tracking-[0.14em] text-[var(--kicker)] uppercase">
             Files
           </p>
-          <button
-            type="button"
-            onClick={() => {
-              const raw = window.prompt('New file path (example: src/main.ts)')
-              const nextPath = raw?.trim() ?? ''
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => handleTopLevelCreate('file')}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
+              title="New file"
+            >
+              <FileText size={12} />
+            </button>
 
-              if (!nextPath) {
-                return
-              }
+            <button
+              type="button"
+              onClick={() => handleTopLevelCreate('folder')}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
+              title="New folder"
+            >
+              <Folder size={12} />
+            </button>
 
-              if (!isValidFilePath(nextPath)) {
-                window.alert('Please provide a valid relative file path (example: src/main.ts).')
-                return
-              }
-
-              onCreateFile(nextPath)
-            }}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1 text-xs font-semibold text-[var(--sea-ink)] transition-all hover:border-[color-mix(in_oklab,var(--lagoon-deep)_42%,var(--chip-line))] hover:bg-[color-mix(in_oklab,var(--chip-bg)_70%,rgba(var(--lagoon-rgb),0.18)_30%)]"
-          >
-            <Plus size={12} />
-            New
-          </button>
-        </div>
-
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          <span className="workspace-hud-chip">{files.length} files</span>
-          <span className="workspace-hud-chip">{folderCount} folders</span>
-          <span className="workspace-hud-chip">{dirtyIds.size} dirty</span>
+            {onClose ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
+                title="Close files panel"
+              >
+                <X size={13} />
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <label className="flex items-center gap-2 rounded-lg border border-[var(--chip-line)] bg-[color-mix(in_oklab,var(--chip-bg)_86%,transparent)] px-2 py-2 text-xs text-[var(--sea-ink-soft)] shadow-[0_1px_0_rgba(255,255,255,0.45)_inset]">
@@ -224,6 +445,35 @@ export default function FilesSidebar({
           </p>
         ) : null}
 
+        {shouldShowRootInlineCreate ? (
+          <div className="mb-2 px-2">
+            <label className="mt-2 flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
+              {pendingCreateType === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
+              <input
+                autoFocus
+                value={pendingCreatePath?.split('/').pop() ?? ''}
+                disabled={isCreatePending}
+                onChange={(event) => setPendingCreatePath(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    handleConfirmCreate()
+                  }
+
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    setPendingCreatePath(null)
+                    setPendingCreateType(null)
+                    setInlineError(null)
+                    setIsCreatePending(false)
+                  }
+                }}
+                className="w-full bg-transparent text-xs font-semibold text-[var(--sea-ink)] outline-none"
+              />
+            </label>
+          </div>
+        ) : null}
+
         {!isLoading && !errorMessage && filteredTree
           ? filteredTree.children.map((child) => (
               <NodeRow
@@ -232,13 +482,61 @@ export default function FilesSidebar({
                 depth={0}
                 activeFileId={activeFileId}
                 dirtyFileIds={dirtyIds}
+                pendingCreatePath={pendingCreatePath}
+                pendingCreateType={pendingCreateType}
+                selectedFolderPath={selectedFolderPath}
                 onOpenFile={onOpenFile}
+                onSelectFolder={setSelectedFolderPath}
+                onStartCreate={handleStartCreate}
+                onPendingPathChange={setPendingCreatePath}
+                onConfirmCreate={handleConfirmCreate}
+                onCancelCreate={() => {
+                  setPendingCreatePath(null)
+                  setPendingCreateType(null)
+                  setInlineError(null)
+                  setIsCreatePending(false)
+                }}
               />
             ))
           : null}
 
         {!isLoading && !errorMessage && filteredTree && filteredTree.children.length === 0 ? (
           <p className="px-2 text-sm text-[var(--sea-ink-soft)]">No files match your filter.</p>
+        ) : null}
+
+        {pendingCreatePath && filteredTree?.children.length === 0 && !shouldShowRootInlineCreate ? (
+          <div className="px-2">
+            <label className="mt-2 flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
+              {pendingCreateType === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
+              <input
+                autoFocus
+                value={pendingCreatePath}
+                disabled={isCreatePending}
+                onChange={(event) => setPendingCreatePath(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    handleConfirmCreate()
+                  }
+
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    setPendingCreatePath(null)
+                    setPendingCreateType(null)
+                    setInlineError(null)
+                    setIsCreatePending(false)
+                  }
+                }}
+                className="w-full bg-transparent text-xs font-semibold text-[var(--sea-ink)] outline-none"
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {inlineError ? (
+          <p className="mx-2 mt-2 rounded-md border border-[rgba(195,76,76,0.32)] bg-[rgba(195,76,76,0.12)] px-2 py-1 text-xs font-semibold text-[var(--sea-ink)]">
+            {inlineError}
+          </p>
         ) : null}
       </div>
     </aside>

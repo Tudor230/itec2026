@@ -1,11 +1,8 @@
 import MonacoEditor from '@monaco-editor/react'
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { FileDto } from '../../services/projects-api'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Check, X, Pencil, GripVertical, Sparkles, Command, FileCode2 } from 'lucide-react'
-import { cn } from '../../lib/utils'
-import { useToast } from '../ToastProvider'
+import { Sparkles, FileCode2 } from 'lucide-react'
 import { useThemePreset } from '../../theme/ThemeProvider'
 import { defineMonacoThemes, getMonacoThemeForPreset } from '../../lib/workspace-monaco-theme'
 
@@ -13,8 +10,6 @@ interface EditorPaneProps {
   file: FileDto | null
   initialValue: string
   isDirty: boolean
-  canSave?: boolean
-  isSaving: boolean
   saveError: string | null
   collabState?: {
     connectionState: 'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
@@ -22,23 +17,17 @@ interface EditorPaneProps {
   }
   onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor) => void
   onChange: (nextValue: string) => void
-  onSave: () => void
 }
 
 export default function EditorPane({
   file,
   initialValue,
   isDirty,
-  canSave,
-  isSaving,
   saveError,
   collabState,
   onEditorMount,
   onChange,
-  onSave,
 }: EditorPaneProps) {
-  const [showAiBlock, setShowAiBlock] = useState(false)
-  const { success } = useToast()
   const { preset } = useThemePreset()
   const monacoTheme = getMonacoThemeForPreset(preset)
   
@@ -55,13 +44,7 @@ export default function EditorPane({
     return mapping[extension] ?? 'plaintext'
   }, [file])
 
-  const title = file ? file.path : 'No file selected'
   const extension = file?.path.split('.').pop()?.toUpperCase() ?? 'TXT'
-
-  const handleAcceptAi = () => {
-    setShowAiBlock(false)
-    success('AI suggestion applied')
-  }
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col relative">
@@ -72,45 +55,19 @@ export default function EditorPane({
         />
 
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 flex flex-col">
-            <p className="m-0 truncate text-xs font-extrabold tracking-[0.02em] text-[var(--sea-ink)]">{title}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <span className="workspace-hud-chip">
-                <FileCode2 size={11} /> {extension}
-              </span>
-            </div>
-
-          {file && (
-            <p className="m-0 text-[10px] text-[var(--sea-ink-soft)] font-medium">
+        {file ? (
+          <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+            <span className="workspace-hud-chip">
               {isDirty ? 'Unsaved changes' : 'Saved'}
-              {collabState && collabState.connectionState !== 'idle' ? ` • Live: ${collabState.connectionState}` : ''}
-            </p>
-          )}
+            </span>
+            {collabState && collabState.connectionState !== 'idle' ? (
+              <span className="workspace-hud-chip">Live: {collabState.connectionState}</span>
+            ) : null}
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowAiBlock(!showAiBlock)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold transition-all',
-                showAiBlock
-                  ? 'border-[var(--lagoon)] bg-[var(--lagoon)] text-white shadow-[0_8px_18px_rgba(var(--lagoon-rgb),0.38)]'
-                  : 'border-[rgba(var(--lagoon-rgb),0.3)] bg-[rgba(var(--lagoon-rgb),0.12)] text-[var(--lagoon-deep)] hover:bg-[rgba(var(--lagoon-rgb),0.22)]'
-              )}
-            >
-              <Sparkles size={12} />
-              <span>AI Suggest</span>
-            </button>
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={!file || !(canSave ?? isDirty) || isSaving}
-              className="rounded-full border border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--line))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--sea-ink)_84%,black_16%),var(--sea-ink))] px-4 py-1 text-[10px] font-bold text-white shadow-[0_8px_16px_rgba(9,23,30,0.22)] transition-all disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-        </div>
+        ) : (
+          <p className="m-0 text-xs font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">No file opened</p>
+        )}
+      </div>
       </div>
 
       {saveError ? (
@@ -163,74 +120,7 @@ export default function EditorPane({
                   cursorSmoothCaretAnimation: 'on',
                 }}
               />
-
-              <div className="pointer-events-none absolute bottom-3 left-3 z-10 hidden items-center gap-2 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.74)] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)] md:inline-flex">
-                <Command size={10} />
-                <span>Ctrl+S save</span>
-              </div>
             </div>
-
-            {/* AI Suggestion Block (Mockup) */}
-            <AnimatePresence>
-              {showAiBlock && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 20 }}
-                  className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-[90%] max-w-xl"
-                >
-                  <div className="flex flex-col overflow-hidden rounded-xl border border-[rgba(var(--lagoon-rgb),0.46)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_84%,transparent),color-mix(in_oklab,var(--surface)_70%,transparent))] shadow-[0_26px_50px_rgba(8,24,29,0.28)] backdrop-blur-2xl">
-                    <div className="flex items-center justify-between border-b border-[rgba(var(--lagoon-rgb),0.2)] bg-[rgba(var(--lagoon-rgb),0.08)] px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <div className="p-1 bg-[var(--lagoon)] rounded text-white">
-                          <Sparkles size={10} />
-                        </div>
-                        <span className="text-[10px] font-bold text-[var(--sea-ink)]">AI REFACTORING SUGGESTION</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button className="p-1 text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]" title="Modify">
-                          <Pencil size={12} />
-                        </button>
-                        <button className="p-1 text-[var(--sea-ink-soft)] cursor-grab" title="Move">
-                          <GripVertical size={12} />
-                        </button>
-                      </div>
-                    </div>
-                    
-                    <div className="border-l-4 border-[var(--lagoon)] bg-[rgba(var(--lagoon-rgb),0.04)] p-4">
-                      <pre className="text-[11px] font-mono text-[var(--sea-ink)] leading-relaxed">
-{`// Refactored to use async/await for better readability
-async function fetchData() {
-  try {
-    const response = await fetch(API_URL);
-    return await response.json();
-  } catch (error) {
-    console.error('Failed to fetch:', error);
-  }
-}`}
-                      </pre>
-                    </div>
-
-                    <div className="flex items-center border-t border-[var(--line)]">
-                      <button 
-                        onClick={handleAcceptAi}
-                        className="flex flex-1 items-center justify-center gap-2 border-r border-[var(--line)] py-2 text-[11px] font-bold text-green-600 transition-colors hover:bg-green-50"
-                      >
-                        <Check size={14} />
-                        ACCEPT
-                      </button>
-                      <button 
-                        onClick={() => setShowAiBlock(false)}
-                        className="flex flex-1 items-center justify-center gap-2 py-2 text-[11px] font-bold text-red-600 transition-colors hover:bg-red-50"
-                      >
-                        <X size={14} />
-                        DECLINE
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         ) : (
           <div className="grid h-full place-items-center bg-[rgba(var(--bg-rgb),0.2)] p-6 text-center">
@@ -239,9 +129,9 @@ async function fetchData() {
                 <Sparkles size={32} />
               </div>
               <div>
-                <h2 className="text-lg font-extrabold text-[var(--sea-ink)]">Welcome to your Workspace</h2>
+                <h2 className="text-lg font-extrabold text-[var(--sea-ink)]">No open files</h2>
                 <p className="mt-2 text-sm text-[var(--sea-ink-soft)] font-medium">
-                  Select a file from the explorer to start your collaborative journey. 
+                  Open a file from the explorer or Quick Open to start editing.
                   Press <kbd className="px-1.5 py-0.5 bg-[var(--line)] rounded text-xs font-mono font-bold italic">Ctrl+P</kbd> for quick search.
                 </p>
               </div>

@@ -45,6 +45,39 @@ function insertPath(root: FileTreeNode, file: FileDto) {
   }
 }
 
+function insertFolderPath(root: FileTreeNode, folderPath: string) {
+  const segments = folderPath.split('/').filter((segment) => segment.trim().length > 0)
+
+  if (segments.length === 0) {
+    return
+  }
+
+  let cursor = root
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]
+    const nodePath = segments.slice(0, index + 1).join('/')
+
+    let next = cursor.children.find((candidate) => {
+      return candidate.name === segment && candidate.type === 'folder'
+    })
+
+    if (!next) {
+      next = {
+        id: `folder:${nodePath}`,
+        name: segment,
+        path: nodePath,
+        type: 'folder',
+        children: [],
+      }
+
+      cursor.children = [...cursor.children, next]
+    }
+
+    cursor = next
+  }
+}
+
 function sortTree(node: FileTreeNode): FileTreeNode {
   const sortedChildren = [...node.children]
     .map((child) => sortTree(child))
@@ -62,7 +95,7 @@ function sortTree(node: FileTreeNode): FileTreeNode {
   }
 }
 
-export function buildFileTree(files: FileDto[]): FileTreeNode {
+export function buildFileTree(files: FileDto[], virtualFolders: string[] = []): FileTreeNode {
   const root: FileTreeNode = {
     id: 'root',
     name: 'root',
@@ -73,6 +106,10 @@ export function buildFileTree(files: FileDto[]): FileTreeNode {
 
   files.forEach((file) => {
     insertPath(root, file)
+  })
+
+  virtualFolders.forEach((folderPath) => {
+    insertFolderPath(root, folderPath)
   })
 
   return sortTree(root)

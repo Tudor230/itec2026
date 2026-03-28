@@ -796,6 +796,15 @@ a {
   color: var(--sea-ink);
 }
 
+.workspace-edge-toggle-closed {
+  border-color: color-mix(in oklab, var(--line) 46%, var(--lagoon-deep) 54%);
+  background: color-mix(in oklab, var(--surface-strong) 95%, var(--bg-base) 5%);
+  color: var(--sea-ink);
+  box-shadow:
+    0 1px 0 color-mix(in oklab, var(--inset-glint) 88%, transparent) inset,
+    0 10px 22px rgba(7, 20, 26, 0.2);
+}
+
 .workspace-fullscreen-shell {
   width: 100vw;
   height: 100dvh;

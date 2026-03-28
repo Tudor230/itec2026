@@ -24,7 +24,7 @@ import EditorPane from '../components/workspace/EditorPane'
 import QuickOpenModal from '../components/workspace/QuickOpenModal'
 import TerminalPane from '../components/workspace/TerminalPane'
 import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
-import BottomDrawers from '../components/workspace/BottomDrawers'
+import BottomDrawers, { type DrawerTab } from '../components/workspace/BottomDrawers'
 import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
 import ProfileButton from '../components/profile/ProfileButton'
 import { useToast } from '../components/ToastProvider'
@@ -68,13 +68,13 @@ const SIDEBAR_LAYOUT = {
   collapseThresholdPercent: 1,
   expandThresholdPercent: 2,
   left: {
-    defaultSize: '24%',
-    minSize: '18%',
+    defaultSize: '16%',
+    minSize: '16%',
     maxSize: '38%',
   },
   right: {
-    defaultSize: '24%',
-    minSize: '18%',
+    defaultSize: '16%',
+    minSize: '16%',
     maxSize: '40%',
   },
 }
@@ -110,7 +110,7 @@ function WorkspaceWithHostedAuth() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false)
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true)
   const [rightSidebarTab, setRightSidebarTab] = useState<SidebarTab>('ai')
   const [centerView, setCenterView] = useState<'editor' | 'terminal'>('editor')
   const [isQuickOpenVisible, setIsQuickOpenVisible] = useState(false)
@@ -118,11 +118,12 @@ function WorkspaceWithHostedAuth() {
   const [authTab, setAuthTab] = useState<AuthTab>('login')
   const [authActionPending, setAuthActionPending] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
+  const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
+  const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
   const autosaveTimeoutRef = useRef<number | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
-  const lastLeftSizeRef = useRef<string>(SIDEBAR_LAYOUT.left.defaultSize)
-  const lastRightSizeRef = useRef<string>(SIDEBAR_LAYOUT.right.defaultSize)
 
   const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
 
@@ -293,7 +294,6 @@ function WorkspaceWithHostedAuth() {
       setSaveError(null)
       upsertFileInCache(updated)
       markSaved(updated.projectId, updated.id)
-      success(`Saved ${updated.path.split('/').pop()}`)
       setDraftsByFileId((previous) => {
         const latestDraft = previous[updated.id]
         if (latestDraft !== undefined && latestDraft !== updated.content) {
@@ -374,14 +374,14 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
-
   const { collabState, onEditorMount, markSaved } = useCollabDoc({
     projectId: activeProjectId,
     fileId: activeFileId,
     onFileCreated: onCollabFileCreated,
     onDirtyStateChanged: onCollabDirtyStateChanged,
   })
+
+  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
 
   const dirtyFileIds = files
     .filter((file) => {
@@ -391,8 +391,7 @@ function WorkspaceWithHostedAuth() {
     })
     .map((file) => file.id)
   const dirtyFileCount = dirtyFileIds.length
-  const totalFileCount = files.length
-  const openFileCount = openTabs.length
+  const virtualFolders = activeProjectId ? (virtualFoldersByProjectId[activeProjectId] ?? []) : []
 
   useMutation({
     mutationFn: async (projectId: string) => {
@@ -452,6 +451,7 @@ function WorkspaceWithHostedAuth() {
   useEffect(() => {
     setActiveFileId(null)
     setOpenFileIds([])
+    setHasClosedAllTabs(false)
     setDraftsByFileId({})
     setCollabDirtyByFileId({})
     setSaveError(null)
@@ -476,6 +476,10 @@ function WorkspaceWithHostedAuth() {
     }
 
     if (!activeFileId) {
+      if (hasClosedAllTabs) {
+        return
+      }
+
       const firstFileId = filesQuery.data[0].id
       setActiveFileId(firstFileId)
       setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
@@ -488,7 +492,7 @@ function WorkspaceWithHostedAuth() {
       setActiveFileId(firstFileId)
       setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
     }
-  }, [activeFileId, filesQuery.data, isAuthenticated])
+  }, [activeFileId, filesQuery.data, hasClosedAllTabs, isAuthenticated])
 
   useEffect(() => {
     if (!filesQuery.data) {
@@ -578,7 +582,6 @@ function WorkspaceWithHostedAuth() {
 
     const leftSize = leftPanel.getSize().asPercentage
     if (leftSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
-      lastLeftSizeRef.current = `${leftSize}%`
       leftPanel.resize(0)
     }
   }, [isLeftSidebarCollapsed, leftPanelRef])
@@ -596,7 +599,7 @@ function WorkspaceWithHostedAuth() {
 
     const leftSize = leftPanel.getSize().asPercentage
     if (leftSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
-      leftPanel.resize(lastLeftSizeRef.current)
+      leftPanel.resize(SIDEBAR_LAYOUT.left.minSize)
     }
   }, [isLeftSidebarCollapsed, leftPanelRef])
 
@@ -610,7 +613,6 @@ function WorkspaceWithHostedAuth() {
     if (!isRightSidebarOpen) {
       const rightSize = rightPanel.getSize().asPercentage
       if (rightSize > SIDEBAR_LAYOUT.collapseThresholdPercent) {
-        lastRightSizeRef.current = `${rightSize}%`
         rightPanel.resize(0)
       }
       return
@@ -618,11 +620,12 @@ function WorkspaceWithHostedAuth() {
 
     const rightSize = rightPanel.getSize().asPercentage
     if (rightSize <= SIDEBAR_LAYOUT.expandThresholdPercent) {
-      rightPanel.resize(lastRightSizeRef.current)
+      rightPanel.resize(SIDEBAR_LAYOUT.right.minSize)
     }
   }, [isRightSidebarOpen, rightPanelRef])
 
   const openFileById = (fileId: string) => {
+    setHasClosedAllTabs(false)
     setActiveFileId(fileId)
     setSaveError(null)
     setCenterView('editor')
@@ -638,6 +641,10 @@ function WorkspaceWithHostedAuth() {
   const closeTabById = (fileId: string) => {
     setOpenFileIds((previous) => {
       const next = previous.filter((candidate) => candidate !== fileId)
+
+      if (next.length === 0) {
+        setHasClosedAllTabs(true)
+      }
 
       if (activeFileId === fileId) {
         const closedIndex = previous.indexOf(fileId)
@@ -660,6 +667,7 @@ function WorkspaceWithHostedAuth() {
   }
 
   const closeOthers = (fileId: string) => {
+    setHasClosedAllTabs(false)
     setOpenFileIds([fileId])
     setActiveFileId(fileId)
     setDraftsByFileId((previous) => {
@@ -670,6 +678,7 @@ function WorkspaceWithHostedAuth() {
   }
 
   const closeAll = () => {
+    setHasClosedAllTabs(true)
     setOpenFileIds([])
     setActiveFileId(null)
     setDraftsByFileId({})
@@ -789,9 +798,6 @@ function WorkspaceWithHostedAuth() {
                 <span className="workspace-hud-chip">
                   <Activity size={11} /> {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
                 </span>
-                <span className="workspace-hud-chip xl:inline-flex hidden">
-                  <Layers3 size={11} /> {openFileCount}/{totalFileCount} Open
-                </span>
               </div>
 
               <div className="flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.58)] p-1.5 shadow-[0_5px_14px_rgba(9,25,30,0.12)] backdrop-blur-sm">
@@ -835,8 +841,10 @@ function WorkspaceWithHostedAuth() {
             onSelectTab={openFileById}
             onCloseTab={closeTabById}
             onCloseOthers={closeOthers}
-            onCloseAll={closeAll}
-          />
+  onCloseAll={closeAll}
+  collaborators={['JD', 'AS']}
+  onOpenCollaboration={() => setBottomDrawerTab('collab')}
+/>
 
           <Group
             id="workspace-layout-panels"
@@ -854,7 +862,7 @@ function WorkspaceWithHostedAuth() {
               }
 
               if (!isLeftCollapsedNext) {
-                lastLeftSizeRef.current = `${nextLeftSize}%`
+                // noop: sidebar opens at min size by design
               }
 
               if (isRightSidebarOpen === isRightCollapsedNext) {
@@ -862,7 +870,7 @@ function WorkspaceWithHostedAuth() {
               }
 
               if (!isRightCollapsedNext) {
-                lastRightSizeRef.current = `${nextRightSize}%`
+                // noop: sidebar opens at min size by design
               }
             }}
           >
@@ -879,6 +887,7 @@ function WorkspaceWithHostedAuth() {
             >
               <FilesSidebar
                 files={files}
+                virtualFolders={virtualFolders}
                 activeFileId={activeFileId}
                 dirtyFileIds={dirtyFileIds}
                 isLoading={filesQuery.isLoading || projectsQuery.isLoading}
@@ -890,9 +899,30 @@ function WorkspaceWithHostedAuth() {
                       : createError
                 }
                 onOpenFile={openFileById}
-                onCreateFile={(path) => {
-                  void createFileMutation.mutateAsync(path)
+                onCreateFile={async (path, type) => {
+                  if (type === 'folder') {
+                    if (!activeProjectId) {
+                      return
+                    }
+
+                    setCreateError(null)
+                    setVirtualFoldersByProjectId((previous) => {
+                      const current = previous[activeProjectId] ?? []
+                      if (current.includes(path)) {
+                        return previous
+                      }
+
+                      return {
+                        ...previous,
+                        [activeProjectId]: [...current, path],
+                      }
+                    })
+                    return
+                  }
+
+                  await createFileMutation.mutateAsync(path)
                 }}
+                onClose={() => setIsLeftSidebarCollapsed(true)}
               />
             </Panel>
             <Separator
@@ -906,34 +936,32 @@ function WorkspaceWithHostedAuth() {
             <Panel id="main-editor" className="workspace-main-surface flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
                <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
                   {/* Sidebar Toggle Handle for Left */}
-                   <button
-                     onClick={() => setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
-                     className={cn(
-                       "workspace-edge-toggle absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border-l-0 px-2 py-6 transition-all",
-                       isLeftSidebarCollapsed && "is-active"
-                     )}
-                   >
-                    {isLeftSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-                  </button>
+                   {isLeftSidebarCollapsed ? (
+                    <button
+                     onClick={() => setIsLeftSidebarCollapsed(false)}
+                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border-l-0 px-2 py-5 transition-colors"
+                     title="Open files panel"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                   ) : null}
 
                   {/* Sidebar Toggle Handle for Right */}
-                   <button
-                     onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
-                     className={cn(
-                       "workspace-edge-toggle absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border-r-0 px-2 py-6 transition-all",
-                       !isRightSidebarOpen && "is-active"
-                     )}
-                   >
-                    {!isRightSidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
-                  </button>
+                   {!isRightSidebarOpen ? (
+                    <button
+                     onClick={() => setIsRightSidebarOpen(true)}
+                     className="workspace-edge-toggle workspace-edge-toggle-closed absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border-r-0 px-2 py-5 transition-colors"
+                     title="Open assistant panel"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                   ) : null}
 
                   {centerView === 'editor' ? (
                     <EditorPane
                       file={activeFile}
                       initialValue={editorValue}
                       isDirty={isDirty}
-                      canSave={localIsDirty}
-                      isSaving={saveFileMutation.isPending}
                       saveError={saveError}
                       collabState={collabState}
                       onEditorMount={onEditorMount}
@@ -948,13 +976,6 @@ function WorkspaceWithHostedAuth() {
                             [activeFile.id]: nextValue,
                           }
                         })
-                      }}
-                      onSave={() => {
-                        if (!activeFile || !localIsDirty) {
-                          return
-                        }
-
-                        triggerSave(activeFile.id, editorValue)
                       }}
                     />
                   ) : (
@@ -975,7 +996,7 @@ function WorkspaceWithHostedAuth() {
               panelRef={rightPanelRef}
               collapsible
               collapsedSize="0%"
-              defaultSize="0%"
+              defaultSize={SIDEBAR_LAYOUT.right.defaultSize}
               minSize={SIDEBAR_LAYOUT.right.minSize}
               maxSize={SIDEBAR_LAYOUT.right.maxSize}
               className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
@@ -990,7 +1011,10 @@ function WorkspaceWithHostedAuth() {
           </Group>
 
           {/* Bottom Drawers */}
-          <BottomDrawers />
+          <BottomDrawers
+            activeTab={bottomDrawerTab}
+            onActiveTabChange={setBottomDrawerTab}
+          />
         </div>
 
         <QuickOpenModal

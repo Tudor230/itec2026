@@ -17,6 +17,8 @@ import { cn } from '../../lib/utils'
 export type DrawerTab = 'timeline' | 'run' | 'env' | 'collab'
 
 interface BottomDrawersProps {
+  activeTab?: DrawerTab | null
+  onActiveTabChange?: (tab: DrawerTab | null) => void
   onClose?: () => void
 }
 
@@ -27,23 +29,33 @@ const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: Luci
   { id: 'collab', label: 'Collaboration', subtitle: 'team presence', icon: Users },
 ]
 
-export default function BottomDrawers({ onClose }: BottomDrawersProps) {
-  const [activeTab, setActiveTab] = useState<DrawerTab | null>(null)
+export default function BottomDrawers({ activeTab: controlledActiveTab, onActiveTabChange, onClose }: BottomDrawersProps) {
+  const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
   const isDragging = useRef(false)
+  const [isResizing, setIsResizing] = useState(false)
+  const isControlled = controlledActiveTab !== undefined
+  const activeTab = isControlled ? controlledActiveTab : uncontrolledActiveTab
   const isOpen = activeTab !== null
 
-  const toggleTab = (tab: DrawerTab) => {
-    setActiveTab((current) => {
-      if (current === tab) {
-        setIsExpanded(false)
-        onClose?.()
-        return null
-      }
+  const setActiveTab = (next: DrawerTab | null) => {
+    if (!isControlled) {
+      setUncontrolledActiveTab(next)
+    }
 
-      return tab
-    })
+    onActiveTabChange?.(next)
+  }
+
+  const toggleTab = (tab: DrawerTab) => {
+    const nextTab = activeTab === tab ? null : tab
+
+    if (nextTab === null) {
+      setIsExpanded(false)
+      onClose?.()
+    }
+
+    setActiveTab(nextTab)
   }
 
   const closeDrawer = () => {
@@ -68,7 +80,9 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
 
     const handleMouseUp = () => {
       isDragging.current = false
+      setIsResizing(false)
       document.body.style.cursor = 'default'
+      document.body.style.userSelect = ''
     }
 
     window.addEventListener('mousemove', handleMouseMove)
@@ -78,6 +92,7 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
       document.body.style.cursor = 'default'
+      document.body.style.userSelect = ''
     }
   }, [])
 
@@ -96,15 +111,17 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
               className={cn(
                 'group relative flex h-8 items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[11px] transition-colors',
                 isActive 
-                  ? 'z-30 -mb-px h-9 border-[color-mix(in_oklab,var(--chip-line)_70%,var(--line))] bg-[color-mix(in_oklab,var(--surface-strong)_78%,transparent)] text-[var(--sea-ink)]'
-                  : 'z-10 border-transparent bg-[rgba(var(--chip-bg-rgb),0.08)] text-[var(--sea-ink-soft)] hover:bg-[rgba(var(--chip-bg-rgb),0.28)] hover:text-[var(--sea-ink)]'
+                  ? 'z-30 -mb-px h-9 border-[color-mix(in_oklab,var(--chip-line)_70%,var(--line))] bg-[color-mix(in_oklab,var(--surface-strong)_94%,var(--bg-base)_6%)] text-[var(--sea-ink)] shadow-[0_-5px_14px_rgba(8,22,28,0.15)]'
+                  : 'z-10 border-[color-mix(in_oklab,var(--line)_72%,transparent)] bg-[color-mix(in_oklab,var(--surface-strong)_90%,var(--bg-base)_10%)] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]'
               )}
             >
               {isActive ? (
-                <span
-                  aria-hidden
-                  className="absolute inset-x-2 top-0 h-[1px] rounded-full bg-[var(--lagoon)]"
-                />
+                <span className="pointer-events-none absolute inset-0 overflow-hidden rounded-t-lg">
+                  <span
+                    aria-hidden
+                    className="absolute inset-x-0 top-0 h-[1px] bg-[var(--lagoon)]"
+                  />
+                </span>
               ) : null}
 
               <span
@@ -128,18 +145,24 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
         })}
       </div>
 
-      {isOpen ? (
-        <div
-          style={{ height: drawerHeight }}
-          className={cn(
-            'relative z-0 mx-0 mb-0 flex flex-col overflow-hidden rounded-t-xl rounded-b-none border-x border-t border-b-0 border-[var(--line)] bg-[color-mix(in_oklab,var(--surface)_88%,var(--bg-base))] pointer-events-auto backdrop-blur-md'
-          )}
-        >
+      <div
+        style={{
+          height: isOpen ? drawerHeight : '0px',
+          transform: isOpen ? 'translateY(0)' : 'translateY(100%)',
+          opacity: isOpen ? 1 : 0,
+        }}
+        className={cn(
+          'relative z-0 mx-0 mb-0 flex flex-col overflow-hidden rounded-t-xl rounded-b-none border-x border-t border-b-0 border-[var(--line)] bg-[color-mix(in_oklab,var(--surface)_88%,var(--bg-base))] pointer-events-auto backdrop-blur-md',
+          isResizing ? 'transition-none' : 'transition-all duration-[220ms] ease-out'
+        )}
+      >
             <div 
               className="group flex h-3 w-full cursor-ns-resize items-center justify-center border-b border-[var(--line)]"
               onMouseDown={() => {
                 isDragging.current = true
+                setIsResizing(true)
                 document.body.style.cursor = 'ns-resize'
+                document.body.style.userSelect = 'none'
               }}
             >
               <div className="h-[0.5px] w-16 rounded-full bg-[var(--line)] group-hover:bg-[var(--lagoon-deep)]" />
@@ -290,8 +313,7 @@ export default function BottomDrawers({ onClose }: BottomDrawersProps) {
                 </div>
               )}
             </div>
-        </div>
-      ) : null}
+      </div>
     </div>
   )
 }
