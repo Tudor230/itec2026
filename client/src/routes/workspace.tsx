@@ -9,6 +9,9 @@ import {
   Terminal as TerminalIcon,
   Search,
   Bell,
+  GitBranch,
+  Layers3,
+  Activity,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
@@ -387,6 +390,9 @@ function WorkspaceWithHostedAuth() {
       return locallyDirty || Boolean(collabDirtyByFileId[file.id])
     })
     .map((file) => file.id)
+  const dirtyFileCount = dirtyFileIds.length
+  const totalFileCount = files.length
+  const openFileCount = openTabs.length
 
   useMutation({
     mutationFn: async (projectId: string) => {
@@ -681,8 +687,16 @@ function WorkspaceWithHostedAuth() {
     : {}
 
   return (
-    <main className="m-0 h-dvh w-screen p-0">
+    <main className="workspace-atlas m-0 h-dvh w-screen p-0">
       <section className="relative flex h-full min-h-0 flex-col">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-[rgba(var(--lagoon-rgb),0.2)] blur-[110px]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-24 -top-16 h-64 w-64 rounded-full bg-[rgba(47,106,74,0.16)] blur-[100px]"
+        />
         <div
           className={cn(
             'relative flex min-h-0 flex-1 flex-col overflow-hidden',
@@ -690,28 +704,40 @@ function WorkspaceWithHostedAuth() {
           )}
           {...lockedContentProps}
         >
-          {/* Top Bar Refined */}
-          <div className="grid items-center gap-3 border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.6)] px-4 py-2 backdrop-blur-md md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-            <div className="flex min-w-0 items-center gap-4">
+          <div className="workspace-topbar grid items-center gap-3 px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
                 onClick={() => navigate({ to: '/projects' })}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--line)] bg-[rgba(255,255,255,0.05)] text-[var(--sea-ink)] hover:bg-[rgba(0,0,0,0.05)] transition-colors"
+                className="workspace-control-button inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
                 title="Back to projects"
               >
                 <ArrowLeft size={14} />
               </button>
 
-              <div className="min-w-0 flex flex-col">
-                <span className="text-[10px] uppercase tracking-widest font-bold text-[var(--sea-ink-soft)]">Workspace</span>
-                <h1 className="m-0 truncate text-sm font-extrabold text-[var(--sea-ink)] leading-none">
-                  {selectedProject ? selectedProject.name : 'iTECify IDE'}
-                </h1>
+              <div className="relative min-w-0 overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.64)] px-3 py-2">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -right-8 -top-8 h-16 w-16 rounded-full bg-[rgba(var(--lagoon-rgb),0.16)] blur-2xl"
+                />
+                <div className="relative flex min-w-0 items-center gap-2">
+                  <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.66)] text-[var(--lagoon-deep)]">
+                    <Layers3 size={13} />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[var(--sea-ink-soft)]">
+                      Command Deck
+                    </span>
+                    <h1 className="m-0 truncate text-sm font-extrabold leading-none text-[var(--sea-ink)]">
+                      {selectedProject ? selectedProject.name : 'iTECify IDE'}
+                    </h1>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div className="flex items-center justify-center">
-              <div className="relative flex rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] p-1 backdrop-blur-md">
+              <div className="relative flex rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.62)] p-1 shadow-[0_6px_18px_rgba(8,22,28,0.16)] backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => setCenterView('editor')}
@@ -755,12 +781,32 @@ function WorkspaceWithHostedAuth() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3">
-              <div className="flex items-center gap-2 px-2 py-1 bg-[rgba(255,255,255,0.05)] border border-[var(--line)] rounded-lg">
-                <button className="p-1.5 text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] transition-colors">
+            <div className="flex items-center justify-end gap-2">
+              <div className="hidden items-center gap-1.5 lg:flex">
+                <span className="workspace-hud-chip">
+                  <GitBranch size={11} /> main
+                </span>
+                <span className="workspace-hud-chip">
+                  <Activity size={11} /> {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
+                </span>
+                <span className="workspace-hud-chip xl:inline-flex hidden">
+                  <Layers3 size={11} /> {openFileCount}/{totalFileCount} Open
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.58)] p-1.5 shadow-[0_5px_14px_rgba(9,25,30,0.12)] backdrop-blur-sm">
+                <button
+                  type="button"
+                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  title="Search"
+                >
                   <Search size={14} />
                 </button>
-                <button className="p-1.5 text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] transition-colors">
+                <button
+                  type="button"
+                  className="workspace-control-button rounded-md p-1.5 transition-colors"
+                  title="Notifications"
+                >
                   <Bell size={14} />
                 </button>
                 <div className="w-[1px] h-4 bg-[var(--line)]" />
@@ -829,7 +875,7 @@ function WorkspaceWithHostedAuth() {
               defaultSize={SIDEBAR_LAYOUT.left.defaultSize}
               minSize={SIDEBAR_LAYOUT.left.minSize}
               maxSize={SIDEBAR_LAYOUT.left.maxSize}
-              className="flex min-h-0 min-w-0 flex-col"
+              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
             >
               <FilesSidebar
                 files={files}
@@ -857,27 +903,27 @@ function WorkspaceWithHostedAuth() {
             </Separator>
 
             {/* Central Editor/Terminal Panel */}
-            <Panel id="main-editor" className="flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
+            <Panel id="main-editor" className="workspace-main-surface flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)]">
                <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
                   {/* Sidebar Toggle Handle for Left */}
-                  <button
-                    onClick={() => setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
-                    className={cn(
-                      "absolute left-0 top-1/2 -translate-y-1/2 z-30 px-2 py-6 bg-[var(--surface-strong)] border border-[var(--line)] border-l-0 rounded-r-xl text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-lg",
-                      isLeftSidebarCollapsed && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
-                    )}
-                  >
+                   <button
+                     onClick={() => setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
+                     className={cn(
+                       "workspace-edge-toggle absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border-l-0 px-2 py-6 transition-all",
+                       isLeftSidebarCollapsed && "is-active"
+                     )}
+                   >
                     {isLeftSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
                   </button>
 
                   {/* Sidebar Toggle Handle for Right */}
-                  <button
-                    onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
-                    className={cn(
-                      "absolute right-0 top-1/2 -translate-y-1/2 z-30 px-2 py-6 bg-[var(--surface-strong)] border border-[var(--line)] border-r-0 rounded-l-xl text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[var(--chip-bg)] transition-all shadow-lg",
-                      !isRightSidebarOpen && "bg-[var(--lagoon)] text-white hover:bg-[var(--lagoon-deep)] border-transparent"
-                    )}
-                  >
+                   <button
+                     onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
+                     className={cn(
+                       "workspace-edge-toggle absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border-r-0 px-2 py-6 transition-all",
+                       !isRightSidebarOpen && "is-active"
+                     )}
+                   >
                     {!isRightSidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
                   </button>
 
@@ -932,7 +978,7 @@ function WorkspaceWithHostedAuth() {
               defaultSize="0%"
               minSize={SIDEBAR_LAYOUT.right.minSize}
               maxSize={SIDEBAR_LAYOUT.right.maxSize}
-              className="flex min-h-0 min-w-0 flex-col"
+              className="workspace-panel-surface flex min-h-0 min-w-0 flex-col"
             >
               <RightSidebar
                 isOpen={isRightSidebarOpen}

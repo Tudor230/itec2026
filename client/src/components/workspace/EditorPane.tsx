@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import type { FileDto } from '../../services/projects-api'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check, X, Pencil, GripVertical, Sparkles } from 'lucide-react'
+import { Check, X, Pencil, GripVertical, Sparkles, Command, FileCode2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useToast } from '../ToastProvider'
 
@@ -52,6 +52,7 @@ export default function EditorPane({
   }, [file])
 
   const title = file ? file.path : 'No file selected'
+  const extension = file?.path.split('.').pop()?.toUpperCase() ?? 'TXT'
 
   const handleAcceptAi = () => {
     setShowAiBlock(false)
@@ -60,39 +61,51 @@ export default function EditorPane({
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col relative">
-      {/* Editor Header */}
-      <div className="flex items-center justify-between border-b border-[var(--line)] bg-[rgba(var(--bg-rgb),0.4)] backdrop-blur-md px-4 py-2">
-        <div className="min-w-0 flex flex-col">
-          <p className="m-0 truncate text-xs font-bold text-[var(--sea-ink)]">{title}</p>
+      <div className="relative border-b border-[var(--line)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_84%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))] px-4 py-2 backdrop-blur-md">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-0 right-0 top-0 h-[1px] bg-[linear-gradient(90deg,transparent,rgba(var(--lagoon-rgb),0.44),transparent)]"
+        />
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex flex-col">
+            <p className="m-0 truncate text-xs font-extrabold tracking-[0.02em] text-[var(--sea-ink)]">{title}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <span className="workspace-hud-chip">
+                <FileCode2 size={11} /> {extension}
+              </span>
+            </div>
+
           {file && (
             <p className="m-0 text-[10px] text-[var(--sea-ink-soft)] font-medium">
               {isDirty ? 'Unsaved changes' : 'Saved'}
               {collabState && collabState.connectionState !== 'idle' ? ` • Live: ${collabState.connectionState}` : ''}
             </p>
           )}
-        </div>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowAiBlock(!showAiBlock)}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all border",
-              showAiBlock 
-                ? "bg-[var(--lagoon)] text-white border-[var(--lagoon)]" 
-                : "bg-[rgba(var(--lagoon-rgb),0.1)] text-[var(--lagoon-deep)] border-[rgba(var(--lagoon-rgb),0.2)] hover:bg-[rgba(var(--lagoon-rgb),0.2)]"
-            )}
-          >
-            <Sparkles size={12} />
-            <span>AI Suggest</span>
-          </button>
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={!file || !(canSave ?? isDirty) || isSaving}
-            className="rounded-full bg-[var(--sea-ink)] px-4 py-1 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 transition-opacity"
-          >
-            {isSaving ? 'Saving...' : 'Save'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAiBlock(!showAiBlock)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold transition-all',
+                showAiBlock
+                  ? 'border-[var(--lagoon)] bg-[var(--lagoon)] text-white shadow-[0_8px_18px_rgba(var(--lagoon-rgb),0.38)]'
+                  : 'border-[rgba(var(--lagoon-rgb),0.3)] bg-[rgba(var(--lagoon-rgb),0.12)] text-[var(--lagoon-deep)] hover:bg-[rgba(var(--lagoon-rgb),0.22)]'
+              )}
+            >
+              <Sparkles size={12} />
+              <span>AI Suggest</span>
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={!file || !(canSave ?? isDirty) || isSaving}
+              className="rounded-full border border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--line))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--sea-ink)_84%,black_16%),var(--sea-ink))] px-4 py-1 text-[10px] font-bold text-white shadow-[0_8px_16px_rgba(9,23,30,0.22)] transition-all disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isSaving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -102,10 +115,14 @@ export default function EditorPane({
         </div>
       ) : null}
 
-      <div className="flex-1 min-h-0 relative">
+      <div className="relative min-h-0 flex-1">
         {file ? (
-          <div className="h-full flex flex-col">
-            <div className="flex-1 bg-[rgba(var(--bg-rgb),0.1)]">
+          <div className="flex h-full flex-col">
+            <div className="relative flex-1 bg-[rgba(var(--bg-rgb),0.1)]">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface)_64%,transparent),transparent)]"
+              />
               <MonacoEditor
                 height="100%"
                 language={language}
@@ -138,6 +155,11 @@ export default function EditorPane({
                   cursorSmoothCaretAnimation: 'on',
                 }}
               />
+
+              <div className="pointer-events-none absolute bottom-3 left-3 z-10 hidden items-center gap-2 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.74)] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)] md:inline-flex">
+                <Command size={10} />
+                <span>Ctrl+S save</span>
+              </div>
             </div>
 
             {/* AI Suggestion Block (Mockup) */}
@@ -149,8 +171,8 @@ export default function EditorPane({
                   exit={{ opacity: 0, y: 20 }}
                   className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-[90%] max-w-xl"
                 >
-                  <div className="bg-[rgba(var(--bg-rgb),0.9)] backdrop-blur-2xl border border-[var(--lagoon)] rounded-xl shadow-2xl overflow-hidden flex flex-col">
-                    <div className="bg-[rgba(var(--lagoon-rgb),0.05)] border-b border-[rgba(var(--lagoon-rgb),0.1)] px-3 py-2 flex items-center justify-between">
+                  <div className="flex flex-col overflow-hidden rounded-xl border border-[rgba(var(--lagoon-rgb),0.46)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_84%,transparent),color-mix(in_oklab,var(--surface)_70%,transparent))] shadow-[0_26px_50px_rgba(8,24,29,0.28)] backdrop-blur-2xl">
+                    <div className="flex items-center justify-between border-b border-[rgba(var(--lagoon-rgb),0.2)] bg-[rgba(var(--lagoon-rgb),0.08)] px-3 py-2">
                       <div className="flex items-center gap-2">
                         <div className="p-1 bg-[var(--lagoon)] rounded text-white">
                           <Sparkles size={10} />
@@ -167,7 +189,7 @@ export default function EditorPane({
                       </div>
                     </div>
                     
-                    <div className="p-4 bg-[rgba(var(--lagoon-rgb),0.02)] border-l-4 border-[var(--lagoon)]">
+                    <div className="border-l-4 border-[var(--lagoon)] bg-[rgba(var(--lagoon-rgb),0.04)] p-4">
                       <pre className="text-[11px] font-mono text-[var(--sea-ink)] leading-relaxed">
 {`// Refactored to use async/await for better readability
 async function fetchData() {
@@ -184,14 +206,14 @@ async function fetchData() {
                     <div className="flex items-center border-t border-[var(--line)]">
                       <button 
                         onClick={handleAcceptAi}
-                        className="flex-1 py-2 flex items-center justify-center gap-2 text-[11px] font-bold text-green-600 hover:bg-green-50 transition-colors border-r border-[var(--line)]"
+                        className="flex flex-1 items-center justify-center gap-2 border-r border-[var(--line)] py-2 text-[11px] font-bold text-green-600 transition-colors hover:bg-green-50"
                       >
                         <Check size={14} />
                         ACCEPT
                       </button>
                       <button 
                         onClick={() => setShowAiBlock(false)}
-                        className="flex-1 py-2 flex items-center justify-center gap-2 text-[11px] font-bold text-red-600 hover:bg-red-50 transition-colors"
+                        className="flex flex-1 items-center justify-center gap-2 py-2 text-[11px] font-bold text-red-600 transition-colors hover:bg-red-50"
                       >
                         <X size={14} />
                         DECLINE
@@ -204,8 +226,8 @@ async function fetchData() {
           </div>
         ) : (
           <div className="grid h-full place-items-center bg-[rgba(var(--bg-rgb),0.2)] p-6 text-center">
-            <div className="space-y-4 max-w-sm">
-              <div className="w-16 h-16 bg-[rgba(var(--lagoon-rgb),0.1)] rounded-3xl flex items-center justify-center mx-auto text-[var(--lagoon)]">
+            <div className="max-w-sm space-y-4 rounded-2xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.52)] p-5 shadow-[0_18px_30px_rgba(9,24,30,0.14)]">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-[rgba(var(--lagoon-rgb),0.1)] text-[var(--lagoon)]">
                 <Sparkles size={32} />
               </div>
               <div>

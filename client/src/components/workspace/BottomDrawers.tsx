@@ -7,7 +7,11 @@ import {
   Users, 
   X, 
   Maximize2, 
-  Minimize2
+  Minimize2,
+  Clock3,
+  Sparkles,
+  ShieldCheck,
+  type LucideIcon,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
@@ -17,14 +21,14 @@ interface BottomDrawersProps {
   onClose?: () => void
 }
 
-const DRAWER_ITEMS: { id: DrawerTab; label: string; icon: any }[] = [
-  { id: 'timeline', label: 'Timeline', icon: History },
-  { id: 'run', label: 'Run & Debug', icon: Play },
-  { id: 'env', label: 'Environment', icon: Settings },
-  { id: 'collab', label: 'Collaboration', icon: Users },
+const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: LucideIcon }[] = [
+  { id: 'timeline', label: 'Timeline', subtitle: 'recent changes', icon: History },
+  { id: 'run', label: 'Run & Debug', subtitle: 'sandbox execution', icon: Play },
+  { id: 'env', label: 'Environment', subtitle: 'runtime variables', icon: Settings },
+  { id: 'collab', label: 'Collaboration', subtitle: 'team presence', icon: Users },
 ]
 
-export default function BottomDrawers(_props: BottomDrawersProps) {
+export default function BottomDrawers({ onClose }: BottomDrawersProps) {
   const [activeTab, setActiveTab] = useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
@@ -34,10 +38,13 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
     if (activeTab === tab) {
       setActiveTab(null)
       setIsExpanded(false)
+      onClose?.()
     } else {
       setActiveTab(tab)
     }
   }
+
+  const activeItem = DRAWER_ITEMS.find((item) => item.id === activeTab) ?? null
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -61,33 +68,41 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
     return () => {
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = 'default'
     }
   }, [])
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-50 flex flex-col pointer-events-none justify-end">
-      {/* Bookmark Tabs */}
-      <div className="flex gap-2 pointer-events-auto items-end relative z-10 mx-4">
+    <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-50 flex flex-col justify-end">
+      <div className="relative z-10 mx-4 flex items-end gap-2 pointer-events-auto">
         {DRAWER_ITEMS.map((item) => {
           const Icon = item.icon
           const isActive = activeTab === item.id
           
           return (
             <button
+              type="button"
               key={item.id}
               onClick={() => toggleTab(item.id)}
               className={cn(
-                "relative h-[36px] px-4 flex items-center gap-2 rounded-t-xl transition-all duration-200 group border border-b-0",
+                'group relative flex h-[36px] items-center gap-2 rounded-t-xl border border-b-0 px-4 transition-all duration-200',
                 isActive 
-                  ? "bg-[rgba(var(--bg-rgb),0.95)] backdrop-blur-xl border-[var(--line)] text-[var(--lagoon-deep)] shadow-lg pb-1 h-[40px] z-20" 
-                  : "bg-transparent border-transparent text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)] hover:bg-[rgba(var(--bg-rgb),0.4)] z-10"
+                  ? 'z-20 h-[42px] border-[var(--line)] bg-[rgba(var(--bg-rgb),0.94)] pb-1 text-[var(--lagoon-deep)] shadow-[0_-8px_22px_rgba(8,22,28,0.2)] backdrop-blur-xl'
+                  : 'z-10 border-transparent bg-transparent text-[var(--sea-ink-soft)] hover:bg-[rgba(var(--bg-rgb),0.42)] hover:text-[var(--sea-ink)]'
               )}
             >
+              {isActive ? (
+                <span
+                  aria-hidden
+                  className="absolute inset-x-3 top-0 h-[2px] rounded-full bg-[linear-gradient(90deg,var(--lagoon),var(--lagoon-deep))]"
+                />
+              ) : null}
+
               <Icon size={14} className={cn("transition-transform", isActive ? "scale-110" : "group-hover:scale-110")} />
               
               <div className="relative flex items-center h-full">
                 <span className={cn(
-                  "text-[10px] font-bold uppercase tracking-widest",
+                  'text-[10px] font-bold uppercase tracking-widest',
                   isActive ? "" : "invisible" 
                 )}>
                   {item.label}
@@ -113,13 +128,12 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
             exit={{ height: 0, opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
             className={cn(
-              "relative z-0 pointer-events-auto flex flex-col mx-4 mb-4",
-              "bg-[rgba(var(--bg-rgb),0.95)] backdrop-blur-xl border border-[var(--line)] rounded-xl shadow-2xl overflow-hidden"
+              'relative z-0 mx-4 mb-4 flex flex-col overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.95)] pointer-events-auto backdrop-blur-xl',
+              'shadow-[0_26px_44px_rgba(8,22,28,0.28)]'
             )}
           >
-            {/* Drag Handle */}
             <div 
-              className="h-3 w-full cursor-ns-resize flex items-center justify-center hover:bg-[rgba(255,255,255,0.05)] transition-colors group border-b border-[var(--line)]"
+              className="group flex h-3 w-full cursor-ns-resize items-center justify-center border-b border-[var(--line)] transition-colors hover:bg-[rgba(255,255,255,0.05)]"
               onMouseDown={() => {
                 isDragging.current = true
                 document.body.style.cursor = 'ns-resize'
@@ -128,46 +142,101 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
               <div className="w-12 h-1 bg-[var(--line)] group-hover:bg-[var(--lagoon)] rounded-full transition-colors" />
             </div>
 
-            {/* Drawer Header Controls */}
-            <div className="absolute top-2 right-4 flex items-center gap-1 z-10">
-              <button
-                onClick={() => setIsExpanded(!isExpanded)}
-                className="p-1.5 hover:bg-[rgba(0,0,0,0.05)] rounded-md text-[var(--sea-ink-soft)] transition-colors"
-              >
-                {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab(null)
-                  setIsExpanded(false)
-                }}
-                className="p-1.5 hover:bg-[rgba(0,0,0,0.05)] rounded-md text-[var(--sea-ink-soft)] transition-colors"
-              >
-                <X size={14} />
-              </button>
+            <div className="relative z-10 flex items-center justify-between border-b border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.34)] px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.62)] text-[var(--lagoon-deep)]">
+                  {activeItem ? <activeItem.icon size={15} /> : <Sparkles size={15} />}
+                </div>
+
+                <div className="min-w-0">
+                  <p className="m-0 truncate text-xs font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    {activeItem?.label ?? 'Panel'}
+                  </p>
+                  <p className="m-0 truncate text-[11px] text-[var(--sea-ink-soft)]">
+                    {activeItem?.subtitle ?? 'workspace tools'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <span className="workspace-hud-chip hidden md:inline-flex">
+                  <Clock3 size={11} /> live
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded(!isExpanded)}
+                  className="rounded-md p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
+                  title={isExpanded ? 'Shrink panel' : 'Expand panel'}
+                >
+                  {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(null)
+                    setIsExpanded(false)
+                    onClose?.()
+                  }}
+                  className="rounded-md p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
+                  title="Close panel"
+                >
+                  <X size={14} />
+                </button>
+              </div>
             </div>
 
-            {/* Drawer Content */}
             <div className="mt-2 flex-1 overflow-y-auto p-4">
               {activeTab === 'timeline' && (
-                <div className="space-y-4">
-                  <div className="p-8 border-2 border-dashed border-[var(--line)] rounded-xl flex flex-col items-center justify-center text-center opacity-50">
-                    <History size={32} className="mb-2" />
-                    <p className="font-semibold text-[var(--sea-ink)]">Timeline Manager</p>
-                    <p className="text-xs text-[var(--sea-ink-soft)]">No active timelines found in this project.</p>
+                <div className="space-y-3">
+                  {[
+                    { label: 'Opened workspace', time: 'Just now', tone: 'bg-[rgba(var(--lagoon-rgb),0.14)] text-[var(--lagoon-deep)]' },
+                    { label: 'Fetched latest files', time: '14 sec ago', tone: 'bg-[rgba(47,106,74,0.14)] text-[var(--kicker)]' },
+                    { label: 'Synced project metadata', time: '1 min ago', tone: 'bg-[rgba(99,122,138,0.14)] text-[var(--sea-ink-soft)]' },
+                  ].map((entry, index) => (
+                    <article
+                      key={entry.label}
+                      className="relative overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-3"
+                    >
+                      <span className="absolute bottom-0 left-0 top-0 w-[3px] bg-[linear-gradient(180deg,var(--lagoon),var(--lagoon-deep))]" />
+                      <div className="ml-2 flex items-start justify-between gap-3">
+                        <div>
+                          <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">{entry.label}</p>
+                          <p className="m-0 mt-1 text-[11px] text-[var(--sea-ink-soft)]">Workspace event #{index + 1}</p>
+                        </div>
+                        <span className={cn('rounded-full px-2 py-1 text-[10px] font-bold', entry.tone)}>
+                          {entry.time}
+                        </span>
+                      </div>
+                    </article>
+                  ))}
+
+                  <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
+                    Full timeline stream will appear here as executions and edits are connected.
                   </div>
                 </div>
               )}
 
               {activeTab === 'run' && (
                 <div className="space-y-4">
-                  <div className="flex items-center gap-4 p-4 bg-[rgba(var(--lagoon-rgb),0.05)] border border-[rgba(var(--lagoon-rgb),0.1)] rounded-xl">
-                    <div className="p-3 bg-[var(--lagoon)] rounded-full text-white">
+                  <div className="flex items-center gap-4 rounded-xl border border-[rgba(var(--lagoon-rgb),0.22)] bg-[rgba(var(--lagoon-rgb),0.08)] p-4">
+                    <div className="rounded-full bg-[var(--lagoon)] p-3 text-white shadow-[0_8px_16px_rgba(var(--lagoon-rgb),0.35)]">
                       <Play size={20} />
                     </div>
                     <div>
                       <p className="font-bold text-[var(--sea-ink)]">Ready to Run</p>
-                      <p className="text-xs text-[var(--sea-ink-soft)]">Click the play button to execute your code in the Docker sandbox.</p>
+                      <p className="text-xs text-[var(--sea-ink-soft)]">Click run to execute your project in the Docker sandbox.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
+                      <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Default target</p>
+                      <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">Docker sandbox</p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
+                      <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Permission</p>
+                      <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">Read + execute</p>
                     </div>
                   </div>
                 </div>
@@ -176,19 +245,25 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
               {activeTab === 'env' && (
                 <div className="space-y-4">
                   <h3 className="text-sm font-bold text-[var(--sea-ink)]">Environment Variables</h3>
+                  <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-3 text-[11px] text-[var(--sea-ink-soft)]">
+                    Keys are scoped to this workspace session.
+                  </div>
                   <div className="space-y-2">
                     <div className="flex gap-2">
                       <input 
                         placeholder="KEY" 
-                        className="flex-1 bg-transparent border border-[var(--line)] rounded-lg px-3 py-2 text-xs outline-none focus:border-[var(--lagoon)]" 
+                        className="flex-1 rounded-lg border border-[var(--line)] bg-transparent px-3 py-2 text-xs outline-none focus:border-[var(--lagoon)]" 
                       />
                       <input 
                         placeholder="VALUE" 
-                        className="flex-1 bg-transparent border border-[var(--line)] rounded-lg px-3 py-2 text-xs outline-none focus:border-[var(--lagoon)]" 
+                        className="flex-1 rounded-lg border border-[var(--line)] bg-transparent px-3 py-2 text-xs outline-none focus:border-[var(--lagoon)]" 
                       />
                     </div>
                   </div>
-                  <button className="w-full py-2 bg-[var(--sea-ink)] text-white rounded-lg text-xs font-bold hover:opacity-90 transition-opacity">
+                  <button
+                    type="button"
+                    className="w-full rounded-lg bg-[linear-gradient(180deg,color-mix(in_oklab,var(--sea-ink)_88%,black_12%),var(--sea-ink))] py-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                  >
                     Add Variable
                   </button>
                 </div>
@@ -196,15 +271,20 @@ export default function BottomDrawers(_props: BottomDrawersProps) {
 
               {activeTab === 'collab' && (
                 <div className="space-y-4">
-                   <div className="p-6 border border-[var(--line)] rounded-xl text-center">
+                   <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-6 text-center">
                     <p className="text-sm font-medium text-[var(--sea-ink)]">Active Collaborators</p>
                     <div className="mt-4 flex justify-center -space-x-2">
                       <div className="w-10 h-10 rounded-full border-2 border-white bg-blue-500 flex items-center justify-center text-white text-xs font-bold">JD</div>
                       <div className="w-10 h-10 rounded-full border-2 border-white bg-teal-500 flex items-center justify-center text-white text-xs font-bold">AS</div>
                     </div>
-                    <button className="mt-6 text-xs font-bold text-[var(--lagoon)] hover:underline">
+                    <button type="button" className="mt-6 text-xs font-bold text-[var(--lagoon)] hover:underline">
                       Invite more people
                     </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 rounded-xl border border-[rgba(47,106,74,0.26)] bg-[rgba(47,106,74,0.12)] px-3 py-2 text-[11px] font-medium text-[var(--sea-ink)]">
+                    <ShieldCheck size={14} className="text-[var(--kicker)]" />
+                    Presence data updates securely in real time.
                   </div>
                 </div>
               )}
