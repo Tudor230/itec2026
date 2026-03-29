@@ -49,13 +49,66 @@ export default function EditorPane({
   
   const language = useMemo(() => {
     if (!file) return 'plaintext'
-    const extension = file.path.split('.').pop()?.toLowerCase() ?? ''
+    const lowerPath = file.path.toLowerCase()
+    const fileName = lowerPath.split('/').pop() ?? ''
+    if (fileName === 'dockerfile') return 'dockerfile'
+
+    const extension = fileName.split('.').pop() ?? ''
     const mapping: Record<string, string> = {
-      ts: 'typescript', tsx: 'typescriptreact',
-      js: 'javascript', jsx: 'javascriptreact',
-      json: 'json', css: 'css', html: 'html',
-      md: 'markdown', py: 'python', rs: 'rust',
-      go: 'go', java: 'java'
+      ts: 'typescript',
+      tsx: 'typescript',
+      js: 'javascript',
+      jsx: 'javascript',
+      mjs: 'javascript',
+      cjs: 'javascript',
+      json: 'json',
+      jsonc: 'json',
+      css: 'css',
+      scss: 'scss',
+      less: 'less',
+      html: 'html',
+      htm: 'html',
+      xml: 'xml',
+      svg: 'xml',
+      md: 'markdown',
+      mdx: 'mdx',
+      py: 'python',
+      rs: 'rust',
+      go: 'go',
+      java: 'java',
+      c: 'c',
+      h: 'c',
+      cc: 'cpp',
+      cpp: 'cpp',
+      cxx: 'cpp',
+      hpp: 'cpp',
+      cs: 'csharp',
+      php: 'php',
+      rb: 'ruby',
+      swift: 'swift',
+      kt: 'kotlin',
+      kts: 'kotlin',
+      sql: 'sql',
+      psql: 'pgsql',
+      yml: 'yaml',
+      yaml: 'yaml',
+      sh: 'shell',
+      bash: 'shell',
+      zsh: 'shell',
+      ps1: 'powershell',
+      bat: 'bat',
+      cmd: 'bat',
+      ini: 'ini',
+      conf: 'ini',
+      toml: 'ini',
+      lua: 'lua',
+      r: 'r',
+      dart: 'dart',
+      scala: 'scala',
+      clj: 'clojure',
+      gql: 'graphql',
+      graphql: 'graphql',
+      proto: 'protobuf',
     }
     return mapping[extension] ?? 'plaintext'
   }, [file])
