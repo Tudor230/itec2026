@@ -56,6 +56,12 @@ export type YjsHistoryAtSequenceLoader = (
   fileId: string,
   sequence: number,
 ) => Promise<YjsHistoryState | null>
+export type YjsSnapshotSequenceChecker = (
+  actor: ActorContext,
+  projectId: string,
+  fileId: string,
+  sequence: number,
+) => Promise<boolean>
 export type YjsUpdateAppender = (
   actor: ActorContext,
   projectId: string,
@@ -118,7 +124,14 @@ const docRewindSchema = z.object({
   fileId: z.string().trim().min(1),
   requestId: z.string().trim().min(1).max(120).optional(),
   targetSequence: z.number().int().min(1),
-  expectedHeadSequence: z.number().int().min(0).optional(),
+  expectedHeadSequence: z.number().int().min(0),
+})
+
+const docSnapshotPreviewSchema = z.object({
+  projectId: z.string().trim().min(1),
+  fileId: z.string().trim().min(1),
+  requestId: z.string().trim().min(1).max(120).optional(),
+  sequence: z.number().int().min(1),
 })
 
 const projectLeaveSchema = z.string().trim().min(1)
@@ -229,6 +242,15 @@ interface DocRewindResultPayload {
   appliedSequence: number
 }
 
+interface DocSnapshotPreviewDataPayload {
+  projectId: string
+  fileId: string
+  requestId?: string
+  sequence: number
+  content: string
+  headSequence: number
+}
+
 interface TerminalListPayload {
   projectId: string
   terminals: Array<{
@@ -337,6 +359,7 @@ export function createCollabGateway(
   loadYjsHistory: YjsHistoryLoader,
   loadYjsTimeline: YjsTimelineLoader,
   loadYjsHistoryAtSequence: YjsHistoryAtSequenceLoader,
+  hasYjsSnapshotAtSequence: YjsSnapshotSequenceChecker,
   appendYjsUpdate: YjsUpdateAppender,
   saveYjsSnapshot: YjsSnapshotSaver,
   canUseTerminal: TerminalCommandAuthorizer,
@@ -692,15 +715,6 @@ export function createCollabGateway(
             return
           }
 
-          const persisted = await appendYjsUpdate(
-            actor,
-            parsedUpdate.data.projectId,
-            parsedUpdate.data.fileId,
-            updateBytes,
-          )
-          session.lastSequence = persisted.sequence
-          session.updatesSinceSnapshot += 1
-
           updateDirtyStateForSocket(
             io,
             dirtySocketsByDocRoom,
@@ -711,27 +725,6 @@ export function createCollabGateway(
           )
 
           socket.to(room).emit('collab:doc:update', parsedUpdate.data satisfies DocUpdatePayload)
-
-          if (!session.snapshotInFlight && session.updatesSinceSnapshot >= snapshotIntervalUpdates) {
-            session.snapshotInFlight = true
-            const snapshotUpdate = Y.encodeStateAsUpdate(session.doc)
-            const updatesCapturedBySnapshot = session.updatesSinceSnapshot
-
-            void saveYjsSnapshot(
-              actor,
-              parsedUpdate.data.projectId,
-              parsedUpdate.data.fileId,
-              session.lastSequence,
-              snapshotUpdate,
-            ).then(() => {
-              session.updatesSinceSnapshot = Math.max(
-                0,
-                session.updatesSinceSnapshot - updatesCapturedBySnapshot,
-              )
-            }).catch(() => undefined).finally(() => {
-              session.snapshotInFlight = false
-            })
-          }
         })().catch(() => {
           socket.emit('collab:error', {
             message: 'Could not process document update',
@@ -781,6 +774,53 @@ export function createCollabGateway(
 
           if (!session.authorizedSubjects.has(actor.subject)) {
             return
+          }
+
+          const canStillEdit = await canJoinFile(
+            actor,
+            parsedSaved.data.projectId,
+            parsedSaved.data.fileId,
+          )
+          if (!canStillEdit) {
+            socket.emit('collab:error', {
+              message: 'Not authorized for this file',
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const dirtySockets = dirtySocketsByDocRoom.get(room)
+          if (!dirtySockets || dirtySockets.size === 0) {
+            return
+          }
+
+          const persisted = await appendYjsUpdate(
+            actor,
+            parsedSaved.data.projectId,
+            parsedSaved.data.fileId,
+            Y.encodeStateAsUpdate(session.doc),
+          )
+          session.lastSequence = persisted.sequence
+          session.updatesSinceSnapshot += 1
+
+          if (!session.snapshotInFlight && session.updatesSinceSnapshot >= snapshotIntervalUpdates) {
+            session.snapshotInFlight = true
+            const snapshotUpdate = Y.encodeStateAsUpdate(session.doc)
+            const updatesCapturedBySnapshot = session.updatesSinceSnapshot
+
+            void saveYjsSnapshot(
+              actor,
+              parsedSaved.data.projectId,
+              parsedSaved.data.fileId,
+              session.lastSequence,
+              snapshotUpdate,
+            ).then(() => {
+              session.updatesSinceSnapshot = Math.max(
+                0,
+                session.updatesSinceSnapshot - updatesCapturedBySnapshot,
+              )
+            }).catch(() => undefined).finally(() => {
+              session.snapshotInFlight = false
+            })
           }
 
           markDocumentSavedGlobally(
@@ -975,10 +1015,7 @@ export function createCollabGateway(
             return
           }
 
-          if (
-            parsedRewind.data.expectedHeadSequence !== undefined
-            && parsedRewind.data.expectedHeadSequence !== session.lastSequence
-          ) {
+          if (parsedRewind.data.expectedHeadSequence !== session.lastSequence) {
             socket.emit('collab:error', {
               message: 'Document has changed, refresh timeline and retry',
               projectId: parsedRewind.data.projectId,
@@ -991,6 +1028,22 @@ export function createCollabGateway(
           if (parsedRewind.data.targetSequence > session.lastSequence) {
             socket.emit('collab:error', {
               message: 'Invalid rewind target sequence',
+              projectId: parsedRewind.data.projectId,
+              fileId: parsedRewind.data.fileId,
+              requestId: parsedRewind.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const isSnapshotTarget = await hasYjsSnapshotAtSequence(
+            actor,
+            parsedRewind.data.projectId,
+            parsedRewind.data.fileId,
+            parsedRewind.data.targetSequence,
+          )
+          if (!isSnapshotTarget) {
+            socket.emit('collab:error', {
+              message: 'Rewind target must be a snapshot sequence',
               projectId: parsedRewind.data.projectId,
               fileId: parsedRewind.data.fileId,
               requestId: parsedRewind.data.requestId,
@@ -1097,6 +1150,147 @@ export function createCollabGateway(
             projectId: parsedRewind.data.projectId,
             fileId: parsedRewind.data.fileId,
             requestId: parsedRewind.data.requestId,
+          } satisfies ErrorEvent)
+        })
+      })
+
+      socket.on('collab:doc:snapshot:preview', (payload: unknown) => {
+        const requestId = tryGetRequestId(payload)
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'doc-snapshot-preview',
+          maxJoinsPerTenSeconds,
+          10_000,
+        )
+        if (!allowed) {
+          socket.emit('collab:error', {
+            message: 'Too many snapshot preview requests',
+            requestId,
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const parsedPreview = docSnapshotPreviewSchema.safeParse(payload)
+        if (!parsedPreview.success) {
+          socket.emit('collab:error', {
+            message: 'Invalid snapshot preview payload',
+            requestId,
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const room = docRoom(parsedPreview.data.projectId, parsedPreview.data.fileId)
+        if (!joinedRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join document first',
+            projectId: parsedPreview.data.projectId,
+            fileId: parsedPreview.data.fileId,
+            requestId: parsedPreview.data.requestId,
+          } satisfies ErrorEvent)
+          return
+        }
+
+        const session = docSessions.get(room)
+        if (!session) {
+          socket.emit('collab:error', {
+            message: 'Document session not found',
+            projectId: parsedPreview.data.projectId,
+            fileId: parsedPreview.data.fileId,
+            requestId: parsedPreview.data.requestId,
+          } satisfies ErrorEvent)
+          return
+        }
+
+        void (async () => {
+          if (actor.type === 'anonymous' || !actor.subject) {
+            socket.emit('collab:error', {
+              message: 'Authentication is required',
+              projectId: parsedPreview.data.projectId,
+              fileId: parsedPreview.data.fileId,
+              requestId: parsedPreview.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
+          if (!session.authorizedSubjects.has(actor.subject)) {
+            socket.emit('collab:error', {
+              message: 'Not authorized for this file',
+              projectId: parsedPreview.data.projectId,
+              fileId: parsedPreview.data.fileId,
+              requestId: parsedPreview.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const canStillEdit = await canJoinFile(
+            actor,
+            parsedPreview.data.projectId,
+            parsedPreview.data.fileId,
+          )
+          if (!canStillEdit) {
+            socket.emit('collab:error', {
+              message: 'Not authorized for this file',
+              projectId: parsedPreview.data.projectId,
+              fileId: parsedPreview.data.fileId,
+              requestId: parsedPreview.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const isSnapshotTarget = await hasYjsSnapshotAtSequence(
+            actor,
+            parsedPreview.data.projectId,
+            parsedPreview.data.fileId,
+            parsedPreview.data.sequence,
+          )
+          if (!isSnapshotTarget) {
+            socket.emit('collab:error', {
+              message: 'Preview target must be a snapshot sequence',
+              projectId: parsedPreview.data.projectId,
+              fileId: parsedPreview.data.fileId,
+              requestId: parsedPreview.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const historyAtTarget = await loadYjsHistoryAtSequence(
+            actor,
+            parsedPreview.data.projectId,
+            parsedPreview.data.fileId,
+            parsedPreview.data.sequence,
+          )
+          if (!historyAtTarget) {
+            socket.emit('collab:error', {
+              message: 'Preview target state not found',
+              projectId: parsedPreview.data.projectId,
+              fileId: parsedPreview.data.fileId,
+              requestId: parsedPreview.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const targetDoc = new Y.Doc()
+          if (historyAtTarget.snapshot) {
+            Y.applyUpdate(targetDoc, historyAtTarget.snapshot)
+          }
+          historyAtTarget.updates.forEach((update) => {
+            Y.applyUpdate(targetDoc, update)
+          })
+
+          socket.emit('collab:doc:snapshot:preview:data', {
+            projectId: parsedPreview.data.projectId,
+            fileId: parsedPreview.data.fileId,
+            requestId: parsedPreview.data.requestId,
+            sequence: parsedPreview.data.sequence,
+            content: targetDoc.getText('content').toString(),
+            headSequence: session.lastSequence,
+          } satisfies DocSnapshotPreviewDataPayload)
+        })().catch(() => {
+          socket.emit('collab:error', {
+            message: 'Could not load snapshot preview',
+            projectId: parsedPreview.data.projectId,
+            fileId: parsedPreview.data.fileId,
+            requestId: parsedPreview.data.requestId,
           } satisfies ErrorEvent)
         })
       })

@@ -35,7 +35,11 @@ interface BottomDrawersProps {
   timelineIsLoading?: boolean
   timelineError?: string | null
   timelineRewindPending?: boolean
+  timelinePreviewPending?: boolean
+  timelinePreviewSequence?: number | null
+  timelinePreviewError?: string | null
   onTimelineRefresh?: () => void
+  onTimelinePreview?: (targetSequence: number) => void
   onTimelineRewind?: (targetSequence: number) => void
   onTimelineReturnToLatest?: () => void
 }
@@ -85,7 +89,11 @@ export default function BottomDrawers({
   timelineIsLoading = false,
   timelineError = null,
   timelineRewindPending = false,
+  timelinePreviewPending = false,
+  timelinePreviewSequence = null,
+  timelinePreviewError = null,
   onTimelineRefresh,
+  onTimelinePreview,
   onTimelineRewind,
   onTimelineReturnToLatest,
 }: BottomDrawersProps) {
@@ -95,9 +103,17 @@ export default function BottomDrawers({
   const isDragging = useRef(false)
   const [isResizing, setIsResizing] = useState(false)
   const [rewindConfirmSequence, setRewindConfirmSequence] = useState<number | null>(null)
+  const [replayTargetSequence, setReplayTargetSequence] = useState<number | null>(null)
   const isControlled = controlledActiveTab !== undefined
   const activeTab = isControlled ? controlledActiveTab : uncontrolledActiveTab
   const isOpen = activeTab !== null
+  const snapshotEntries = timelineEntries
+    .filter((entry) => entry.kind === 'snapshot')
+    .sort((left, right) => left.sequence - right.sequence)
+  const latestSnapshot = snapshotEntries.length > 0
+    ? snapshotEntries[snapshotEntries.length - 1]
+    : null
+  const selectedSnapshotSequence = replayTargetSequence ?? latestSnapshot?.sequence ?? null
 
   const setActiveTab = (next: DrawerTab | null) => {
     if (!isControlled) {
@@ -155,6 +171,19 @@ export default function BottomDrawers({
       document.body.style.userSelect = ''
     }
   }, [])
+
+  useEffect(() => {
+    if (snapshotEntries.length === 0) {
+      setReplayTargetSequence(null)
+      return
+    }
+
+    if (replayTargetSequence !== null && snapshotEntries.some((entry) => entry.sequence === replayTargetSequence)) {
+      return
+    }
+
+    setReplayTargetSequence(snapshotEntries[snapshotEntries.length - 1].sequence)
+  }, [replayTargetSequence, snapshotEntries])
 
   return (
     <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-50 flex flex-col justify-end">
@@ -304,60 +333,93 @@ export default function BottomDrawers({
                 </div>
               ) : null}
 
-              {timelineEntries.length === 0 && !timelineIsLoading ? (
-                <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
-                  No timeline entries yet for this file.
+              {timelinePreviewError ? (
+                <div className="flex items-center gap-2 rounded-xl border border-[rgba(178,72,55,0.32)] bg-[rgba(178,72,55,0.09)] p-3 text-xs text-[var(--sea-ink)]">
+                  <AlertTriangle size={13} className="text-[rgb(178,72,55)]" />
+                  {timelinePreviewError}
                 </div>
               ) : null}
 
-              {timelineEntries.map((entry) => {
-                const isHead = entry.sequence === timelineHeadSequence
-                const isSnapshot = entry.kind === 'snapshot'
+              {snapshotEntries.length === 0 && !timelineIsLoading ? (
+                <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
+                  No snapshots yet for this file. Save changes to create replay markers.
+                </div>
+              ) : null}
 
-                return (
-                  <article
-                    key={`${entry.kind}-${entry.sequence}-${entry.createdAt}`}
-                    className="relative overflow-hidden rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-3"
-                  >
-                    <span
-                      className={cn(
-                        'absolute bottom-0 left-0 top-0 w-[3px]',
-                        isSnapshot
-                          ? 'bg-[linear-gradient(180deg,var(--lagoon),var(--lagoon-deep))]'
-                          : 'bg-[linear-gradient(180deg,var(--kicker),color-mix(in_oklab,var(--kicker)_66%,black))]'
-                      )}
-                    />
-                    <div className="ml-2 flex items-start justify-between gap-3">
-                      <div>
-                        <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">
-                          {isSnapshot ? 'Snapshot' : 'Update'} #{entry.sequence}
-                        </p>
-                        <p className="m-0 mt-1 text-[11px] text-[var(--sea-ink-soft)]">
-                          {new Date(entry.createdAt).toLocaleString()}
-                        </p>
+              {snapshotEntries.length > 0 ? (
+                <div className="space-y-3 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.32)] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="m-0 text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--kicker)]">Replay Bar</p>
+                    <span className="text-[11px] text-[var(--sea-ink-soft)]">{snapshotEntries.length} snapshots</span>
+                  </div>
+
+                  <div className="relative px-2 py-3">
+                    <div className="absolute left-2 right-2 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-[rgba(99,122,138,0.3)]" />
+
+                    <div className="relative flex items-center justify-between gap-2">
+                      {snapshotEntries.map((entry) => {
+                        const isSelected = entry.sequence === selectedSnapshotSequence
+                        const isHead = entry.sequence === timelineHeadSequence
+
+                        return (
+                          <button
+                            key={`snapshot-${entry.sequence}`}
+                            type="button"
+                            onClick={() => {
+                              setReplayTargetSequence(entry.sequence)
+                              onTimelinePreview?.(entry.sequence)
+                            }}
+                            className={cn(
+                              'relative z-10 h-4 w-4 rounded-full border transition-all',
+                              isSelected
+                                ? 'scale-110 border-[var(--lagoon-deep)] bg-[var(--lagoon)] shadow-[0_0_0_4px_rgba(var(--lagoon-rgb),0.2)]'
+                                : 'border-[var(--line)] bg-[color-mix(in_oklab,var(--surface-strong)_88%,var(--bg-base)_12%)] hover:border-[var(--lagoon)]',
+                              timelineRewindPending || timelinePreviewPending ? 'pointer-events-none opacity-60' : ''
+                            )}
+                            aria-label={`Select snapshot ${entry.sequence}`}
+                            title={`Snapshot #${entry.sequence} - ${new Date(entry.createdAt).toLocaleString()}`}
+                          >
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {selectedSnapshotSequence !== null ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.45)] px-3 py-2">
+                      <div className="text-xs text-[var(--sea-ink)]">
+                        <span className="font-semibold">Target:</span> snapshot #{selectedSnapshotSequence}
+                        {timelinePreviewSequence === selectedSnapshotSequence ? ' (previewing)' : ''}
                       </div>
-                      <span className={cn(
-                        'rounded-full px-2 py-1 text-[10px] font-bold',
-                        isHead
-                          ? 'bg-[rgba(var(--lagoon-rgb),0.14)] text-[var(--lagoon-deep)]'
-                          : 'bg-[rgba(99,122,138,0.14)] text-[var(--sea-ink-soft)]'
-                      )}>
-                        {isHead ? 'latest' : formatRelativeTime(entry.createdAt)}
-                      </span>
+                      <div className="text-[11px] text-[var(--sea-ink-soft)]">
+                        {formatRelativeTime(
+                          snapshotEntries.find((entry) => entry.sequence === selectedSnapshotSequence)?.createdAt ?? new Date().toISOString()
+                        )}
+                      </div>
                     </div>
-                    <div className="ml-2 mt-3 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setRewindConfirmSequence(entry.sequence)}
-                        className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.4)] px-2 py-1 text-[11px] font-semibold text-[var(--sea-ink)] transition-colors hover:bg-[rgba(var(--chip-bg-rgb),0.65)] disabled:opacity-45"
-                        disabled={timelineRewindPending || isHead}
-                      >
-                        <RotateCcw size={12} /> rewind here
-                      </button>
-                    </div>
-                  </article>
-                )
-              })}
+                  ) : null}
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedSnapshotSequence !== null) {
+                          setRewindConfirmSequence(selectedSnapshotSequence)
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.4)] px-2 py-1 text-[11px] font-semibold text-[var(--sea-ink)] transition-colors hover:bg-[rgba(var(--chip-bg-rgb),0.65)] disabled:opacity-45"
+                      disabled={
+                        timelineRewindPending
+                        || timelinePreviewPending
+                        || selectedSnapshotSequence === null
+                        || selectedSnapshotSequence === timelineHeadSequence
+                      }
+                    >
+                      <RotateCcw size={12} /> rewind to selected snapshot
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -455,6 +517,10 @@ export default function BottomDrawers({
                 type="button"
                 onClick={() => {
                   if (rewindConfirmSequence !== null) {
+                    const selected = snapshotEntries.find((entry) => entry.sequence === rewindConfirmSequence)
+                    if (!selected) {
+                      return
+                    }
                     onTimelineRewind?.(rewindConfirmSequence)
                   }
                   setRewindConfirmSequence(null)

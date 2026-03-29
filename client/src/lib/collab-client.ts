@@ -43,6 +43,13 @@ interface DocRewindResultPayload extends DocKey {
   appliedSequence: number
 }
 
+interface DocSnapshotPreviewDataPayload extends DocKey {
+  requestId?: string
+  sequence: number
+  content: string
+  headSequence: number
+}
+
 interface ErrorPayload {
   message?: string
   projectId?: string
@@ -64,6 +71,14 @@ export interface CollabDocRewindResult {
   previousHeadSequence: number
   targetSequence: number
   appliedSequence: number
+}
+
+export interface CollabDocSnapshotPreview {
+  projectId: string
+  fileId: string
+  sequence: number
+  content: string
+  headSequence: number
 }
 
 interface ConnectedPayload {
@@ -343,7 +358,7 @@ export class CollabClient {
     }
 
     const onDocChange = (update: Uint8Array, origin: unknown) => {
-      if (origin === 'remote' || isApplyingRemote) {
+      if (origin === 'remote' || origin === 'preview' || isApplyingRemote) {
         return
       }
 
@@ -738,6 +753,59 @@ export class CollabClient {
         requestId,
         targetSequence,
         expectedHeadSequence,
+      })
+    })
+  }
+
+  async getSnapshotPreview(
+    projectId: string,
+    fileId: string,
+    sequence: number,
+  ): Promise<CollabDocSnapshotPreview> {
+    const socket = await this.connect()
+    const requestId = createRequestId()
+
+    return new Promise<CollabDocSnapshotPreview>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error('Timed out waiting for snapshot preview'))
+      }, 6000)
+
+      const onPreview = (payload: DocSnapshotPreviewDataPayload) => {
+        if (payload.projectId !== projectId || payload.fileId !== fileId) {
+          return
+        }
+
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        resolve(payload)
+      }
+
+      const onError = (payload: ErrorPayload) => {
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        reject(new Error(payload.message ?? 'Could not load snapshot preview'))
+      }
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        socket.off('collab:doc:snapshot:preview:data', onPreview)
+        socket.off('collab:error', onError)
+      }
+
+      socket.on('collab:doc:snapshot:preview:data', onPreview)
+      socket.on('collab:error', onError)
+      socket.emit('collab:doc:snapshot:preview', {
+        projectId,
+        fileId,
+        sequence,
+        requestId,
       })
     })
   }

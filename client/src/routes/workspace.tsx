@@ -598,10 +598,31 @@ function WorkspaceWithHostedAuth() {
     onRunError: toastError,
   })
 
+  const {
+    collabState,
+    onEditorMount,
+    markSaved,
+    timelineState,
+    previewState,
+    loadTimeline,
+    previewSnapshot,
+    clearPreviewAndRestoreHead,
+    clearPreviewAfterRewind,
+    cancelPreviewRequests,
+    rewindToSequence,
+  } = useCollabDoc({
+    projectId: activeProjectId,
+    fileId: activeFileId,
+    onFileCreated: onCollabFileCreated,
+    onFileUpdated: onCollabFileUpdated,
+    onFileDeleted: onCollabFileDeleted,
+    onDirtyStateChanged: onCollabDirtyStateChanged,
+  })
+
   useEffect(() => {
     clearAutosaveTimeout()
 
-    if (!isAuthenticated || !activeFile || !localIsDirty) {
+    if (!isAuthenticated || !activeFile || !localIsDirty || previewState.isActive) {
       return
     }
 
@@ -620,25 +641,10 @@ function WorkspaceWithHostedAuth() {
     editorValue,
     isAuthenticated,
     localIsDirty,
+    previewState.isActive,
     saveFileMutation.isPending,
     triggerSave,
   ])
-
-  const {
-    collabState,
-    onEditorMount,
-    markSaved,
-    timelineState,
-    loadTimeline,
-    rewindToSequence,
-  } = useCollabDoc({
-    projectId: activeProjectId,
-    fileId: activeFileId,
-    onFileCreated: onCollabFileCreated,
-    onFileUpdated: onCollabFileUpdated,
-    onFileDeleted: onCollabFileDeleted,
-    onDirtyStateChanged: onCollabDirtyStateChanged,
-  })
 
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
 
@@ -822,6 +828,11 @@ function WorkspaceWithHostedAuth() {
         return
       }
 
+      if (previewState.isActive) {
+        toast('Exit timeline preview before saving', 'info', 2500)
+        return
+      }
+
       triggerSave(activeFile.id, editorValue)
     }
 
@@ -829,7 +840,7 @@ function WorkspaceWithHostedAuth() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [activeFile, editorValue, isAuthenticated, localIsDirty, saveFileMutation.isPending, triggerSave])
+  }, [activeFile, editorValue, isAuthenticated, localIsDirty, previewState.isActive, saveFileMutation.isPending, triggerSave])
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -892,6 +903,15 @@ function WorkspaceWithHostedAuth() {
       rightPanel.resize(SIDEBAR_LAYOUT.right.minSize)
     }
   }, [isRightSidebarOpen, rightPanelRef])
+
+  useEffect(() => {
+    if (bottomDrawerTab !== 'timeline' && previewState.isActive) {
+      cancelPreviewRequests()
+      void clearPreviewAndRestoreHead().catch(() => {
+        // error is reflected via preview state
+      })
+    }
+  }, [bottomDrawerTab, cancelPreviewRequests, clearPreviewAndRestoreHead, previewState.isActive])
 
   useEffect(() => {
     if (bottomDrawerTab !== 'timeline') {
@@ -1327,12 +1347,40 @@ function WorkspaceWithHostedAuth() {
             timelineIsLoading={timelineState.isLoading}
             timelineError={timelineState.error}
             timelineRewindPending={timelineRewindPending}
+            timelinePreviewPending={previewState.isLoading}
+            timelinePreviewSequence={previewState.sequence}
+            timelinePreviewError={previewState.error}
             onTimelineRefresh={() => {
               void loadTimeline()
+            }}
+            onTimelinePreview={(targetSequence) => {
+              if (!activeProjectId || !activeFileId) {
+                return
+              }
+
+              const targetIsSnapshot = timelineState.entries.some((entry) => {
+                return entry.sequence === targetSequence && entry.kind === 'snapshot'
+              })
+              if (!targetIsSnapshot) {
+                toastError('Preview target must be a snapshot sequence')
+                return
+              }
+
+              void previewSnapshot(targetSequence).catch((error: unknown) => {
+                toastError(error instanceof Error ? error.message : 'Could not preview snapshot')
+              })
             }}
             onTimelineRewind={(targetSequence) => {
               if (!activeProjectId || !activeFileId) {
                 toastError('Select a file before rewinding timeline')
+                return
+              }
+
+              const targetIsSnapshot = timelineState.entries.some((entry) => {
+                return entry.sequence === targetSequence && entry.kind === 'snapshot'
+              })
+              if (!targetIsSnapshot) {
+                toastError('Rewind target must be a snapshot sequence')
                 return
               }
 
@@ -1343,6 +1391,9 @@ function WorkspaceWithHostedAuth() {
 
               setTimelineRewindPending(true)
               void rewindToSequence(targetSequence, headBeforeRewind)
+                .then((result) => {
+                  return clearPreviewAfterRewind().then(() => result)
+                })
                 .then((result) => {
                   success(`Rewound to sequence #${result.targetSequence}`)
                 })
@@ -1366,6 +1417,9 @@ function WorkspaceWithHostedAuth() {
 
               setTimelineRewindPending(true)
               void rewindToSequence(targetSequence, timelineState.headSequence)
+                .then(() => {
+                  return clearPreviewAfterRewind()
+                })
                 .then(() => {
                   success(`Returned to latest snapshot #${targetSequence}`)
                   setTimelineReturnSequence(null)

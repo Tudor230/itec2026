@@ -216,6 +216,32 @@ export function createCollabServer(
 
       return yjsHistoryRepository.getHydratedStateAtSequence(fileId, sequence)
     },
+    async (actor, projectId, fileId, sequence) => {
+      if (!actor.subject) {
+        return false
+      }
+
+      const canAccess = await canEditProject(prisma, actor, projectId)
+      if (!canAccess) {
+        return false
+      }
+
+      const file = await prisma.file.findFirst({
+        where: {
+          id: fileId,
+          projectId,
+        },
+        select: {
+          id: true,
+        },
+      })
+
+      if (!file) {
+        return false
+      }
+
+      return yjsHistoryRepository.hasSnapshotAtSequence(fileId, sequence)
+    },
     async (actor, projectId, fileId, update) => {
       if (!actor.subject) {
         throw Object.assign(new Error('Authentication is required'), {

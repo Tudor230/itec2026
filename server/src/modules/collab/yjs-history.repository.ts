@@ -172,6 +172,24 @@ export class YjsHistoryRepository {
     return Math.max(latestUpdate?.sequence ?? 0, latestSnapshot?.sequence ?? 0)
   }
 
+  async hasSnapshotAtSequence(fileId: string, sequence: number) {
+    if (!Number.isInteger(sequence) || sequence <= 0) {
+      return false
+    }
+
+    const snapshot = await this.prisma.yjsSnapshot.findFirst({
+      where: {
+        fileId,
+        sequence,
+      },
+      select: {
+        id: true,
+      },
+    })
+
+    return Boolean(snapshot)
+  }
+
   async getHydratedState(fileId: string): Promise<YjsHydratedState | null> {
     const latestSnapshot = await this.prisma.yjsSnapshot.findFirst({
       where: { fileId },
