@@ -10,6 +10,30 @@ import { authBoundaryMiddleware } from '../auth/auth-boundary.middleware.js'
 import { createInvitesRouter } from './invites.router.js'
 import { createProjectsRouter } from './projects.router.js'
 
+type InviteRow = {
+  id: string
+  projectId: string
+  tokenHash: string
+  role: string
+  createdBySubject: string
+  expiresAt: Date
+  consumedAt: Date | null
+  consumedBySubject: string | null
+  revokedAt: Date | null
+  createdAt: Date
+}
+
+type MemberRow = {
+  id: string
+  projectId: string
+  subject: string
+  displayName: string | null
+  email: string | null
+  role: string
+  addedBySubject: string | null
+  createdAt: Date
+}
+
 const TEST_JWT_SECRET = 'test-jwt-secret'
 process.env.AUTH_JWT_HS256_SECRET = TEST_JWT_SECRET
 process.env.AUTH_JWT_ISSUER = 'https://issuer.test/'
@@ -435,13 +459,280 @@ class InMemoryProjectTable {
   }
 }
 
+class InMemoryProjectMembersTable {
+  private rows: MemberRow[] = []
+
+  async findFirst(args: {
+    where: {
+      projectId: string
+      subject: string
+      role?: string
+    }
+    select?: {
+      id: true
+    }
+  }): Promise<{ id: string } | null> {
+    const found = this.rows.find((row) => {
+      if (args.where.role !== undefined) {
+        return row.projectId === args.where.projectId
+          && row.subject === args.where.subject
+          && row.role === args.where.role
+      }
+
+      return row.projectId === args.where.projectId && row.subject === args.where.subject
+    })
+
+    return found ? { id: found.id } : null
+  }
+
+  async findMany(args: {
+    where: {
+      projectId: string
+    }
+    orderBy: {
+      createdAt: 'asc' | 'desc'
+    }
+  }): Promise<Array<{ subject: string; displayName: string | null; email: string | null; role: string }>> {
+    const sorted = this.rows
+      .filter((row) => row.projectId === args.where.projectId)
+      .sort((left, right) => {
+        if (args.orderBy.createdAt === 'asc') {
+          return left.createdAt.getTime() - right.createdAt.getTime()
+        }
+
+        return right.createdAt.getTime() - left.createdAt.getTime()
+      })
+
+    return sorted.map((row) => ({
+      subject: row.subject,
+      displayName: row.displayName,
+      email: row.email,
+      role: row.role,
+    }))
+  }
+
+  async upsert(args: {
+    where: {
+      projectId_subject: {
+        projectId: string
+        subject: string
+      }
+    }
+    create: {
+      id: string
+      projectId: string
+      subject: string
+      displayName: string | null
+      email: string | null
+      role: string
+      addedBySubject: string | null
+    }
+    update: {
+      displayName: string | null
+      email: string | null
+      role: string
+      addedBySubject: string | null
+    }
+  }): Promise<MemberRow> {
+    const key = args.where.projectId_subject
+    const existing = this.rows.find((row) => {
+      return row.projectId === key.projectId && row.subject === key.subject
+    })
+
+    if (existing) {
+      const updated: MemberRow = {
+        ...existing,
+        displayName: args.update.displayName,
+        email: args.update.email,
+        role: args.update.role,
+        addedBySubject: args.update.addedBySubject,
+      }
+
+      this.rows = this.rows.map((row) => (row.id === existing.id ? updated : row))
+      return updated
+    }
+
+    const row: MemberRow = {
+      id: args.create.id,
+      projectId: args.create.projectId,
+      subject: args.create.subject,
+      displayName: args.create.displayName,
+      email: args.create.email,
+      role: args.create.role,
+      addedBySubject: args.create.addedBySubject,
+      createdAt: new Date(),
+    }
+
+    this.rows = [...this.rows, row]
+    return row
+  }
+
+  async updateMany(args: {
+    where: {
+      projectId: string
+      subject: string
+    }
+    data: {
+      displayName: string
+      email: string | null
+    }
+  }): Promise<{ count: number }> {
+    let count = 0
+
+    this.rows = this.rows.map((row) => {
+      if (row.projectId !== args.where.projectId || row.subject !== args.where.subject) {
+        return row
+      }
+
+      count += 1
+
+      return {
+        ...row,
+        displayName: args.data.displayName,
+        email: args.data.email,
+      }
+    })
+
+    return { count }
+  }
+}
+
+class InMemoryProjectInvitesTable {
+  private rows: InviteRow[] = []
+
+  async create(args: {
+    data: {
+      id: string
+      projectId: string
+      tokenHash: string
+      role: string
+      createdBySubject: string
+      expiresAt: Date
+    }
+  }): Promise<InviteRow> {
+    const row: InviteRow = {
+      id: args.data.id,
+      projectId: args.data.projectId,
+      tokenHash: args.data.tokenHash,
+      role: args.data.role,
+      createdBySubject: args.data.createdBySubject,
+      expiresAt: new Date(args.data.expiresAt),
+      consumedAt: null,
+      consumedBySubject: null,
+      revokedAt: null,
+      createdAt: new Date(),
+    }
+
+    this.rows = [...this.rows, row]
+    return { ...row }
+  }
+
+  async findFirst(_args: {
+    where: {
+      tokenHash: string
+    }
+    include?: {
+      project: {
+        select: {
+          id: true
+          name: true
+        }
+      }
+    }
+  }) {
+    return null
+  }
+
+  async update(_args: {
+    where: {
+      id: string
+    }
+    data: {
+      consumedAt?: Date
+      consumedBySubject?: string
+      revokedAt?: Date
+    }
+  }): Promise<InviteRow> {
+    throw new Error('Not implemented for this test double')
+  }
+
+  async updateMany(args: {
+    where: {
+      id: string
+      projectId?: string
+      consumedAt: null
+      revokedAt: null
+      expiresAt: {
+        gt: Date
+      }
+    }
+    data: {
+      consumedAt?: Date
+      consumedBySubject?: string
+      revokedAt?: Date
+    }
+  }): Promise<{ count: number }> {
+    let count = 0
+
+    this.rows = this.rows.map((row) => {
+      if (row.id !== args.where.id) {
+        return row
+      }
+
+      if (args.where.projectId !== undefined && row.projectId !== args.where.projectId) {
+        return row
+      }
+
+      if (row.consumedAt !== null || row.revokedAt !== null || row.expiresAt.getTime() <= args.where.expiresAt.gt.getTime()) {
+        return row
+      }
+
+      count += 1
+      return {
+        ...row,
+        consumedAt: args.data.consumedAt ?? row.consumedAt,
+        consumedBySubject: args.data.consumedBySubject ?? row.consumedBySubject,
+        revokedAt: args.data.revokedAt ?? row.revokedAt,
+      }
+    })
+
+    return { count }
+  }
+
+  async findMany(args: {
+    where: {
+      projectId: string
+      consumedAt: null
+      revokedAt: null
+      expiresAt: {
+        gt: Date
+      }
+    }
+    orderBy: {
+      createdAt: 'desc'
+    }
+  }): Promise<InviteRow[]> {
+    return this.rows
+      .filter((row) => {
+        return row.projectId === args.where.projectId
+          && row.consumedAt === null
+          && row.revokedAt === null
+          && row.expiresAt.getTime() > args.where.expiresAt.gt.getTime()
+      })
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map((row) => ({ ...row }))
+  }
+}
+
 function createPrismaDouble() {
+  const project = new InMemoryProjectTable()
   const projectMember = new InMemoryProjectMembersTable()
-  const project = new InMemoryProjectTable(() => projectMember.rowsForRead())
   const projectInvite = new InMemoryProjectInvitesTable()
 
   const prisma = {
     project,
+    projectMember,
+    projectInvite,
     projectMember,
     projectInvite,
     $transaction: async <T>(callback: (transaction: unknown) => Promise<T>) => {
@@ -498,7 +789,7 @@ function authHeaders(token: string) {
   }
 }
 
-function createJwt(sub: string, jwtId: string) {
+function createJwt(sub: string, jwtId: string, profile?: { name?: string; email?: string }) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
   const payload = Buffer.from(
     JSON.stringify({
@@ -506,6 +797,8 @@ function createJwt(sub: string, jwtId: string) {
       jti: jwtId,
       iss: process.env.AUTH_JWT_ISSUER,
       aud: process.env.AUTH_JWT_AUDIENCE,
+      name: profile?.name,
+      email: profile?.email,
     }),
   ).toString('base64url')
   const signingInput = `${header}.${payload}`
@@ -768,5 +1061,112 @@ describe('projects router', () => {
       dashboardAfterRemovePayload.data.collaborators.some((item: { subject: string }) => item.subject === memberSubject),
       false,
     )
+  })
+
+  it('returns project members including owner snapshot', async () => {
+    const token = createJwt('auth0|member-owner', 'jwt-member-owner', {
+      name: 'Member Owner',
+      email: 'member.owner@example.com',
+    })
+
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: 'Members project' }),
+    })
+    const createdPayload = await created.json()
+
+    const membersResponse = await fetch(`${baseUrl}/api/projects/${createdPayload.data.id}/members`, {
+      headers: authHeaders(token),
+    })
+    const membersPayload = await membersResponse.json()
+
+    assert.equal(created.status, 201)
+    assert.equal(membersResponse.status, 200)
+    assert.equal(Array.isArray(membersPayload.data), true)
+    assert.equal(membersPayload.data.length >= 1, true)
+    assert.equal(membersPayload.data[0].subject, 'auth0|member-owner')
+    assert.equal(membersPayload.data[0].displayName, 'Member Owner')
+    assert.equal(membersPayload.data[0].email, 'member.owner@example.com')
+  })
+
+  it('updates member profile snapshot for current actor', async () => {
+    const token = createJwt('auth0|snapshot-user', 'jwt-snapshot-user', {
+      name: 'Snapshot User',
+      email: 'snapshot.user@example.com',
+    })
+
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: 'Snapshot project' }),
+    })
+    const createdPayload = await created.json()
+    const projectId = createdPayload.data.id
+
+    const patch = await fetch(`${baseUrl}/api/projects/${projectId}/members/me`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        displayName: 'Snapshot User Updated',
+        email: 'snapshot.updated@example.com',
+      }),
+    })
+    const patchPayload = await patch.json()
+
+    const listed = await fetch(`${baseUrl}/api/projects/${projectId}/members`, {
+      headers: authHeaders(token),
+    })
+    const listedPayload = await listed.json()
+
+    assert.equal(patch.status, 200)
+    assert.equal(patchPayload.data.updated, true)
+    assert.equal(listed.status, 200)
+    assert.equal(listedPayload.data[0].displayName, 'Snapshot User Updated')
+    assert.equal(listedPayload.data[0].email, 'snapshot.updated@example.com')
+  })
+
+  it('lists and revokes active invite links', async () => {
+    const token = createJwt('auth0|invite-owner', 'jwt-invite-owner')
+
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: 'Invites project' }),
+    })
+    const createdPayload = await created.json()
+    const projectId = createdPayload.data.id
+
+    const inviteCreated = await fetch(`${baseUrl}/api/projects/${projectId}/invites`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ role: 'editor' }),
+    })
+    const inviteCreatedPayload = await inviteCreated.json()
+
+    const activeInvites = await fetch(`${baseUrl}/api/projects/${projectId}/invites`, {
+      headers: authHeaders(token),
+    })
+    const activeInvitesPayload = await activeInvites.json()
+
+    const revokeResponse = await fetch(`${baseUrl}/api/projects/${projectId}/invites`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+      body: JSON.stringify({ inviteId: inviteCreatedPayload.data.id }),
+    })
+    const revokePayload = await revokeResponse.json()
+
+    const activeAfterRevoke = await fetch(`${baseUrl}/api/projects/${projectId}/invites`, {
+      headers: authHeaders(token),
+    })
+    const activeAfterRevokePayload = await activeAfterRevoke.json()
+
+    assert.equal(inviteCreated.status, 201)
+    assert.equal(activeInvites.status, 200)
+    assert.equal(activeInvitesPayload.data.length, 1)
+    assert.equal(revokeResponse.status, 200)
+    assert.equal(revokePayload.data.revoked, true)
+    assert.equal(activeAfterRevoke.status, 200)
+    assert.equal(activeAfterRevokePayload.data.length, 0)
   })
 })

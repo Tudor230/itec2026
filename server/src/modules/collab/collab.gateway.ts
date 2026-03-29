@@ -151,6 +151,22 @@ const docSnapshotPreviewSchema = z.object({
 
 const projectLeaveSchema = z.string().trim().min(1)
 
+const docCursorSchema = z.object({
+  projectId: z.string().trim().min(1),
+  fileId: z.string().trim().min(1),
+  lineNumber: z.number().int().min(1).max(1_000_000),
+  column: z.number().int().min(1).max(1_000_000),
+  selectionStartLineNumber: z.number().int().min(1).max(1_000_000).optional(),
+  selectionStartColumn: z.number().int().min(1).max(1_000_000).optional(),
+  selectionEndLineNumber: z.number().int().min(1).max(1_000_000).optional(),
+  selectionEndColumn: z.number().int().min(1).max(1_000_000).optional(),
+})
+
+const projectActivitySchema = z.object({
+  projectId: z.string().trim().min(1),
+  fileId: z.string().trim().min(1).nullable(),
+})
+
 const terminalListSchema = z.object({
   projectId: z.string().trim().min(1),
 })
@@ -265,6 +281,30 @@ interface DocSnapshotPreviewDataPayload {
   sequence: number
   content: string
   headSequence: number
+}
+
+interface DocCursorPayload {
+  projectId: string
+  fileId: string
+  socketId: string
+  subject: string
+  lineNumber: number
+  column: number
+  selectionStartLineNumber?: number
+  selectionStartColumn?: number
+  selectionEndLineNumber?: number
+  selectionEndColumn?: number
+  updatedAt: string
+  cleared?: boolean
+}
+
+interface ProjectActivityPayload {
+  projectId: string
+  fileId: string | null
+  socketId: string
+  subject: string
+  updatedAt: string
+  cleared?: boolean
 }
 
 interface TerminalListPayload {
@@ -398,6 +438,8 @@ export function createCollabGateway(
   const snapshotIntervalUpdates = readPositiveInt(process.env.COLLAB_SNAPSHOT_INTERVAL_UPDATES, 200)
   const maxTerminalInputsPerSecond = readPositiveInt(process.env.COLLAB_MAX_TERMINAL_INPUTS_PER_SECOND, 10)
   const maxTerminalRequestsPerTenSeconds = readPositiveInt(process.env.COLLAB_MAX_TERMINAL_REQUESTS_PER_10S, 20)
+  const maxCursorUpdatesPerSecond = readPositiveInt(process.env.COLLAB_MAX_CURSOR_UPDATES_PER_SECOND, 40)
+  const maxActivityUpdatesPerSecond = readPositiveInt(process.env.COLLAB_MAX_ACTIVITY_UPDATES_PER_SECOND, 10)
   const unregisterFileCreatedListener = registerCollabFileCreatedListener((file) => {
     io.to(projectRoom(file.projectId)).emit('collab:file:created', file)
   })
@@ -554,6 +596,15 @@ export function createCollabGateway(
             void socket.leave(joinedTerminalRoom)
           })
           emitTerminalList(io, parsedProjectId.data, terminalSessionManager)
+
+          io.to(room).emit('collab:project:activity', {
+            projectId: parsedProjectId.data,
+            fileId: null,
+            socketId: socket.id,
+            subject: actor.subject,
+            updatedAt: new Date().toISOString(),
+            cleared: true,
+          } satisfies ProjectActivityPayload)
         }
 
         io.to(room).emit('collab:presence', {
@@ -621,6 +672,19 @@ export function createCollabGateway(
         clearDirtyStateForSocket(io, dirtySocketsByDocRoom, room, socket.id)
         void socket.leave(room)
         removeSocketFromDocSession(docSessions, room, socket.id)
+
+        if (actor.subject) {
+          socket.to(room).emit('collab:doc:cursor', {
+            projectId: parsedLeave.data.projectId,
+            fileId: parsedLeave.data.fileId,
+            socketId: socket.id,
+            subject: actor.subject,
+            lineNumber: 1,
+            column: 1,
+            updatedAt: new Date().toISOString(),
+            cleared: true,
+          } satisfies DocCursorPayload)
+        }
 
         io.to(room).emit('collab:doc:presence', {
           type: 'left',
@@ -1384,6 +1448,80 @@ export function createCollabGateway(
         })
       })
 
+      socket.on('collab:doc:cursor', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'doc-cursor',
+          maxCursorUpdatesPerSecond,
+          1_000,
+        )
+
+        if (!allowed) {
+          return
+        }
+
+        const parsed = docCursorSchema.safeParse(payload)
+        if (!parsed.success) {
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          return
+        }
+
+        const room = docRoom(parsed.data.projectId, parsed.data.fileId)
+        if (!joinedDocRooms.has(room) || !joinedRooms.has(room)) {
+          return
+        }
+
+        const session = docSessions.get(room)
+        if (!session || !session.authorizedSubjects.has(actor.subject)) {
+          return
+        }
+
+        socket.to(room).emit('collab:doc:cursor', {
+          ...parsed.data,
+          socketId: socket.id,
+          subject: actor.subject,
+          updatedAt: new Date().toISOString(),
+        } satisfies DocCursorPayload)
+      })
+
+      socket.on('collab:project:activity', (payload: unknown) => {
+        const allowed = consumeRateLimit(
+          rateCounters,
+          'project-activity',
+          maxActivityUpdatesPerSecond,
+          1_000,
+        )
+
+        if (!allowed) {
+          return
+        }
+
+        const parsed = projectActivitySchema.safeParse(payload)
+        if (!parsed.success) {
+          return
+        }
+
+        if (actor.type === 'anonymous' || !actor.subject) {
+          return
+        }
+
+        const room = projectRoom(parsed.data.projectId)
+        if (!joinedRooms.has(room)) {
+          return
+        }
+
+        socket.to(room).emit('collab:project:activity', {
+          projectId: parsed.data.projectId,
+          fileId: parsed.data.fileId,
+          socketId: socket.id,
+          subject: actor.subject,
+          updatedAt: new Date().toISOString(),
+        } satisfies ProjectActivityPayload)
+      })
+
       socket.on('collab:terminal:list', (payload: unknown) => {
         const allowed = consumeRateLimit(
           rateCounters,
@@ -2091,6 +2229,36 @@ export function createCollabGateway(
         }
 
         joinedRooms.forEach((room) => {
+          if (actorSubject && room.startsWith('doc:')) {
+            const key = parseDocRoom(room)
+            if (key) {
+              io.to(room).emit('collab:doc:cursor', {
+                projectId: key.projectId,
+                fileId: key.fileId,
+                socketId: socket.id,
+                subject: actorSubject,
+                lineNumber: 1,
+                column: 1,
+                updatedAt: new Date().toISOString(),
+                cleared: true,
+              } satisfies DocCursorPayload)
+            }
+          }
+
+          if (actorSubject && room.startsWith('project:')) {
+            const projectId = parseProjectRoom(room)
+            if (projectId) {
+              io.to(room).emit('collab:project:activity', {
+                projectId,
+                fileId: null,
+                socketId: socket.id,
+                subject: actorSubject,
+                updatedAt: new Date().toISOString(),
+                cleared: true,
+              } satisfies ProjectActivityPayload)
+            }
+          }
+
           clearDirtyStateForSocket(io, dirtySocketsByDocRoom, room, socket.id)
           removeSocketFromDocSession(docSessions, room, socket.id)
           joinedDocRooms.delete(room)

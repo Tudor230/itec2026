@@ -128,11 +128,35 @@ export interface CollabDocDirtyStatePayload extends DocKey {
   updatedAt: string
 }
 
+export interface CollabDocCursorPayload extends DocKey {
+  socketId: string
+  subject: string
+  lineNumber: number
+  column: number
+  selectionStartLineNumber?: number
+  selectionStartColumn?: number
+  selectionEndLineNumber?: number
+  selectionEndColumn?: number
+  updatedAt: string
+  cleared?: boolean
+}
+
+export interface CollabProjectActivityPayload {
+  projectId: string
+  fileId: string | null
+  socketId: string
+  subject: string
+  updatedAt: string
+  cleared?: boolean
+}
+
 export type WatchProjectCallbacks = {
   onFileCreated?: (payload: CollabFileCreatedPayload) => void
   onFileUpdated?: (payload: CollabFileUpdatedPayload) => void
   onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
+  onDocCursorChanged?: (payload: CollabDocCursorPayload) => void
+  onProjectActivityChanged?: (payload: CollabProjectActivityPayload) => void
 }
 
 export interface CollabTerminalDescriptor {
@@ -501,10 +525,28 @@ export class CollabClient {
       callbacks.onDirtyStateChanged?.(payload)
     }
 
+    const onDocCursorChanged = (payload: CollabDocCursorPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onDocCursorChanged?.(payload)
+    }
+
+    const onProjectActivityChanged = (payload: CollabProjectActivityPayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onProjectActivityChanged?.(payload)
+    }
+
     socket.on('collab:file:created', onFileCreated)
     socket.on('collab:file:updated', onFileUpdated)
     socket.on('collab:file:deleted', onFileDeleted)
     socket.on('collab:doc:dirty-state', onDirtyStateChanged)
+    socket.on('collab:doc:cursor', onDocCursorChanged)
+    socket.on('collab:project:activity', onProjectActivityChanged)
     this.retainProject(socket, projectId)
 
     return () => {
@@ -513,7 +555,37 @@ export class CollabClient {
       socket.off('collab:file:updated', onFileUpdated)
       socket.off('collab:file:deleted', onFileDeleted)
       socket.off('collab:doc:dirty-state', onDirtyStateChanged)
+      socket.off('collab:doc:cursor', onDocCursorChanged)
+      socket.off('collab:project:activity', onProjectActivityChanged)
     }
+  }
+
+  async sendDocCursor(
+    projectId: string,
+    fileId: string,
+    payload: {
+      lineNumber: number
+      column: number
+      selectionStartLineNumber?: number
+      selectionStartColumn?: number
+      selectionEndLineNumber?: number
+      selectionEndColumn?: number
+    },
+  ) {
+    const socket = await this.connect()
+    socket.emit('collab:doc:cursor', {
+      projectId,
+      fileId,
+      ...payload,
+    })
+  }
+
+  async sendProjectActivity(projectId: string, fileId: string | null) {
+    const socket = await this.connect()
+    socket.emit('collab:project:activity', {
+      projectId,
+      fileId,
+    })
   }
 
   async watchTerminals(
@@ -689,6 +761,10 @@ export class CollabClient {
 
   getCurrentSubject() {
     return this.currentSubject
+  }
+
+  getCurrentSocketId() {
+    return this.socket?.id ?? null
   }
 
   async markDocumentSaved(projectId: string, fileId: string) {

@@ -49,6 +49,38 @@ export interface ProjectDashboardDto {
   activeInvites: ProjectInviteDto[]
 }
 
+export interface ActiveProjectInviteDto {
+  id: string
+  projectId: string
+  role: 'editor'
+  createdBySubject: string
+  expiresAt: string
+  createdAt: string
+}
+
+export interface ProjectMemberDto {
+  subject: string
+  displayName: string | null
+  email: string | null
+  role: string
+}
+
+export interface ActiveProjectInviteDto {
+  id: string
+  projectId: string
+  role: 'editor'
+  createdBySubject: string
+  expiresAt: string
+  createdAt: string
+}
+
+export interface ProjectMemberDto {
+  subject: string
+  displayName: string | null
+  email: string | null
+  role: string
+}
+
 export interface InvitePreviewDto {
   projectId: string
   projectName: string
@@ -290,6 +322,54 @@ export function createProjectInvite(projectId: string, accessToken?: string | nu
     body: {
       role: 'editor',
     },
+    accessToken,
+  })
+}
+
+export function listProjectMembers(projectId: string, accessToken?: string | null) {
+  return apiRequest<ProjectMemberDto[]>(`/api/projects/${projectId}/members`, {
+    accessToken,
+  })
+}
+
+export function updateMyProjectMemberProfile(
+  projectId: string,
+  input: { displayName: string; email?: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<{ updated: boolean }>(`/api/projects/${projectId}/members/me`, {
+    method: 'PATCH',
+    body: input,
+    accessToken,
+  })
+}
+
+export function listProjectInvites(projectId: string, accessToken?: string | null) {
+  return apiRequest<ActiveProjectInviteDto[]>(`/api/projects/${projectId}/invites`, {
+    accessToken,
+  })
+}
+
+export function revokeProjectInvite(
+  projectId: string,
+  input: { inviteId: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<{ revoked: boolean }>(`/api/projects/${projectId}/invites`, {
+    method: 'DELETE',
+    body: input,
+    accessToken,
+  })
+}
+
+export function removeProjectMember(
+  projectId: string,
+  input: { subject: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<{ removed: boolean }>(`/api/projects/${projectId}/members`, {
+    method: 'DELETE',
+    body: input,
     accessToken,
   })
 }

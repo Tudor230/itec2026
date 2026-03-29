@@ -40,6 +40,8 @@ type MemberRow = {
   id: string
   projectId: string
   subject: string
+  displayName: string | null
+  email: string | null
   role: string
   addedBySubject: string | null
   createdAt: Date
@@ -245,10 +247,14 @@ class InMemoryProjectMembersTable {
       id: string
       projectId: string
       subject: string
+      displayName: string | null
+      email: string | null
       role: string
       addedBySubject: string | null
     }
     update: {
+      displayName: string | null
+      email: string | null
       role: string
       addedBySubject: string | null
     }
@@ -261,6 +267,8 @@ class InMemoryProjectMembersTable {
     if (existing) {
       const updated: MemberRow = {
         ...existing,
+        displayName: args.update.displayName,
+        email: args.update.email,
         role: args.update.role,
         addedBySubject: args.update.addedBySubject,
       }
@@ -280,6 +288,8 @@ class InMemoryProjectMembersTable {
       id: args.create.id,
       projectId: args.create.projectId,
       subject: args.create.subject,
+      displayName: args.create.displayName,
+      email: args.create.email,
       role: args.create.role,
       addedBySubject: args.create.addedBySubject,
       createdAt: new Date(),
@@ -522,6 +532,8 @@ function createPrismaDouble() {
         id: `member-${projectId}-${subject}`,
         projectId,
         subject,
+        displayName: null,
+        email: null,
         role,
         addedBySubject: null,
         createdAt: new Date(),

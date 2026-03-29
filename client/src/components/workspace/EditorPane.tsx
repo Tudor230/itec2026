@@ -23,7 +23,7 @@ interface EditorPaneProps {
   onAiDiffChange?: (nextValue: string) => void
   onAiDiffAccept?: () => void
   onAiDiffReject?: () => void
-  onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor) => void
+  onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor, monaco: typeof import('monaco-editor')) => void
   onChange: (nextValue: string) => void
 }
 
@@ -309,9 +309,9 @@ export default function EditorPane({
 
                     onChange(nextValue ?? '')
                   }}
-                  onMount={(editor) => {
+                  onMount={(editor, monaco) => {
                     setEditorInstance(editor)
-                    onEditorMount?.(editor)
+                    onEditorMount?.(editor, monaco)
                   }}
                   beforeMount={(monaco) => {
                     defineMonacoThemes(monaco)
