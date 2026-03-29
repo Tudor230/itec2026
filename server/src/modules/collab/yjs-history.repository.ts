@@ -156,4 +156,40 @@ export class YjsHistoryRepository {
       },
     })
   }
+
+  async replaceDocumentState(fileId: string, update: Uint8Array): Promise<{ sequence: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.yjsUpdate.deleteMany({
+        where: { fileId },
+      })
+
+      await tx.yjsSnapshot.deleteMany({
+        where: { fileId },
+      })
+
+      await tx.yjsAggregate.deleteMany({
+        where: { fileId },
+      })
+
+      const sequence = 1
+
+      await tx.yjsSnapshot.create({
+        data: {
+          id: createId(),
+          fileId,
+          sequence,
+          updateBase64: encodeBytes(update),
+        },
+      })
+
+      await tx.yjsAggregate.create({
+        data: {
+          fileId,
+          nextSequence: sequence,
+        },
+      })
+
+      return { sequence }
+    })
+  }
 }

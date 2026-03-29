@@ -48,6 +48,7 @@ import {
   type FileDto,
 } from '../services/projects-api'
 import {
+  type CollabDocExternalChangePayload,
   type CollabDocDirtyStatePayload,
   type CollabFileCreatedPayload,
   type CollabFileDeletedPayload,
@@ -95,7 +96,7 @@ const workspaceControlButtonClass =
 function WorkspaceWithHostedAuth() {
   const navigate = useNavigate()
   const search = Route.useSearch()
-  const { toast, success, error: toastError } = useToast()
+  const { toast, success, info, error: toastError } = useToast()
   const {
     getAccessTokenSilently,
     isAuthenticated,
@@ -135,6 +136,7 @@ function WorkspaceWithHostedAuth() {
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
   const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
   const autosaveTimeoutRef = useRef<number | null>(null)
+  const activeFileIdRef = useRef<string | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
 
@@ -299,6 +301,45 @@ function WorkspaceWithHostedAuth() {
       })
     }
   }, [queryClient])
+
+  const onCollabExternalDocChange = useCallback((payload: CollabDocExternalChangePayload) => {
+    if (payload.state === 'stale') {
+      setCollabDirtyByFileId((previous) => {
+        if (previous[payload.fileId]) {
+          return previous
+        }
+
+        return {
+          ...previous,
+          [payload.fileId]: true,
+        }
+      })
+
+      if (payload.fileId === activeFileIdRef.current) {
+        toastError('File changed externally. Save your edits or reopen to sync.')
+      }
+
+      return
+    }
+
+    setCollabDirtyByFileId((previous) => {
+      if (!(payload.fileId in previous)) {
+        return previous
+      }
+
+      const next = { ...previous }
+      delete next[payload.fileId]
+      return next
+    })
+
+    queryClient.invalidateQueries({
+      queryKey: ['workspace', 'files', true, payload.projectId],
+    }).catch(() => undefined)
+
+    if (payload.fileId === activeFileIdRef.current) {
+      info('Editor reloaded with terminal changes')
+    }
+  }, [info, queryClient, toastError])
 
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
@@ -629,6 +670,7 @@ function WorkspaceWithHostedAuth() {
     onFileUpdated: onCollabFileUpdated,
     onFileDeleted: onCollabFileDeleted,
     onDirtyStateChanged: onCollabDirtyStateChanged,
+    onExternalDocChange: onCollabExternalDocChange,
   })
 
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
@@ -706,6 +748,10 @@ function WorkspaceWithHostedAuth() {
       setActiveProjectId(projectsQuery.data[0].id)
     }
   }, [activeProjectId, isAuthenticated, projectsQuery.data, search.projectId])
+
+  useEffect(() => {
+    activeFileIdRef.current = activeFileId
+  }, [activeFileId])
 
   useEffect(() => {
     setActiveFileId(null)

@@ -233,6 +233,7 @@ export function createFilesRouter({
         path: file.path,
         createdAt: file.createdAt,
         updatedAt: file.updatedAt,
+        source: 'api',
       })
 
       response.json({
@@ -275,6 +276,7 @@ export function createFilesRouter({
       path: file.path,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,
+      source: 'api',
     })
 
     response.json({

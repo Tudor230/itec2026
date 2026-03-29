@@ -63,6 +63,8 @@ export class ProjectWorkspaceLiveSync {
           path: file.path,
           createdAt: file.createdAt,
           updatedAt: file.updatedAt,
+          source: 'workspace_sync',
+          content: file.content,
         })
       },
       emitDeleted: (file) => {

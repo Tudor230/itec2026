@@ -3,6 +3,7 @@ import { useAuth0 } from '@auth0/auth0-react'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import {
   CollabClient,
+  type CollabDocExternalChangePayload,
   type CollabDocDirtyStatePayload,
   type CollabFileCreatedPayload,
   type CollabFileDeletedPayload,
@@ -23,6 +24,7 @@ interface CollabDocParams {
   onFileUpdated?: (payload: CollabFileUpdatedPayload) => void
   onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
+  onExternalDocChange?: (payload: CollabDocExternalChangePayload) => void
 }
 
 interface CollabDocModelBinding {
@@ -41,6 +43,7 @@ export function useCollabDoc({
   onFileUpdated,
   onFileDeleted,
   onDirtyStateChanged,
+  onExternalDocChange,
 }: CollabDocParams) {
   const { getAccessTokenSilently } = useAuth0()
   const [bindingTargets, setBindingTargets] = useState<CollabDocModelBinding>({
@@ -102,8 +105,9 @@ export function useCollabDoc({
       onFileUpdated,
       onFileDeleted,
       onDirtyStateChanged,
+      onExternalDocChange,
     }
-  }, [onDirtyStateChanged, onFileCreated, onFileDeleted, onFileUpdated])
+  }, [onDirtyStateChanged, onExternalDocChange, onFileCreated, onFileDeleted, onFileUpdated])
 
   useEffect(() => {
     if (projectWatchDestroyRef.current) {

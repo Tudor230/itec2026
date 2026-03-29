@@ -37,6 +37,8 @@ export interface CollabFileUpdatedPayload {
   path: string
   createdAt: string
   updatedAt: string
+  source?: 'api' | 'workspace_sync'
+  content?: string
 }
 
 export interface CollabFileDeletedPayload {
@@ -51,11 +53,17 @@ export interface CollabDocDirtyStatePayload extends DocKey {
   updatedAt: string
 }
 
+export interface CollabDocExternalChangePayload extends DocKey {
+  state: 'stale' | 'reloaded'
+  updatedAt: string
+}
+
 export type WatchProjectCallbacks = {
   onFileCreated?: (payload: CollabFileCreatedPayload) => void
   onFileUpdated?: (payload: CollabFileUpdatedPayload) => void
   onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
+  onExternalDocChange?: (payload: CollabDocExternalChangePayload) => void
 }
 
 export interface CollabTerminalDescriptor {
@@ -405,10 +413,19 @@ export class CollabClient {
       callbacks.onDirtyStateChanged?.(payload)
     }
 
+    const onExternalDocChange = (payload: CollabDocExternalChangePayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onExternalDocChange?.(payload)
+    }
+
     socket.on('collab:file:created', onFileCreated)
     socket.on('collab:file:updated', onFileUpdated)
     socket.on('collab:file:deleted', onFileDeleted)
     socket.on('collab:doc:dirty-state', onDirtyStateChanged)
+    socket.on('collab:doc:external-change', onExternalDocChange)
     this.retainProject(socket, projectId)
 
     return () => {
@@ -417,6 +434,7 @@ export class CollabClient {
       socket.off('collab:file:updated', onFileUpdated)
       socket.off('collab:file:deleted', onFileDeleted)
       socket.off('collab:doc:dirty-state', onDirtyStateChanged)
+      socket.off('collab:doc:external-change', onExternalDocChange)
     }
   }
 

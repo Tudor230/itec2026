@@ -12,6 +12,8 @@ export interface CollabFileUpdatedEvent {
   path: string
   createdAt: string
   updatedAt: string
+  source?: 'api' | 'workspace_sync'
+  content?: string
 }
 
 export interface CollabFileDeletedEvent {

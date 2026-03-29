@@ -54,6 +54,17 @@ export type TerminalCommandAuthorizer = (
   projectId: string,
 ) => Promise<boolean>
 
+export interface CollabProjectSyncHooks {
+  onProjectJoin?: (projectId: string) => Promise<void> | void
+  onProjectLeave?: (projectId: string) => Promise<void> | void
+}
+
+export type ExternalDocResetPersister = (
+  projectId: string,
+  fileId: string,
+  update: Uint8Array,
+) => Promise<{ sequence: number } | null | void>
+
 type ConnectedEvent = {
   actorType: ActorContext['type']
   socketId: string
@@ -173,6 +184,13 @@ interface DocDirtyStatePayload {
   updatedAt: string
 }
 
+interface DocExternalChangePayload {
+  projectId: string
+  fileId: string
+  state: 'stale' | 'reloaded'
+  updatedAt: string
+}
+
 interface TerminalListPayload {
   projectId: string
   terminals: Array<{
@@ -254,6 +272,59 @@ function consumeRateLimit(
   return true
 }
 
+function toPublicFileUpdatedPayload(file: {
+  id: string
+  projectId: string
+  path: string
+  createdAt: string
+  updatedAt: string
+  source?: 'api' | 'workspace_sync'
+}) {
+  return {
+    id: file.id,
+    projectId: file.projectId,
+    path: file.path,
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+    source: file.source,
+  }
+}
+
+async function runQueuedLock<T>(
+  locks: Map<string, Promise<void>>,
+  key: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const previous = locks.get(key) ?? Promise.resolve()
+
+  let result: T | null = null
+  let actionError: unknown = null
+
+  const next = previous
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        result = await action()
+      } catch (error) {
+        actionError = error
+      }
+    })
+    .finally(() => {
+      if (locks.get(key) === next) {
+        locks.delete(key)
+      }
+    })
+
+  locks.set(key, next)
+  await next
+
+  if (actionError) {
+    throw actionError
+  }
+
+  return result as T
+}
+
 export function createCollabGateway(
   httpServer: HttpServer,
   resolveActor: SocketActorResolver,
@@ -265,6 +336,8 @@ export function createCollabGateway(
   saveYjsSnapshot: YjsSnapshotSaver,
   canUseTerminal: TerminalCommandAuthorizer,
   terminalSessionManager: TerminalSessionManager,
+  projectSyncHooks: CollabProjectSyncHooks = {},
+  persistExternalDocReset?: ExternalDocResetPersister,
 ) {
   const io = new Server(httpServer, {
     cors: {
@@ -273,6 +346,9 @@ export function createCollabGateway(
   })
   const docSessions = new Map<string, DocSession>()
   const dirtySocketsByDocRoom = new Map<string, Set<string>>()
+  const projectMemberCounts = new Map<string, number>()
+  const projectMemberLocks = new Map<string, Promise<void>>()
+  const docUpdateLocks = new Map<string, Promise<void>>()
   const pendingSessionInitializations = new Map<string, Promise<DocSession | null>>()
   const maxDocSessions = readPositiveInt(process.env.COLLAB_MAX_DOC_SESSIONS, 200)
   const maxDocsPerSocket = readPositiveInt(process.env.COLLAB_MAX_DOCS_PER_SOCKET, 12)
@@ -285,7 +361,84 @@ export function createCollabGateway(
     io.to(projectRoom(file.projectId)).emit('collab:file:created', file)
   })
   const unregisterFileUpdatedListener = registerCollabFileUpdatedListener((file) => {
-    io.to(projectRoom(file.projectId)).emit('collab:file:updated', file)
+    if (file.source === 'workspace_sync' && file.content !== undefined) {
+      const nextContent = file.content
+      const roomPrefix = `doc:${file.projectId}:`
+      const updatedAt = file.updatedAt
+
+      docSessions.forEach((session, room) => {
+        if (!room.startsWith(roomPrefix)) {
+          return
+        }
+
+        const key = parseDocRoom(room)
+        if (!key || key.fileId !== file.id) {
+          return
+        }
+
+        const hasDirtyClients = (dirtySocketsByDocRoom.get(room)?.size ?? 0) > 0
+        if (hasDirtyClients) {
+          io.to(projectRoom(file.projectId)).emit('collab:doc:external-change', {
+            projectId: file.projectId,
+            fileId: file.id,
+            state: 'stale',
+            updatedAt,
+          } satisfies DocExternalChangePayload)
+          return
+        }
+
+        void runQueuedLock(docUpdateLocks, room, async () => {
+          const isDirtyAfterLock = (dirtySocketsByDocRoom.get(room)?.size ?? 0) > 0
+          if (isDirtyAfterLock) {
+            io.to(projectRoom(file.projectId)).emit('collab:doc:external-change', {
+              projectId: file.projectId,
+              fileId: file.id,
+              state: 'stale',
+              updatedAt,
+            } satisfies DocExternalChangePayload)
+            return
+          }
+
+          const text = session.doc.getText('content')
+          const previousContent = text.toString()
+          if (previousContent === nextContent) {
+            return
+          }
+
+          if (previousContent.length > 0) {
+            text.delete(0, previousContent.length)
+          }
+          if (nextContent.length > 0) {
+            text.insert(0, nextContent)
+          }
+
+          const update = Y.encodeStateAsUpdate(session.doc)
+          if (persistExternalDocReset) {
+            const persisted = await persistExternalDocReset(file.projectId, file.id, update).catch(() => null)
+            if (persisted?.sequence !== undefined) {
+              session.lastSequence = persisted.sequence
+            }
+          }
+
+          session.updatesSinceSnapshot = 0
+
+          io.to(room).emit('collab:doc:sync', {
+            projectId: file.projectId,
+            fileId: file.id,
+            update: Buffer.from(update).toString('base64'),
+          } satisfies DocSyncPayload)
+
+          io.to(projectRoom(file.projectId)).emit('collab:doc:external-change', {
+            projectId: file.projectId,
+            fileId: file.id,
+            state: 'reloaded',
+            updatedAt,
+          } satisfies DocExternalChangePayload)
+        })
+      })
+    }
+
+    io.to(projectRoom(file.projectId)).emit('collab:file:updated', toPublicFileUpdatedPayload(file))
   })
   const unregisterFileDeletedListener = registerCollabFileDeletedListener((file) => {
     io.to(projectRoom(file.projectId)).emit('collab:file:deleted', file)
@@ -303,6 +456,7 @@ export function createCollabGateway(
     const joinedRooms = new Set<string>()
     const joinedDocRooms = new Set<string>()
     const joinedTerminalRooms = new Set<string>()
+    const syncJoinedProjects = new Set<string>()
     const rateCounters = new Map<string, RateCounter>()
 
     void (async () => {
@@ -370,8 +524,39 @@ export function createCollabGateway(
             return
           }
 
-          joinedRooms.add(room)
-          void socket.join(room)
+          if (terminalAllowed) {
+            await runQueuedLock(projectMemberLocks, parsedProjectId.data, async () => {
+              const existingProjectMemberCount = projectMemberCounts.get(parsedProjectId.data) ?? 0
+              if (existingProjectMemberCount === 0) {
+                await projectSyncHooks.onProjectJoin?.(parsedProjectId.data)
+              }
+
+              projectMemberCounts.set(parsedProjectId.data, existingProjectMemberCount + 1)
+              syncJoinedProjects.add(parsedProjectId.data)
+            })
+          }
+
+          try {
+            await socket.join(room)
+            joinedRooms.add(room)
+          } catch (error) {
+            if (syncJoinedProjects.has(parsedProjectId.data)) {
+              syncJoinedProjects.delete(parsedProjectId.data)
+              void runQueuedLock(projectMemberLocks, parsedProjectId.data, async () => {
+                const nextProjectMemberCount = (projectMemberCounts.get(parsedProjectId.data) ?? 1) - 1
+                if (nextProjectMemberCount <= 0) {
+                  projectMemberCounts.delete(parsedProjectId.data)
+                  await projectSyncHooks.onProjectLeave?.(parsedProjectId.data)
+                  return
+                }
+
+                projectMemberCounts.set(parsedProjectId.data, nextProjectMemberCount)
+              }).catch(() => undefined)
+            }
+
+            throw error
+          }
+
           terminalSessionManager.markProjectJoined(parsedProjectId.data, actor.subject)
 
           if (terminalAllowed) {
@@ -424,6 +609,21 @@ export function createCollabGateway(
 
         joinedRooms.delete(room)
         void socket.leave(room)
+
+        if (syncJoinedProjects.has(parsedProjectId.data)) {
+          syncJoinedProjects.delete(parsedProjectId.data)
+
+          void runQueuedLock(projectMemberLocks, parsedProjectId.data, async () => {
+            const nextProjectMemberCount = (projectMemberCounts.get(parsedProjectId.data) ?? 1) - 1
+            if (nextProjectMemberCount <= 0) {
+              projectMemberCounts.delete(parsedProjectId.data)
+              await projectSyncHooks.onProjectLeave?.(parsedProjectId.data)
+              return
+            }
+
+            projectMemberCounts.set(parsedProjectId.data, nextProjectMemberCount)
+          }).catch(() => undefined)
+        }
 
         if (actor.subject) {
           terminalSessionManager.markProjectLeft(parsedProjectId.data, actor.subject)
@@ -606,55 +806,57 @@ export function createCollabGateway(
             return
           }
 
-          try {
-            Y.applyUpdate(session.doc, updateBytes, socket.id)
-          } catch {
-            socket.emit('collab:error', {
-              message: 'Invalid document update payload',
-            } satisfies ErrorEvent)
-            return
-          }
+          await runQueuedLock(docUpdateLocks, room, async () => {
+            try {
+              Y.applyUpdate(session.doc, updateBytes, socket.id)
+            } catch {
+              socket.emit('collab:error', {
+                message: 'Invalid document update payload',
+              } satisfies ErrorEvent)
+              return
+            }
 
-          const persisted = await appendYjsUpdate(
-            actor,
-            parsedUpdate.data.projectId,
-            parsedUpdate.data.fileId,
-            updateBytes,
-          )
-          session.lastSequence = persisted.sequence
-          session.updatesSinceSnapshot += 1
-
-          updateDirtyStateForSocket(
-            io,
-            dirtySocketsByDocRoom,
-            parsedUpdate.data.projectId,
-            parsedUpdate.data.fileId,
-            socket.id,
-            true,
-          )
-
-          socket.to(room).emit('collab:doc:update', parsedUpdate.data satisfies DocUpdatePayload)
-
-          if (!session.snapshotInFlight && session.updatesSinceSnapshot >= snapshotIntervalUpdates) {
-            session.snapshotInFlight = true
-            const snapshotUpdate = Y.encodeStateAsUpdate(session.doc)
-            const updatesCapturedBySnapshot = session.updatesSinceSnapshot
-
-            void saveYjsSnapshot(
+            const persisted = await appendYjsUpdate(
               actor,
               parsedUpdate.data.projectId,
               parsedUpdate.data.fileId,
-              session.lastSequence,
-              snapshotUpdate,
-            ).then(() => {
-              session.updatesSinceSnapshot = Math.max(
-                0,
-                session.updatesSinceSnapshot - updatesCapturedBySnapshot,
-              )
-            }).catch(() => undefined).finally(() => {
-              session.snapshotInFlight = false
-            })
-          }
+              updateBytes,
+            )
+            session.lastSequence = persisted.sequence
+            session.updatesSinceSnapshot += 1
+
+            updateDirtyStateForSocket(
+              io,
+              dirtySocketsByDocRoom,
+              parsedUpdate.data.projectId,
+              parsedUpdate.data.fileId,
+              socket.id,
+              true,
+            )
+
+            socket.to(room).emit('collab:doc:update', parsedUpdate.data satisfies DocUpdatePayload)
+
+            if (!session.snapshotInFlight && session.updatesSinceSnapshot >= snapshotIntervalUpdates) {
+              session.snapshotInFlight = true
+              const snapshotUpdate = Y.encodeStateAsUpdate(session.doc)
+              const updatesCapturedBySnapshot = session.updatesSinceSnapshot
+
+              void saveYjsSnapshot(
+                actor,
+                parsedUpdate.data.projectId,
+                parsedUpdate.data.fileId,
+                session.lastSequence,
+                snapshotUpdate,
+              ).then(() => {
+                session.updatesSinceSnapshot = Math.max(
+                  0,
+                  session.updatesSinceSnapshot - updatesCapturedBySnapshot,
+                )
+              }).catch(() => undefined).finally(() => {
+                session.snapshotInFlight = false
+              })
+            }
+          })
         })().catch(() => {
           socket.emit('collab:error', {
             message: 'Could not process document update',
@@ -1422,6 +1624,23 @@ export function createCollabGateway(
           affectedProjectIds.forEach((projectId) => {
             terminalSessionManager.markProjectLeft(projectId, actorSubject)
             emitTerminalList(io, projectId, terminalSessionManager)
+
+            if (!syncJoinedProjects.has(projectId)) {
+              return
+            }
+
+            syncJoinedProjects.delete(projectId)
+
+            void runQueuedLock(projectMemberLocks, projectId, async () => {
+              const nextProjectMemberCount = (projectMemberCounts.get(projectId) ?? 1) - 1
+              if (nextProjectMemberCount <= 0) {
+                projectMemberCounts.delete(projectId)
+                await projectSyncHooks.onProjectLeave?.(projectId)
+                return
+              }
+
+              projectMemberCounts.set(projectId, nextProjectMemberCount)
+            }).catch(() => undefined)
           })
         }
 
