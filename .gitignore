@@ -12,3 +12,4 @@ coverage
 .trae
 .opencode
 .agents
+.env.production
