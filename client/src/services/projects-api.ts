@@ -22,6 +22,27 @@ export interface FolderDto {
   path: string
 }
 
+export interface ImportedFileInputDto {
+  path: string
+  content: string
+}
+
+export interface FileImportSkippedDto {
+  path: string
+  reason: string
+}
+
+export interface FileImportFailedDto {
+  path: string
+  reason: string
+}
+
+export interface FileImportResultDto {
+  imported: FileDto[]
+  skipped: FileImportSkippedDto[]
+  failed: FileImportFailedDto[]
+}
+
 export interface ProjectInviteDto {
   id: string
   projectId: string
@@ -311,6 +332,28 @@ export function renameFolder(
 export function deleteFolder(input: { projectId: string; path: string }, accessToken?: string | null) {
   return apiRequest<{ deleted: boolean }>('/api/files/folders', {
     method: 'DELETE',
+    body: input,
+    accessToken,
+  })
+}
+
+export function importLocalFiles(
+  input: { projectId: string; files: ImportedFileInputDto[] },
+  accessToken?: string | null,
+) {
+  return apiRequest<FileImportResultDto>('/api/files/import/local', {
+    method: 'POST',
+    body: input,
+    accessToken,
+  })
+}
+
+export function importGithubProject(
+  input: { projectId: string; repositoryUrl: string; branch?: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<FileImportResultDto>('/api/files/import/github', {
+    method: 'POST',
     body: input,
     accessToken,
   })

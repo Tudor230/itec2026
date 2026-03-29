@@ -14,6 +14,8 @@ import {
   createFileSchema,
   createFolderSchema,
   deleteFolderSchema,
+  importGithubProjectSchema,
+  importLocalFilesSchema,
   renameFolderSchema,
   updateFileSchema,
 } from './file.schema.js'
@@ -196,13 +198,33 @@ export function createFilesRouter({
   prisma,
   blobStore = new LocalFileBlobStore(resolveFilesStorageRoot()),
   workspaceSync,
+  fetchImpl,
 }: {
   prisma: PrismaClient
   blobStore?: FileBlobStore
   workspaceSync?: ProjectWorkspaceSyncService
+  fetchImpl?: typeof fetch
 }) {
   const router = Router()
-  const service = new FilesService(new FilesRepository(prisma, blobStore))
+  const service = new FilesService(new FilesRepository(prisma, blobStore), fetchImpl)
+
+  function emitImportedFiles(files: Array<{
+    id: string
+    projectId: string
+    path: string
+    createdAt: string
+    updatedAt: string
+  }>) {
+    files.forEach((file) => {
+      emitCollabFileCreated({
+        id: file.id,
+        projectId: file.projectId,
+        path: file.path,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+      })
+    })
+  }
 
   router.get('/', requireTokenPresent, asyncHandler(async (request, response) => {
     const projectId = request.query.projectId
@@ -841,6 +863,119 @@ export function createFilesRouter({
     response.status(201).json({
       ok: true,
       data: file,
+    })
+  }))
+
+  router.post('/import/local', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = importLocalFilesSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FILE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+
+    if (!workspaceSync) {
+      const imported = await service.importLocalFiles(actor, parsed.data)
+      emitImportedFiles(imported.imported)
+
+      response.status(201).json({
+        ok: true,
+        data: imported,
+      })
+      return
+    }
+
+    const imported = await workspaceSync.runLocked(parsed.data.projectId, async () => {
+      const next = await service.importLocalFiles(actor, parsed.data)
+
+      try {
+        for (const file of next.imported) {
+          await workspaceSync.applyApiCreateAlreadyLocked(file)
+        }
+      } catch (error) {
+        await Promise.allSettled(next.imported.map((file) => service.remove(actor, file.id)))
+        throw error
+      }
+
+      return next
+    })
+
+    emitImportedFiles(imported.imported)
+
+    response.status(201).json({
+      ok: true,
+      data: imported,
+    })
+  }))
+
+  router.post('/import/github', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = importGithubProjectSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FILE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    let imported
+
+    try {
+      if (!workspaceSync) {
+        imported = await service.importFromGithub(actor, parsed.data)
+      } else {
+        imported = await workspaceSync.runLocked(parsed.data.projectId, async () => {
+          const next = await service.importFromGithub(actor, parsed.data)
+
+          try {
+            for (const file of next.imported) {
+              await workspaceSync.applyApiCreateAlreadyLocked(file)
+            }
+          } catch (error) {
+            await Promise.allSettled(next.imported.map((file) => service.remove(actor, file.id)))
+            throw error
+          }
+
+          return next
+        })
+      }
+    } catch (error) {
+      const errorLike = error as { code?: string; message?: string }
+      if (errorLike.code === 'INVALID_GITHUB_REPOSITORY_URL') {
+        response.status(400).json({
+          ok: false,
+          error: {
+            code: 'INVALID_GITHUB_REPOSITORY_URL',
+            message: errorLike.message ?? 'Invalid GitHub repository URL',
+          },
+        })
+        return
+      }
+
+      if (errorLike.code === 'GITHUB_IMPORT_FAILED') {
+        response.status(502).json({
+          ok: false,
+          error: {
+            code: 'GITHUB_IMPORT_FAILED',
+            message: errorLike.message ?? 'Could not import repository from GitHub',
+          },
+        })
+        return
+      }
+
+      throw error
+    }
+
+    emitImportedFiles(imported.imported)
+
+    response.status(201).json({
+      ok: true,
+      data: imported,
     })
   }))
 

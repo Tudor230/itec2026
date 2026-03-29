@@ -41,6 +41,7 @@ import {
   createFile,
   deleteFile,
   deleteFolder,
+  importLocalFiles,
   listFiles,
   listFolders,
   listProjectInvites,
@@ -106,6 +107,17 @@ const SIDEBAR_LAYOUT = {
 
 const workspaceControlButtonClass =
   'border border-[color-mix(in_oklab,var(--chip-line)_76%,var(--line)_24%)] bg-[color-mix(in_oklab,var(--chip-bg)_80%,transparent_20%)] text-[var(--sea-ink-soft)] shadow-[inset_0_1px_0_rgba(255,255,255,0.4)] transition-[color,border-color,background-color,transform] duration-150 hover:text-[var(--sea-ink)] hover:border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--chip-line))] hover:-translate-y-px'
+
+function formatImportResultMessage(result: {
+  imported: Array<{ path: string }>
+  skipped: Array<{ path: string; reason: string }>
+  failed: Array<{ path: string; reason: string }>
+}) {
+  const imported = result.imported.length
+  const skipped = result.skipped.length
+  const failed = result.failed.length
+  return `Imported ${imported} file${imported === 1 ? '' : 's'} • Skipped ${skipped} • Failed ${failed}`
+}
 
 function WorkspaceWithHostedAuth() {
   const navigate = useNavigate()
@@ -671,6 +683,40 @@ function WorkspaceWithHostedAuth() {
     },
     onError: (error) => {
       toastError(`Could not delete folder: ${error.message}`)
+    },
+  })
+
+  const importLocalFilesMutation = useMutation({
+    mutationFn: async (entries: Array<{ path: string; content: string }>) => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId) {
+        throw new Error('Select a project before importing files.')
+      }
+
+      if (!token) {
+        throw new Error('Authentication token is required to import files.')
+      }
+
+      return importLocalFiles({
+        projectId: activeProjectId,
+        files: entries,
+      }, token)
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+
+      const summary = formatImportResultMessage(result)
+      if (result.failed.length > 0) {
+        toastError(summary)
+        return
+      }
+
+      success(summary)
+    },
+    onError: (error) => {
+      toastError(`Could not import files: ${error.message}`)
     },
   })
 
@@ -1780,6 +1826,9 @@ function WorkspaceWithHostedAuth() {
                 }}
                 onDeleteFolder={async (path) => {
                   await deleteFolderMutation.mutateAsync(path)
+                }}
+                onImportFiles={async (_targetFolderPath, importedFiles) => {
+                  await importLocalFilesMutation.mutateAsync(importedFiles)
                 }}
                 onClose={() => setIsLeftSidebarCollapsed(true)}
               />
