@@ -56,6 +56,7 @@ services:
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-30000}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      COLLAB_SNAPSHOT_INTERVAL_UPDATES: ${COLLAB_SNAPSHOT_INTERVAL_UPDATES:-1}
     depends_on:
       postgres:
         condition: service_healthy
