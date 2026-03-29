@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
-import type { editor as MonacoEditorTypes } from 'monaco-editor'
+import type {
+  editor as MonacoEditorTypes,
+  Monaco,
+} from 'monaco-editor'
 import {
   CollabClient
-  
-  
-  
-  
-  
-  
-  
 } from '../lib/collab-client'
-import type {CollabDocCursorPayload, CollabDocDirtyStatePayload, CollabFileCreatedPayload, CollabFileDeletedPayload, CollabFileUpdatedPayload, CollabProjectActivityPayload, WatchProjectCallbacks} from '../lib/collab-client';
+import type {
+  CollabDocCursorPayload,
+  CollabDocDirtyStatePayload,
+  CollabDocExternalChangePayload,
+  CollabFileCreatedPayload,
+  CollabFileDeletedPayload,
+  CollabFileUpdatedPayload,
+  CollabProjectActivityPayload,
+  WatchProjectCallbacks,
+} from '../lib/collab-client'
 import { auth0Config } from '../lib/auth0-config'
 import {
   getCollaboratorClassSuffix,
@@ -31,13 +36,14 @@ interface CollabDocParams {
   onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
   onProjectActivityChanged?: (payload: CollabProjectActivityPayload) => void
+  onExternalDocChange?: (payload: CollabDocExternalChangePayload) => void
   resolveCollaboratorName?: (subject: string) => string
 }
 
 interface CollabDocModelBinding {
   editor: MonacoEditorTypes.IStandaloneCodeEditor | null
   model: MonacoEditorTypes.ITextModel | null
-  monaco: typeof import('monaco-editor') | null
+  monaco: Monaco | null
 }
 
 interface MonacoBindingInstance {
@@ -58,6 +64,7 @@ export function useCollabDoc({
   onFileDeleted,
   onDirtyStateChanged,
   onProjectActivityChanged,
+  onExternalDocChange,
   resolveCollaboratorName,
 }: CollabDocParams) {
   const { getAccessTokenSilently } = useAuth0()
@@ -314,9 +321,9 @@ export function useCollabDoc({
 
       const hasSelection = Boolean(
         entry.selectionStartLineNumber &&
-        entry.selectionStartColumn &&
-        entry.selectionEndLineNumber &&
-        entry.selectionEndColumn,
+          entry.selectionStartColumn &&
+          entry.selectionEndLineNumber &&
+          entry.selectionEndColumn,
       )
 
       if (!hasSelection) {
@@ -326,10 +333,10 @@ export function useCollabDoc({
       return [
         {
           range: new monaco.Range(
-            entry.selectionStartLineNumber!,
-            entry.selectionStartColumn!,
-            entry.selectionEndLineNumber!,
-            entry.selectionEndColumn!,
+            entry.selectionStartLineNumber,
+            entry.selectionStartColumn,
+            entry.selectionEndLineNumber,
+            entry.selectionEndColumn,
           ),
           options: {
             inlineClassName: selectionClassName,
@@ -352,6 +359,7 @@ export function useCollabDoc({
       onFileDeleted,
       onDirtyStateChanged,
       onProjectActivityChanged,
+      onExternalDocChange,
       onDocCursorChanged: (payload) => {
         const now = Date.now()
         const staleAfterMs = 10_000
@@ -374,6 +382,7 @@ export function useCollabDoc({
   }, [
     applyRemoteCursorDecorations,
     onDirtyStateChanged,
+    onExternalDocChange,
     onFileCreated,
     onFileDeleted,
     onFileUpdated,
@@ -476,11 +485,6 @@ export function useCollabDoc({
     void collabClient
       .joinDocument(projectId, fileId)
       .then(async (session) => {
-        if (cancelled) {
-          session.destroy()
-          return
-        }
-
         const module = await import('y-monaco')
         if (cancelled) {
           session.destroy()
@@ -584,7 +588,7 @@ export function useCollabDoc({
 
   function onEditorMount(
     editor: MonacoEditorTypes.IStandaloneCodeEditor,
-    monaco: typeof import('monaco-editor'),
+    monaco: Monaco,
   ) {
     setBindingTargets({
       editor,

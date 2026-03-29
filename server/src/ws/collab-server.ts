@@ -46,13 +46,6 @@ export function createCollabServer(
       beforeSessionOpen: async ({ projectId }) => {
         await workspaceSyncService.hydrateProjectWorkspace(projectId)
       },
-      afterSessionOpen: async ({ projectId }) => {
-        await workspaceLiveSync.start(projectId)
-      },
-      afterSessionClose: async ({ projectId }) => {
-        await workspaceLiveSync.reconcileNow(projectId)
-        await workspaceLiveSync.stop(projectId)
-      },
     },
     {
       resolveDefaultCwd: () => '/workspace',
@@ -179,5 +172,19 @@ export function createCollabServer(
       return canEditProject(prisma, actor, projectId)
     },
     terminalSessionManager,
+    {
+      onProjectJoin: async (projectId) => {
+        await workspaceSyncService.hydrateProjectWorkspace(projectId)
+        await workspaceLiveSync.start(projectId)
+        await workspaceLiveSync.reconcileNow(projectId)
+      },
+      onProjectLeave: async (projectId) => {
+        await workspaceLiveSync.reconcileNow(projectId)
+        await workspaceLiveSync.stop(projectId)
+      },
+    },
+    async (_projectId, fileId, update) => {
+      return yjsHistoryRepository.replaceDocumentState(fileId, update)
+    },
   )
 }

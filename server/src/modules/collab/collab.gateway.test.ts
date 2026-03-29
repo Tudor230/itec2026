@@ -64,6 +64,13 @@ type DocDirtyStatePayload = {
   updatedAt: string
 }
 
+type DocExternalChangePayload = {
+  projectId: string
+  fileId: string
+  state: 'stale' | 'reloaded'
+  updatedAt: string
+}
+
 type FileCreatedPayload = {
   id: string
   projectId: string
@@ -78,6 +85,8 @@ type FileUpdatedPayload = {
   path: string
   createdAt: string
   updatedAt: string
+  source?: 'api' | 'workspace_sync'
+  content?: string
 }
 
 type FileDeletedPayload = {
@@ -242,6 +251,9 @@ describe('collab gateway', () => {
   let persistedUpdateSequence = 0
   let snapshotSaveCount = 0
   let prewarmCalls: Array<{ projectId: string; ownerSubject: string }> = []
+  let projectSyncJoinCalls: string[] = []
+  let projectSyncLeaveCalls: string[] = []
+  let externalResetCalls: Array<{ projectId: string; fileId: string; byteLength: number }> = []
 
   beforeEach(async () => {
     const httpServer = createServer()
@@ -327,6 +339,18 @@ describe('collab gateway', () => {
       saveYjsSnapshot,
       canUseTerminal,
       terminalSessionManager,
+      {
+        onProjectJoin: async (projectId: string) => {
+          projectSyncJoinCalls.push(projectId)
+        },
+        onProjectLeave: async (projectId: string) => {
+          projectSyncLeaveCalls.push(projectId)
+        },
+      },
+      async (projectId: string, fileId: string, update: Uint8Array) => {
+        externalResetCalls.push({ projectId, fileId, byteLength: update.byteLength })
+        return { sequence: 777 }
+      },
     )
 
     await new Promise<void>((resolve) => {
@@ -386,6 +410,9 @@ describe('collab gateway', () => {
     persistedUpdateSequence = 0
     snapshotSaveCount = 0
     prewarmCalls = []
+    projectSyncJoinCalls = []
+    projectSyncLeaveCalls = []
+    externalResetCalls = []
   })
 
   it('prewarms terminal when project is joined', async () => {
@@ -417,6 +444,63 @@ describe('collab gateway', () => {
       projectId,
       ownerSubject,
     })
+
+    assert.deepEqual(projectSyncJoinCalls, [projectId])
+  })
+
+  it('starts and stops project sync once for multi-client project room membership', async () => {
+    const projectId = 'project-sync-members'
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|sync-member-a', 'jwt-sync-member-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|sync-member-b', 'jwt-sync-member-b') },
+    })
+
+    clients.push(clientA, clientB)
+
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      clientA,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    clientB.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      clientA,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId && payload.socketId === clientB.id,
+    )
+
+    assert.deepEqual(projectSyncJoinCalls, [projectId])
+
+    clientA.emit('collab:leave-project', projectId)
+    await waitForEvent<PresencePayload>(
+      clientB,
+      'collab:presence',
+      (payload) => payload.type === 'left' && payload.projectId === projectId && payload.socketId === clientA.id,
+    )
+
+    assert.deepEqual(projectSyncLeaveCalls, [])
+
+    clientB.emit('collab:leave-project', projectId)
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    assert.deepEqual(projectSyncLeaveCalls, [projectId])
   })
 
   it('emits actor type on connect based on resolver', async () => {
@@ -1260,6 +1344,7 @@ describe('collab gateway', () => {
       path: 'src/updated.ts',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      source: 'api',
     })
 
     const updatedPayload = await updatedSeen
@@ -1280,6 +1365,140 @@ describe('collab gateway', () => {
 
     const deletedPayload = await deletedSeen
     assert.equal(deletedPayload.path, 'src/deleted.ts')
+  })
+
+  it('reloads clean open documents on workspace sync updates', async () => {
+    const projectId = 'project-123'
+    const fileId = 'file-1'
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|workspace-sync-clean', 'jwt-workspace-sync-clean') },
+    })
+
+    clients.push(client)
+
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    client.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      client,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    client.emit('collab:doc:join', { projectId, fileId })
+    await waitForEvent<DocSyncPayload>(
+      client,
+      'collab:doc:sync',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId,
+    )
+
+    const syncAfterWorkspaceUpdate = waitForEvent<DocSyncPayload>(
+      client,
+      'collab:doc:sync',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId,
+    )
+    const externalChange = waitForEvent<DocExternalChangePayload>(
+      client,
+      'collab:doc:external-change',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId,
+    )
+
+    const { emitCollabFileUpdated } = await import('./collab-events.js')
+    emitCollabFileUpdated({
+      id: fileId,
+      projectId,
+      path: 'src/main.ts',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      source: 'workspace_sync',
+      content: 'content from terminal',
+    })
+
+    const updatedSync = await syncAfterWorkspaceUpdate
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, decodeYUpdate(updatedSync.update))
+    assert.equal(doc.getText('content').toString(), 'content from terminal')
+
+    const externalChangePayload = await externalChange
+    assert.equal(externalChangePayload.state, 'reloaded')
+    assert.equal(externalResetCalls.length, 1)
+    assert.equal(externalResetCalls[0]?.projectId, projectId)
+    assert.equal(externalResetCalls[0]?.fileId, fileId)
+  })
+
+  it('marks dirty open documents as stale on workspace sync updates without overwrite', async () => {
+    const projectId = 'project-123'
+    const fileId = 'file-1'
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|workspace-sync-dirty', 'jwt-workspace-sync-dirty') },
+    })
+
+    clients.push(client)
+
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    client.emit('collab:join-project', projectId)
+    await waitForEvent<PresencePayload>(
+      client,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === projectId,
+    )
+
+    client.emit('collab:doc:join', { projectId, fileId })
+    await waitForEvent<DocSyncPayload>(
+      client,
+      'collab:doc:sync',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId,
+    )
+
+    const dirtyStateEvent = waitForEvent<DocDirtyStatePayload>(
+      client,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId && payload.isDirty,
+    )
+
+    client.emit('collab:doc:update', {
+      projectId,
+      fileId,
+      update: encodeYUpdate('dirty content from editor'),
+    })
+    await dirtyStateEvent
+
+    const staleEvent = waitForEvent<DocExternalChangePayload>(
+      client,
+      'collab:doc:external-change',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId,
+    )
+
+    const { emitCollabFileUpdated } = await import('./collab-events.js')
+    emitCollabFileUpdated({
+      id: fileId,
+      projectId,
+      path: 'src/main.ts',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      source: 'workspace_sync',
+      content: 'content from terminal while dirty',
+    })
+
+    const stalePayload = await staleEvent
+    assert.equal(stalePayload.state, 'stale')
+
+    await assertNoEvent<DocSyncPayload>(
+      client,
+      'collab:doc:sync',
+      (payload) => payload.projectId === projectId && payload.fileId === fileId,
+      400,
+    )
+    assert.equal(externalResetCalls.length, 0)
   })
 
   it('publishes terminal list for joined project members', async () => {

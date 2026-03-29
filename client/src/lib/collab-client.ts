@@ -1,5 +1,5 @@
-import { io  } from 'socket.io-client'
-import type {Socket} from 'socket.io-client';
+import { io } from 'socket.io-client'
+import type { Socket } from 'socket.io-client'
 import * as Y from 'yjs'
 import { apiConfig } from './api-config'
 
@@ -38,6 +38,8 @@ export interface CollabFileUpdatedPayload {
   path: string
   createdAt: string
   updatedAt: string
+  source?: 'api' | 'workspace_sync'
+  content?: string
 }
 
 export interface CollabFileDeletedPayload {
@@ -65,6 +67,11 @@ export interface CollabDocCursorPayload extends DocKey {
   cleared?: boolean
 }
 
+export interface CollabDocExternalChangePayload extends DocKey {
+  state: 'stale' | 'reloaded'
+  updatedAt: string
+}
+
 export interface CollabProjectActivityPayload {
   projectId: string
   fileId: string | null
@@ -81,6 +88,7 @@ export type WatchProjectCallbacks = {
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
   onDocCursorChanged?: (payload: CollabDocCursorPayload) => void
   onProjectActivityChanged?: (payload: CollabProjectActivityPayload) => void
+  onExternalDocChange?: (payload: CollabDocExternalChangePayload) => void
 }
 
 export interface CollabTerminalDescriptor {
@@ -467,12 +475,21 @@ export class CollabClient {
       callbacks.onProjectActivityChanged?.(payload)
     }
 
+    const onExternalDocChange = (payload: CollabDocExternalChangePayload) => {
+      if (payload.projectId !== projectId) {
+        return
+      }
+
+      callbacks.onExternalDocChange?.(payload)
+    }
+
     socket.on('collab:file:created', onFileCreated)
     socket.on('collab:file:updated', onFileUpdated)
     socket.on('collab:file:deleted', onFileDeleted)
     socket.on('collab:doc:dirty-state', onDirtyStateChanged)
     socket.on('collab:doc:cursor', onDocCursorChanged)
     socket.on('collab:project:activity', onProjectActivityChanged)
+    socket.on('collab:doc:external-change', onExternalDocChange)
     this.retainProject(socket, projectId)
 
     return () => {
@@ -483,6 +500,7 @@ export class CollabClient {
       socket.off('collab:doc:dirty-state', onDirtyStateChanged)
       socket.off('collab:doc:cursor', onDocCursorChanged)
       socket.off('collab:project:activity', onProjectActivityChanged)
+      socket.off('collab:doc:external-change', onExternalDocChange)
     }
   }
 

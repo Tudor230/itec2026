@@ -59,11 +59,17 @@ import {
 import type {ActiveProjectInviteDto, FileDto, ProjectMemberDto} from '../services/projects-api';
 import {
   buildImportPayload,
-  chunkImportFiles
-  
+  chunkImportFiles,
 } from '../lib/file-import'
-import type {ImportFileEntry} from '../lib/file-import';
-import type {CollabProjectActivityPayload, CollabDocDirtyStatePayload, CollabFileCreatedPayload, CollabFileDeletedPayload, CollabFileUpdatedPayload} from '../lib/collab-client';
+import type { ImportFileEntry } from '../lib/file-import'
+import type {
+  CollabDocDirtyStatePayload,
+  CollabDocExternalChangePayload,
+  CollabFileCreatedPayload,
+  CollabFileDeletedPayload,
+  CollabFileUpdatedPayload,
+  CollabProjectActivityPayload,
+} from '../lib/collab-client'
 import { getCollaboratorColor } from '../components/workspace/collab-colors'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 import { useRunCurrentFile } from '../hooks/use-run-current-file'
@@ -108,7 +114,7 @@ const workspaceControlButtonClass =
 function WorkspaceWithHostedAuth() {
   const navigate = useNavigate()
   const search = Route.useSearch()
-  const { toast, success, error: toastError } = useToast()
+  const { toast, success, info, error: toastError } = useToast()
   const {
     getAccessTokenSilently,
     isAuthenticated,
@@ -162,6 +168,7 @@ function WorkspaceWithHostedAuth() {
   >({})
   const collabRefreshTimerRef = useRef<number | null>(null)
   const autosaveTimeoutRef = useRef<number | null>(null)
+  const activeFileIdRef = useRef<string | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
 
@@ -458,6 +465,45 @@ function WorkspaceWithHostedAuth() {
     },
     [],
   )
+
+  const onCollabExternalDocChange = useCallback((payload: CollabDocExternalChangePayload) => {
+    if (payload.state === 'stale') {
+      setCollabDirtyByFileId((previous) => {
+        if (previous[payload.fileId]) {
+          return previous
+        }
+
+        return {
+          ...previous,
+          [payload.fileId]: true,
+        }
+      })
+
+      if (payload.fileId === activeFileIdRef.current) {
+        toastError('File changed externally. Save your edits or reopen to sync.')
+      }
+
+      return
+    }
+
+    setCollabDirtyByFileId((previous) => {
+      if (!(payload.fileId in previous)) {
+        return previous
+      }
+
+      const next = { ...previous }
+      delete next[payload.fileId]
+      return next
+    })
+
+    queryClient.invalidateQueries({
+      queryKey: ['workspace', 'files', true, payload.projectId],
+    }).catch(() => undefined)
+
+    if (payload.fileId === activeFileIdRef.current) {
+      info('Editor reloaded with terminal changes')
+    }
+  }, [info, queryClient, toastError])
 
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
@@ -883,10 +929,6 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const selectedProject =
-    projectsQuery.data?.find((project) => project.id === activeProjectId) ??
-    null
-
   const dirtyFileIds = files
     .filter((file) => {
       const draftValue = draftsByFileId[file.id]
@@ -957,8 +999,13 @@ function WorkspaceWithHostedAuth() {
     onFileDeleted: onCollabFileDeleted,
     onDirtyStateChanged: onCollabDirtyStateChanged,
     onProjectActivityChanged,
+    onExternalDocChange: onCollabExternalDocChange,
     resolveCollaboratorName,
   })
+
+  const selectedProject =
+    projectsQuery.data?.find((project) => project.id === activeProjectId) ??
+    null
 
   const collaboratorInitials = useMemo(() => {
     return collabMembers.slice(0, 3).map((member) => {
@@ -1139,6 +1186,10 @@ function WorkspaceWithHostedAuth() {
       setActiveProjectId(projectsQuery.data[0].id)
     }
   }, [activeProjectId, isAuthenticated, projectsQuery.data, search.projectId])
+
+  useEffect(() => {
+    activeFileIdRef.current = activeFileId
+  }, [activeFileId])
 
   useEffect(() => {
     setActiveFileId(null)
