@@ -22,6 +22,27 @@ export interface FolderDto {
   path: string
 }
 
+export interface ImportedFileInputDto {
+  path: string
+  content: string
+}
+
+export interface FileImportSkippedDto {
+  path: string
+  reason: string
+}
+
+export interface FileImportFailedDto {
+  path: string
+  reason: string
+}
+
+export interface FileImportResultDto {
+  imported: FileDto[]
+  skipped: FileImportSkippedDto[]
+  failed: FileImportFailedDto[]
+}
+
 export interface ProjectInviteDto {
   id: string
   projectId: string
@@ -37,6 +58,8 @@ export interface ProjectInviteDto {
 
 export interface ProjectCollaboratorDto {
   subject: string | null
+  displayName: string | null
+  email: string | null
   role: 'owner' | 'editor'
   addedBySubject: string | null
   createdAt: string
@@ -47,22 +70,6 @@ export interface ProjectDashboardDto {
   actorRole: 'owner' | 'editor'
   collaborators: ProjectCollaboratorDto[]
   activeInvites: ProjectInviteDto[]
-}
-
-export interface ActiveProjectInviteDto {
-  id: string
-  projectId: string
-  role: 'editor'
-  createdBySubject: string
-  expiresAt: string
-  createdAt: string
-}
-
-export interface ProjectMemberDto {
-  subject: string
-  displayName: string | null
-  email: string | null
-  role: string
 }
 
 export interface ActiveProjectInviteDto {
@@ -311,6 +318,28 @@ export function renameFolder(
 export function deleteFolder(input: { projectId: string; path: string }, accessToken?: string | null) {
   return apiRequest<{ deleted: boolean }>('/api/files/folders', {
     method: 'DELETE',
+    body: input,
+    accessToken,
+  })
+}
+
+export function importLocalFiles(
+  input: { projectId: string; files: ImportedFileInputDto[] },
+  accessToken?: string | null,
+) {
+  return apiRequest<FileImportResultDto>('/api/files/import/local', {
+    method: 'POST',
+    body: input,
+    accessToken,
+  })
+}
+
+export function importGithubProject(
+  input: { projectId: string; repositoryUrl: string; branch?: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<FileImportResultDto>('/api/files/import/github', {
+    method: 'POST',
     body: input,
     accessToken,
   })

@@ -93,15 +93,6 @@ type ProjectDeleteManyArgs = {
   }
 }
 
-type MemberRow = {
-  id: string
-  projectId: string
-  subject: string
-  role: string
-  addedBySubject: string | null
-  createdAt: Date
-}
-
 class InMemoryProjectMembersTable {
   private rows: MemberRow[] = []
 
@@ -137,20 +128,31 @@ class InMemoryProjectMembersTable {
       projectId: string
     }
     orderBy: {
-      createdAt: 'asc'
+      createdAt: 'asc' | 'desc'
     }
   }): Promise<Array<{
     subject: string
+    displayName: string | null
+    email: string | null
     role: string
     addedBySubject: string | null
     createdAt: Date
   }>> {
-    return this.rows
+    const sorted = this.rows
       .filter((row) => row.projectId === args.where.projectId)
       .slice()
-      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
-      .map((row) => ({
+      .sort((left, right) => {
+        if (args.orderBy.createdAt === 'asc') {
+          return left.createdAt.getTime() - right.createdAt.getTime()
+        }
+
+        return right.createdAt.getTime() - left.createdAt.getTime()
+      })
+
+    return sorted.map((row) => ({
         subject: row.subject,
+        displayName: row.displayName,
+        email: row.email,
         role: row.role,
         addedBySubject: row.addedBySubject,
         createdAt: new Date(row.createdAt),
@@ -183,10 +185,14 @@ class InMemoryProjectMembersTable {
       id: string
       projectId: string
       subject: string
+      displayName: string | null
+      email: string | null
       role: string
       addedBySubject: string | null
     }
     update: {
+      displayName: string | null
+      email: string | null
       role: string
       addedBySubject: string | null
     }
@@ -199,6 +205,8 @@ class InMemoryProjectMembersTable {
     if (existing) {
       const updated: MemberRow = {
         ...existing,
+        displayName: args.update.displayName,
+        email: args.update.email,
         role: args.update.role,
         addedBySubject: args.update.addedBySubject,
       }
@@ -211,6 +219,8 @@ class InMemoryProjectMembersTable {
       id: args.create.id,
       projectId: args.create.projectId,
       subject: args.create.subject,
+      displayName: args.create.displayName,
+      email: args.create.email,
       role: args.create.role,
       addedBySubject: args.create.addedBySubject,
       createdAt: new Date(),
@@ -220,6 +230,34 @@ class InMemoryProjectMembersTable {
     return { ...created }
   }
 
+  async updateMany(args: {
+    where: {
+      projectId: string
+      subject: string
+    }
+    data: {
+      displayName: string
+      email: string | null
+    }
+  }): Promise<{ count: number }> {
+    let count = 0
+
+    this.rows = this.rows.map((row) => {
+      if (row.projectId !== args.where.projectId || row.subject !== args.where.subject) {
+        return row
+      }
+
+      count += 1
+      return {
+        ...row,
+        displayName: args.data.displayName,
+        email: args.data.email,
+      }
+    })
+
+    return { count }
+  }
+
   seed(projectId: string, subject: string, role = 'editor') {
     this.rows = [
       ...this.rows,
@@ -227,25 +265,14 @@ class InMemoryProjectMembersTable {
         id: `member-${projectId}-${subject}`,
         projectId,
         subject,
+        displayName: null,
+        email: null,
         role,
         addedBySubject: null,
         createdAt: new Date(),
       },
     ]
   }
-}
-
-type InviteRow = {
-  id: string
-  projectId: string
-  tokenHash: string
-  role: string
-  createdBySubject: string
-  expiresAt: Date
-  consumedAt: Date | null
-  consumedBySubject: string | null
-  revokedAt: Date | null
-  createdAt: Date
 }
 
 class InMemoryProjectInvitesTable {
@@ -459,280 +486,13 @@ class InMemoryProjectTable {
   }
 }
 
-class InMemoryProjectMembersTable {
-  private rows: MemberRow[] = []
-
-  async findFirst(args: {
-    where: {
-      projectId: string
-      subject: string
-      role?: string
-    }
-    select?: {
-      id: true
-    }
-  }): Promise<{ id: string } | null> {
-    const found = this.rows.find((row) => {
-      if (args.where.role !== undefined) {
-        return row.projectId === args.where.projectId
-          && row.subject === args.where.subject
-          && row.role === args.where.role
-      }
-
-      return row.projectId === args.where.projectId && row.subject === args.where.subject
-    })
-
-    return found ? { id: found.id } : null
-  }
-
-  async findMany(args: {
-    where: {
-      projectId: string
-    }
-    orderBy: {
-      createdAt: 'asc' | 'desc'
-    }
-  }): Promise<Array<{ subject: string; displayName: string | null; email: string | null; role: string }>> {
-    const sorted = this.rows
-      .filter((row) => row.projectId === args.where.projectId)
-      .sort((left, right) => {
-        if (args.orderBy.createdAt === 'asc') {
-          return left.createdAt.getTime() - right.createdAt.getTime()
-        }
-
-        return right.createdAt.getTime() - left.createdAt.getTime()
-      })
-
-    return sorted.map((row) => ({
-      subject: row.subject,
-      displayName: row.displayName,
-      email: row.email,
-      role: row.role,
-    }))
-  }
-
-  async upsert(args: {
-    where: {
-      projectId_subject: {
-        projectId: string
-        subject: string
-      }
-    }
-    create: {
-      id: string
-      projectId: string
-      subject: string
-      displayName: string | null
-      email: string | null
-      role: string
-      addedBySubject: string | null
-    }
-    update: {
-      displayName: string | null
-      email: string | null
-      role: string
-      addedBySubject: string | null
-    }
-  }): Promise<MemberRow> {
-    const key = args.where.projectId_subject
-    const existing = this.rows.find((row) => {
-      return row.projectId === key.projectId && row.subject === key.subject
-    })
-
-    if (existing) {
-      const updated: MemberRow = {
-        ...existing,
-        displayName: args.update.displayName,
-        email: args.update.email,
-        role: args.update.role,
-        addedBySubject: args.update.addedBySubject,
-      }
-
-      this.rows = this.rows.map((row) => (row.id === existing.id ? updated : row))
-      return updated
-    }
-
-    const row: MemberRow = {
-      id: args.create.id,
-      projectId: args.create.projectId,
-      subject: args.create.subject,
-      displayName: args.create.displayName,
-      email: args.create.email,
-      role: args.create.role,
-      addedBySubject: args.create.addedBySubject,
-      createdAt: new Date(),
-    }
-
-    this.rows = [...this.rows, row]
-    return row
-  }
-
-  async updateMany(args: {
-    where: {
-      projectId: string
-      subject: string
-    }
-    data: {
-      displayName: string
-      email: string | null
-    }
-  }): Promise<{ count: number }> {
-    let count = 0
-
-    this.rows = this.rows.map((row) => {
-      if (row.projectId !== args.where.projectId || row.subject !== args.where.subject) {
-        return row
-      }
-
-      count += 1
-
-      return {
-        ...row,
-        displayName: args.data.displayName,
-        email: args.data.email,
-      }
-    })
-
-    return { count }
-  }
-}
-
-class InMemoryProjectInvitesTable {
-  private rows: InviteRow[] = []
-
-  async create(args: {
-    data: {
-      id: string
-      projectId: string
-      tokenHash: string
-      role: string
-      createdBySubject: string
-      expiresAt: Date
-    }
-  }): Promise<InviteRow> {
-    const row: InviteRow = {
-      id: args.data.id,
-      projectId: args.data.projectId,
-      tokenHash: args.data.tokenHash,
-      role: args.data.role,
-      createdBySubject: args.data.createdBySubject,
-      expiresAt: new Date(args.data.expiresAt),
-      consumedAt: null,
-      consumedBySubject: null,
-      revokedAt: null,
-      createdAt: new Date(),
-    }
-
-    this.rows = [...this.rows, row]
-    return { ...row }
-  }
-
-  async findFirst(_args: {
-    where: {
-      tokenHash: string
-    }
-    include?: {
-      project: {
-        select: {
-          id: true
-          name: true
-        }
-      }
-    }
-  }) {
-    return null
-  }
-
-  async update(_args: {
-    where: {
-      id: string
-    }
-    data: {
-      consumedAt?: Date
-      consumedBySubject?: string
-      revokedAt?: Date
-    }
-  }): Promise<InviteRow> {
-    throw new Error('Not implemented for this test double')
-  }
-
-  async updateMany(args: {
-    where: {
-      id: string
-      projectId?: string
-      consumedAt: null
-      revokedAt: null
-      expiresAt: {
-        gt: Date
-      }
-    }
-    data: {
-      consumedAt?: Date
-      consumedBySubject?: string
-      revokedAt?: Date
-    }
-  }): Promise<{ count: number }> {
-    let count = 0
-
-    this.rows = this.rows.map((row) => {
-      if (row.id !== args.where.id) {
-        return row
-      }
-
-      if (args.where.projectId !== undefined && row.projectId !== args.where.projectId) {
-        return row
-      }
-
-      if (row.consumedAt !== null || row.revokedAt !== null || row.expiresAt.getTime() <= args.where.expiresAt.gt.getTime()) {
-        return row
-      }
-
-      count += 1
-      return {
-        ...row,
-        consumedAt: args.data.consumedAt ?? row.consumedAt,
-        consumedBySubject: args.data.consumedBySubject ?? row.consumedBySubject,
-        revokedAt: args.data.revokedAt ?? row.revokedAt,
-      }
-    })
-
-    return { count }
-  }
-
-  async findMany(args: {
-    where: {
-      projectId: string
-      consumedAt: null
-      revokedAt: null
-      expiresAt: {
-        gt: Date
-      }
-    }
-    orderBy: {
-      createdAt: 'desc'
-    }
-  }): Promise<InviteRow[]> {
-    return this.rows
-      .filter((row) => {
-        return row.projectId === args.where.projectId
-          && row.consumedAt === null
-          && row.revokedAt === null
-          && row.expiresAt.getTime() > args.where.expiresAt.gt.getTime()
-      })
-      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-      .map((row) => ({ ...row }))
-  }
-}
-
 function createPrismaDouble() {
-  const project = new InMemoryProjectTable()
   const projectMember = new InMemoryProjectMembersTable()
+  const project = new InMemoryProjectTable(() => projectMember.rowsForRead())
   const projectInvite = new InMemoryProjectInvitesTable()
 
   const prisma = {
     project,
-    projectMember,
-    projectInvite,
     projectMember,
     projectInvite,
     $transaction: async <T>(callback: (transaction: unknown) => Promise<T>) => {
@@ -983,8 +743,14 @@ describe('projects router', () => {
   it('returns project dashboard and allows owner to remove collaborator', async () => {
     const ownerSubject = 'auth0|owner-dashboard'
     const memberSubject = 'auth0|member-dashboard'
-    const ownerToken = createJwt(ownerSubject, 'jwt-owner-dashboard')
-    const memberToken = createJwt(memberSubject, 'jwt-member-dashboard')
+    const ownerToken = createJwt(ownerSubject, 'jwt-owner-dashboard', {
+      name: 'Owner Dashboard',
+      email: 'owner.dashboard@example.com',
+    })
+    const memberToken = createJwt(memberSubject, 'jwt-member-dashboard', {
+      name: 'Member Dashboard',
+      email: 'member.dashboard@example.com',
+    })
 
     const created = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
@@ -1038,14 +804,31 @@ describe('projects router', () => {
     assert.equal(dashboardAsOwner.status, 200)
     assert.equal(dashboardAsOwnerPayload.data.actorRole, 'owner')
     assert.equal(dashboardAsOwnerPayload.data.project.id, projectId)
+    const ownerCollaborator = dashboardAsOwnerPayload.data.collaborators.find((item: {
+      subject: string
+      role: string
+      displayName: string | null
+      email: string | null
+    }) => item.subject === ownerSubject && item.role === 'owner')
+    const memberCollaborator = dashboardAsOwnerPayload.data.collaborators.find((item: {
+      subject: string
+      role: string
+      displayName: string | null
+      email: string | null
+    }) => item.subject === memberSubject && item.role === 'editor')
+
     assert.equal(
-      dashboardAsOwnerPayload.data.collaborators.some((item: { subject: string; role: string }) => item.subject === ownerSubject && item.role === 'owner'),
+      ownerCollaborator !== undefined,
       true,
     )
     assert.equal(
-      dashboardAsOwnerPayload.data.collaborators.some((item: { subject: string; role: string }) => item.subject === memberSubject && item.role === 'editor'),
+      memberCollaborator !== undefined,
       true,
     )
+    assert.equal(ownerCollaborator?.displayName, 'Owner Dashboard')
+    assert.equal(ownerCollaborator?.email, 'owner.dashboard@example.com')
+    assert.equal(memberCollaborator?.displayName, 'Member Dashboard')
+    assert.equal(memberCollaborator?.email, 'member.dashboard@example.com')
 
     assert.equal(dashboardAsMember.status, 200)
     assert.equal(dashboardAsMemberPayload.data.actorRole, 'editor')

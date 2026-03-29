@@ -1,5 +1,5 @@
 import { FileText, Folder, FolderOpen, FolderPlus, Plus, Search, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { FileDto } from '../../services/projects-api'
 import { buildFileTree, filterFileTree, type FileTreeNode } from './files-tree'
@@ -21,7 +21,13 @@ interface FilesSidebarProps {
   onDeleteFile?: (fileId: string) => Promise<void> | void
   onRenameFolder?: (fromPath: string, toPath: string) => Promise<void> | void
   onDeleteFolder?: (path: string) => Promise<void> | void
+  onImportFiles?: (targetFolderPath: string | null, files: Array<{ path: string; content: string }>) => Promise<void> | void
   onClose?: () => void
+}
+
+type ImportedLocalFile = {
+  path: string
+  content: string
 }
 
 function isValidFilePath(path: string): boolean {
@@ -104,6 +110,127 @@ function getLeafName(path: string) {
   return parts[parts.length - 1] ?? ''
 }
 
+type FileSystemEntryLike = {
+  isFile: boolean
+  isDirectory: boolean
+  fullPath?: string
+}
+
+type FileSystemFileEntryLike = FileSystemEntryLike & {
+  file: (
+    successCallback: (file: File) => void,
+    errorCallback?: (error: Error) => void,
+  ) => void
+}
+
+type FileSystemDirectoryEntryLike = FileSystemEntryLike & {
+  createReader: () => {
+    readEntries: (
+      successCallback: (entries: FileSystemEntryLike[]) => void,
+      errorCallback?: (error: Error) => void,
+    ) => void
+  }
+}
+
+type DataTransferItemWithEntry = DataTransferItem & {
+  webkitGetAsEntry?: () => FileSystemEntryLike | null
+}
+
+function normalizeImportPath(path: string) {
+  const normalizedSlashes = path.replaceAll('\\', '/').replace(/^\/+/, '').trim()
+  const compact = normalizedSlashes
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .join('/')
+
+  return compact
+}
+
+function readEntryFile(entry: FileSystemFileEntryLike) {
+  return new Promise<File>((resolve, reject) => {
+    entry.file(resolve, reject)
+  })
+}
+
+function readDirectoryEntries(entry: FileSystemDirectoryEntryLike) {
+  const reader = entry.createReader()
+
+  return new Promise<FileSystemEntryLike[]>((resolve, reject) => {
+    const collected: FileSystemEntryLike[] = []
+
+    const pump = () => {
+      reader.readEntries((entries) => {
+        if (entries.length === 0) {
+          resolve(collected)
+          return
+        }
+
+        collected.push(...entries)
+        pump()
+      }, reject)
+    }
+
+    pump()
+  })
+}
+
+async function collectDroppedEntryFiles(entry: FileSystemEntryLike): Promise<ImportedLocalFile[]> {
+  if (entry.isFile) {
+    const file = await readEntryFile(entry as FileSystemFileEntryLike)
+    const entryPath = normalizeImportPath(entry.fullPath ?? file.name)
+    const relativePath = entryPath || normalizeImportPath(file.name)
+    if (!relativePath) {
+      return []
+    }
+
+    return [{
+      path: relativePath,
+      content: await file.text(),
+    }]
+  }
+
+  if (!entry.isDirectory) {
+    return []
+  }
+
+  const children = await readDirectoryEntries(entry as FileSystemDirectoryEntryLike)
+  const nested = await Promise.all(children.map((child) => collectDroppedEntryFiles(child)))
+  return nested.flat()
+}
+
+async function extractDroppedFiles(dataTransfer: DataTransfer): Promise<ImportedLocalFile[]> {
+  const itemEntries = Array.from(dataTransfer.items)
+    .map((item) => {
+      const maybeEntry = item as DataTransferItemWithEntry
+      return maybeEntry.webkitGetAsEntry ? maybeEntry.webkitGetAsEntry() : null
+    })
+    .filter((entry): entry is FileSystemEntryLike => entry !== null)
+
+  if (itemEntries.length > 0) {
+    const extracted = await Promise.all(itemEntries.map((entry) => collectDroppedEntryFiles(entry)))
+    const flattened = extracted.flat()
+    if (flattened.length > 0) {
+      return flattened
+    }
+  }
+
+  const fallbackFiles = Array.from(dataTransfer.files)
+  const mapped = await Promise.all(fallbackFiles.map(async (file) => {
+    const relative = normalizeImportPath(file.webkitRelativePath || file.name)
+    if (!relative) {
+      return null
+    }
+
+    return {
+      path: relative,
+      content: await file.text(),
+    }
+  }))
+
+  return mapped.filter((file): file is ImportedLocalFile => file !== null)
+}
+
 function FileNodeIcon({ fileName, className }: { fileName: string; className: string }) {
   const iconMeta = getFileIconMeta(fileName)
   const Icon = getFileIconComponent(iconMeta.iconKey)
@@ -146,6 +273,10 @@ function NodeRow({
   onRenameValueChange,
   onConfirmRename,
   onCancelRename,
+  dragOverFolderPath,
+  onFolderDragEnter,
+  onFolderDragLeave,
+  onFolderDrop,
 }: {
   node: FileTreeNode
   depth: number
@@ -169,6 +300,10 @@ function NodeRow({
   onRenameValueChange: (nextValue: string) => void
   onConfirmRename: () => void
   onCancelRename: () => void
+  dragOverFolderPath: string | null
+  onFolderDragEnter: (folderPath: string) => void
+  onFolderDragLeave: (folderPath: string, event: DragEvent<HTMLDivElement>) => void
+  onFolderDrop: (folderPath: string, event: DragEvent<HTMLDivElement>) => void
 }) {
   const [isOpen, setIsOpen] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -195,6 +330,7 @@ function NodeRow({
 
   const renderInlineCreate = !isFile && isOpen && pendingParentPath === node.path
   const isRenaming = renameTargetPath === node.path
+  const isFolderDragOver = !isFile && dragOverFolderPath === node.path
 
   const clearHoldTimer = () => {
     if (holdTimerRef.current === null) {
@@ -333,9 +469,44 @@ function NodeRow({
           onSelectFolder(node.path)
           setIsOpen((current) => !current)
         }}
+        onDragEnter={(event) => {
+          if (isFile) {
+            return
+          }
+
+          event.preventDefault()
+          event.stopPropagation()
+          onFolderDragEnter(node.path)
+        }}
+        onDragOver={(event) => {
+          if (isFile) {
+            return
+          }
+
+          event.preventDefault()
+          event.stopPropagation()
+          onFolderDragEnter(node.path)
+        }}
+        onDragLeave={(event) => {
+          if (isFile) {
+            return
+          }
+
+          event.stopPropagation()
+          onFolderDragLeave(node.path, event)
+        }}
+        onDrop={(event) => {
+          if (isFile) {
+            return
+          }
+
+          onFolderDrop(node.path, event)
+        }}
         className={cn(
           'group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-all',
-          isActive
+          isFolderDragOver
+            ? 'bg-[color-mix(in_oklab,var(--chip-bg)_52%,rgba(var(--lagoon-rgb),0.34)_48%)] text-[var(--sea-ink)]'
+            : isActive
             ? 'bg-[color-mix(in_oklab,var(--chip-bg)_62%,rgba(var(--lagoon-rgb),0.28)_38%)] text-[var(--sea-ink)] shadow-[0_6px_16px_rgba(8,22,28,0.14)]'
             : isSelectedFolder
               ? 'bg-[rgba(var(--lagoon-rgb),0.16)] text-[var(--sea-ink)]'
@@ -456,6 +627,10 @@ function NodeRow({
               onRenameValueChange={onRenameValueChange}
               onConfirmRename={onConfirmRename}
               onCancelRename={onCancelRename}
+              dragOverFolderPath={dragOverFolderPath}
+              onFolderDragEnter={onFolderDragEnter}
+              onFolderDragLeave={onFolderDragLeave}
+              onFolderDrop={onFolderDrop}
             />
           ))
         : null}
@@ -574,6 +749,7 @@ export default function FilesSidebar({
   onDeleteFile,
   onRenameFolder,
   onDeleteFolder,
+  onImportFiles,
   onClose,
 }: FilesSidebarProps) {
   const [query, setQuery] = useState('')
@@ -586,6 +762,8 @@ export default function FilesSidebar({
   const [renameTarget, setRenameTarget] = useState<FileTreeNode | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [isRenamePending, setIsRenamePending] = useState(false)
+  const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
+  const [isDragOverRoot, setIsDragOverRoot] = useState(false)
 
   const tree = useMemo(() => buildFileTree(files, virtualFolders), [files, virtualFolders])
 
@@ -727,6 +905,66 @@ export default function FilesSidebar({
 
   const isBusy = isCreatePending || isRenamePending
 
+  const handleImportDrop = async (
+    event: DragEvent,
+    targetFolderPath: string | null,
+  ) => {
+    if (!onImportFiles) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    setDragOverFolderPath(null)
+    setIsDragOverRoot(false)
+
+    try {
+      const dropped = await extractDroppedFiles(event.dataTransfer)
+      if (dropped.length === 0) {
+        return
+      }
+
+      const normalizedTarget = targetFolderPath?.trim() || null
+      const payload = dropped.map((entry) => {
+        const localPath = normalizeImportPath(entry.path)
+        const finalPath = normalizedTarget
+          ? normalizeImportPath(`${normalizedTarget}/${localPath}`)
+          : localPath
+        return {
+          path: finalPath,
+          content: entry.content,
+        }
+      }).filter((entry) => entry.path.length > 0)
+
+      if (payload.length === 0) {
+        return
+      }
+
+      await onImportFiles(normalizedTarget, payload)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not import dropped files.'
+      setInlineError(message)
+    }
+  }
+
+  const handleFolderDragEnter = (folderPath: string) => {
+    setDragOverFolderPath(folderPath)
+    setIsDragOverRoot(false)
+  }
+
+  const handleFolderDragLeave = (folderPath: string, event: DragEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) {
+      return
+    }
+
+    setDragOverFolderPath((current) => (current === folderPath ? null : current))
+  }
+
+  const handleFolderDrop = (folderPath: string, event: DragEvent<HTMLDivElement>) => {
+    void handleImportDrop(event, folderPath)
+  }
+
   return (
     <aside className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))]">
       <div
@@ -785,7 +1023,50 @@ export default function FilesSidebar({
         </label>
       </div>
 
-      <div className="relative flex-1 overflow-y-auto px-2 py-2">
+      <div
+        className={cn(
+          'relative flex-1 overflow-y-auto px-2 py-2',
+          isDragOverRoot && 'bg-[rgba(var(--lagoon-rgb),0.08)]',
+        )}
+        onDragEnter={(event) => {
+          if (!onImportFiles) {
+            return
+          }
+
+          event.preventDefault()
+          setIsDragOverRoot(true)
+        }}
+        onDragOver={(event) => {
+          if (!onImportFiles) {
+            return
+          }
+
+          event.preventDefault()
+          if (!dragOverFolderPath) {
+            setIsDragOverRoot(true)
+          }
+        }}
+        onDragLeave={(event) => {
+          if (!onImportFiles) {
+            return
+          }
+
+          const relatedTarget = event.relatedTarget
+          if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) {
+            return
+          }
+
+          setIsDragOverRoot(false)
+          setDragOverFolderPath(null)
+        }}
+        onDrop={(event) => {
+          if (!onImportFiles) {
+            return
+          }
+
+          void handleImportDrop(event, null)
+        }}
+      >
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-2 top-1 h-[1px] bg-[linear-gradient(90deg,transparent,var(--line),transparent)]"
@@ -866,6 +1147,10 @@ export default function FilesSidebar({
                 onRenameValueChange={setRenameValue}
                 onConfirmRename={handleConfirmRename}
                 onCancelRename={handleCancelRename}
+                dragOverFolderPath={dragOverFolderPath}
+                onFolderDragEnter={handleFolderDragEnter}
+                onFolderDragLeave={handleFolderDragLeave}
+                onFolderDrop={handleFolderDrop}
               />
             ))
           : null}

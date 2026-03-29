@@ -3,7 +3,40 @@ import type { ActorContext } from '../auth/actor-context.js'
 import { createId } from './id.js'
 import { createFileStorageKey, type FileBlobStore } from './file-blob-store.js'
 import { canEditProject, canReadProject } from './project-access.js'
-import type { FileInput, FileRecord, FolderRecord } from './file.types.js'
+import type {
+  FileImportResult,
+  FileInput,
+  FileRecord,
+  FolderRecord,
+  ImportFileInput,
+} from './file.types.js'
+
+const MAX_IMPORT_FILE_CONTENT_LENGTH = 500_000
+
+function isSafeRelativePath(path: string): boolean {
+  if (!path || path.length > 256) {
+    return false
+  }
+
+  if (path.startsWith('/') || path.startsWith('\\') || path.includes('..')) {
+    return false
+  }
+
+  const segments = path.split('/').filter((segment) => segment.trim().length > 0)
+  if (segments.length === 0) {
+    return false
+  }
+
+  return segments.join('/') === path
+}
+
+function toImportErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+
+  return fallback
+}
 
 function toFileRecord(file: {
   id: string
@@ -40,6 +73,61 @@ export class FilesRepository {
     private readonly prisma: PrismaClient,
     private readonly blobStore: FileBlobStore,
   ) {}
+
+  private async createFileInternal(
+    projectId: string,
+    path: string,
+    content: string,
+    ownerSubject: string | null,
+  ): Promise<FileRecord> {
+    const id = createId()
+    const storageKey = createFileStorageKey(projectId, id)
+    const blobResult = await this.blobStore.writeText(storageKey, content)
+
+    try {
+      const file = await this.prisma.file.create({
+        data: {
+          id,
+          projectId,
+          path,
+          storageKey,
+          contentHash: blobResult.contentHash,
+          byteSize: blobResult.byteSize,
+          ownerSubject,
+        },
+        select: {
+          id: true,
+          projectId: true,
+          path: true,
+          storageKey: true,
+          contentHash: true,
+          byteSize: true,
+          ownerSubject: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+
+      return toFileRecord(file, content)
+    } catch (error) {
+      await this.blobStore.remove(storageKey)
+      throw error
+    }
+  }
+
+  private async listProjectPaths(projectId: string): Promise<Set<string>> {
+    const existing = await this.prisma.file.findMany({
+      where: {
+        projectId,
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    })
+
+    const paths = existing.map((entry) => entry.path)
+    return new Set(paths)
+  }
 
   async listByProject(actor: ActorContext, projectId: string): Promise<FileRecord[]> {
     const ownerSubject = actor.subject
@@ -203,7 +291,6 @@ export class FilesRepository {
   }
 
   async create(actor: ActorContext, input: FileInput): Promise<FileRecord> {
-    const id = createId()
     const ownerSubject = actor.subject
 
     if (!ownerSubject) {
@@ -219,73 +306,101 @@ export class FilesRepository {
       })
     }
 
-    const storageKey = createFileStorageKey(input.projectId, id)
-    const blobResult = await this.blobStore.writeText(storageKey, input.content)
-
-    try {
-      const file = await this.prisma.file.create({
-        data: {
-          id,
-          projectId: input.projectId,
-          path: input.path,
-          storageKey,
-          contentHash: blobResult.contentHash,
-          byteSize: blobResult.byteSize,
-          ownerSubject,
-        },
-        select: {
-          id: true,
-          projectId: true,
-          path: true,
-          storageKey: true,
-          contentHash: true,
-          byteSize: true,
-          ownerSubject: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      })
-
-      return toFileRecord(file, input.content)
-    } catch (error) {
-      await this.blobStore.remove(storageKey)
-      throw error
-    }
+    return this.createFileInternal(input.projectId, input.path, input.content, ownerSubject)
   }
 
   async createFromSync(input: FileInput, ownerSubject: string | null = null): Promise<FileRecord> {
-    const id = createId()
-    const storageKey = createFileStorageKey(input.projectId, id)
-    const blobResult = await this.blobStore.writeText(storageKey, input.content)
+    return this.createFileInternal(input.projectId, input.path, input.content, ownerSubject)
+  }
 
-    try {
-      const file = await this.prisma.file.create({
-        data: {
-          id,
-          projectId: input.projectId,
-          path: input.path,
-          storageKey,
-          contentHash: blobResult.contentHash,
-          byteSize: blobResult.byteSize,
-          ownerSubject,
-        },
-        select: {
-          id: true,
-          projectId: true,
-          path: true,
-          storageKey: true,
-          contentHash: true,
-          byteSize: true,
-          ownerSubject: true,
-          createdAt: true,
-          updatedAt: true,
-        },
+  async importFilesSkipDuplicates(
+    actor: ActorContext,
+    projectId: string,
+    files: ImportFileInput[],
+  ): Promise<FileImportResult> {
+    const ownerSubject = actor.subject
+    if (!ownerSubject) {
+      throw Object.assign(new Error('Authentication is required'), {
+        code: 'AUTH_REQUIRED',
       })
+    }
 
-      return toFileRecord(file, input.content)
-    } catch (error) {
-      await this.blobStore.remove(storageKey)
-      throw error
+    const canCreate = await canEditProject(this.prisma, actor, projectId)
+    if (!canCreate) {
+      throw Object.assign(new Error('Project not found'), {
+        code: 'P2025',
+      })
+    }
+
+    const existingPaths = await this.listProjectPaths(projectId)
+    const seenImportPaths = new Set<string>()
+    const imported: FileRecord[] = []
+    const skipped: FileImportResult['skipped'] = []
+    const failed: FileImportResult['failed'] = []
+
+    for (const input of files) {
+      const normalizedPath = input.path.replaceAll('\\', '/').trim()
+
+      if (!isSafeRelativePath(normalizedPath)) {
+        skipped.push({
+          path: input.path,
+          reason: 'Invalid file path',
+        })
+        continue
+      }
+
+      if (seenImportPaths.has(normalizedPath)) {
+        skipped.push({
+          path: normalizedPath,
+          reason: 'Duplicate file path in import payload',
+        })
+        continue
+      }
+
+      seenImportPaths.add(normalizedPath)
+
+      if (existingPaths.has(normalizedPath)) {
+        skipped.push({
+          path: normalizedPath,
+          reason: 'File already exists',
+        })
+        continue
+      }
+
+      if (input.content.length > MAX_IMPORT_FILE_CONTENT_LENGTH) {
+        skipped.push({
+          path: normalizedPath,
+          reason: 'File exceeds maximum size',
+        })
+        continue
+      }
+
+      try {
+        const created = await this.createFileInternal(projectId, normalizedPath, input.content, ownerSubject)
+        imported.push(created)
+        existingPaths.add(normalizedPath)
+      } catch (error) {
+        const errorLike = error as { code?: string }
+        if (errorLike.code === 'P2002' || errorLike.code === '23505') {
+          skipped.push({
+            path: normalizedPath,
+            reason: 'File already exists',
+          })
+          existingPaths.add(normalizedPath)
+          continue
+        }
+
+        failed.push({
+          path: normalizedPath,
+          reason: toImportErrorMessage(error, 'Could not import file'),
+        })
+      }
+    }
+
+    return {
+      imported,
+      skipped,
+      failed,
     }
   }
 
