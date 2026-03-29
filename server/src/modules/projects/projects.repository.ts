@@ -551,20 +551,41 @@ export class ProjectsRepository {
       })
       : []
 
-    const collaborators: ProjectCollaboratorRecord[] = [
-      {
+    const collaboratorsBySubject = new Map<string, ProjectCollaboratorRecord>()
+
+    if (project.ownerSubject) {
+      collaboratorsBySubject.set(project.ownerSubject, {
         subject: project.ownerSubject,
+        displayName: null,
+        email: null,
         role: 'owner',
         addedBySubject: null,
         createdAt: project.createdAt,
-      },
-      ...memberRows.map((member) => ({
+      })
+    }
+
+    memberRows.forEach((member) => {
+      const existing = collaboratorsBySubject.get(member.subject)
+      const nextRole: 'owner' | 'editor' =
+        existing?.role === 'owner' || member.role === 'owner' ? 'owner' : 'editor'
+
+      collaboratorsBySubject.set(member.subject, {
         subject: member.subject,
-        role: 'editor' as const,
+        displayName: member.displayName,
+        email: member.email,
+        role: nextRole,
         addedBySubject: member.addedBySubject,
-        createdAt: member.createdAt.toISOString(),
-      })),
-    ]
+        createdAt: existing?.createdAt ?? member.createdAt.toISOString(),
+      })
+    })
+
+    const collaborators = [...collaboratorsBySubject.values()].sort((left, right) => {
+      if (left.role !== right.role) {
+        return left.role === 'owner' ? -1 : 1
+      }
+
+      return left.createdAt.localeCompare(right.createdAt)
+    })
 
     const activeInvites = inviteListModel
       ? (await inviteListModel.findMany({

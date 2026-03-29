@@ -822,7 +822,6 @@ function WorkspaceWithHostedAuth() {
     activeFilePath: activeFile?.path ?? null,
     onRunStart: () => {
       setCenterView('terminal')
-      setBottomDrawerTab('run')
     },
     onRunError: toastError,
   })
@@ -860,10 +859,13 @@ function WorkspaceWithHostedAuth() {
       const fallbackFromEmail = email !== 'Not available'
         ? (email.split('@')[0]?.trim() || undefined)
         : undefined
+      const fallbackFromSubject = member.subject.includes('|')
+        ? (member.subject.split('|')[1]?.trim() || member.subject)
+        : member.subject
 
       return {
         id: member.subject,
-        name: member.displayName?.trim() || fallbackFromEmail || 'Unknown user',
+        name: member.displayName?.trim() || fallbackFromEmail || fallbackFromSubject || 'Unknown user',
         email,
         role: member.role,
         isYou,
@@ -876,6 +878,16 @@ function WorkspaceWithHostedAuth() {
   const collaboratorNameBySubject = useMemo(() => {
     return collabMembers.reduce<Record<string, string>>((accumulator, member) => {
       accumulator[member.id] = member.name
+      return accumulator
+    }, {})
+  }, [collabMembers])
+
+  const collaboratorIdentityBySubject = useMemo(() => {
+    return collabMembers.reduce<Record<string, { name: string; email: string }>>((accumulator, member) => {
+      accumulator[member.id] = {
+        name: member.name,
+        email: member.email,
+      }
       return accumulator
     }, {})
   }, [collabMembers])
@@ -1910,6 +1922,7 @@ function WorkspaceWithHostedAuth() {
                     projectId={activeProjectId}
                     queuedCommand={queuedTerminalCommand}
                     onQueuedCommandSent={clearQueuedTerminalCommand}
+                    collaboratorIdentityBySubject={collaboratorIdentityBySubject}
                   />
                 )}
               </div>

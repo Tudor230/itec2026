@@ -6,7 +6,6 @@ import {
   Maximize2,
   Minimize2,
   Link2,
-  Play,
   RefreshCw,
   RotateCcw,
   ShieldAlert,
@@ -15,9 +14,6 @@ import {
   Sparkles,
   Users,
   X,
-  FileClock,
-  FolderGit2,
-  Download,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -32,7 +28,7 @@ import {
   type ProjectHistoryEntryDto,
 } from '../../services/projects-api'
 
-export type DrawerTab = 'timeline' | 'run' | 'env' | 'collab'
+export type DrawerTab = 'timeline' | 'env' | 'collab'
 
 export interface TimelineEntry {
   sequence: number
@@ -128,12 +124,6 @@ const DRAWER_ITEMS: {
     icon: History,
   },
   {
-    id: 'run',
-    label: 'Run & Debug',
-    subtitle: 'sandbox execution',
-    icon: Play,
-  },
-  {
     id: 'env',
     label: 'Environment',
     subtitle: 'runtime variables',
@@ -206,6 +196,13 @@ export default function BottomDrawers({
   onTimelineRewind,
   onTimelineReturnToLatest,
 }: BottomDrawersProps) {
+  const collabMembersWithRole = collabMembers.map((member) => {
+    return {
+      ...member,
+      role: member.role ?? 'editor',
+    }
+  })
+
   const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
@@ -852,43 +849,6 @@ export default function BottomDrawers({
             </div>
           )}
 
-          {activeTab === 'run' && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-4 rounded-xl border border-[rgba(var(--lagoon-rgb),0.22)] bg-[rgba(var(--lagoon-rgb),0.08)] p-4">
-                <div className="rounded-full bg-[var(--lagoon)] p-3 text-white shadow-[0_8px_16px_rgba(var(--lagoon-rgb),0.35)]">
-                  <Play size={20} />
-                </div>
-                <div>
-                  <p className="font-bold text-[var(--sea-ink)]">
-                    Ready to Run
-                  </p>
-                  <p className="text-xs text-[var(--sea-ink-soft)]">
-                    Click run to execute your project in the Docker sandbox.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
-                    Default target
-                  </p>
-                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">
-                    Docker sandbox
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
-                    Permission
-                  </p>
-                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">
-                    Read + execute
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'env' && (
             <div className="space-y-4">
               <h3 className="text-sm font-bold text-[var(--sea-ink)]">
@@ -939,9 +899,9 @@ export default function BottomDrawers({
                     <span>Email</span>
                     <span>Role</span>
                   </div>
-                  {collabMembers.length === 0 ? (
+                  {collabMembersWithRole.length === 0 ? (
                     <div className="px-3 py-3 text-xs text-[var(--sea-ink-soft)]">No participants available.</div>
-                  ) : collabMembers.map((member) => (
+                  ) : collabMembersWithRole.map((member) => (
                     <div key={member.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[color-mix(in_oklab,var(--line)_70%,transparent)] px-3 py-2 text-xs last:border-b-0">
                       <span className="truncate font-semibold text-[var(--sea-ink)]">
                         {member.name}

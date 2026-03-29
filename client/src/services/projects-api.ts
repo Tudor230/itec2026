@@ -58,6 +58,8 @@ export interface ProjectInviteDto {
 
 export interface ProjectCollaboratorDto {
   subject: string | null
+  displayName: string | null
+  email: string | null
   role: 'owner' | 'editor'
   addedBySubject: string | null
   createdAt: string
@@ -68,22 +70,6 @@ export interface ProjectDashboardDto {
   actorRole: 'owner' | 'editor'
   collaborators: ProjectCollaboratorDto[]
   activeInvites: ProjectInviteDto[]
-}
-
-export interface ActiveProjectInviteDto {
-  id: string
-  projectId: string
-  role: 'editor'
-  createdBySubject: string
-  expiresAt: string
-  createdAt: string
-}
-
-export interface ProjectMemberDto {
-  subject: string
-  displayName: string | null
-  email: string | null
-  role: string
 }
 
 export interface ActiveProjectInviteDto {
