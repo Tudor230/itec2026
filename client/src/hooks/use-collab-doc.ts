@@ -117,6 +117,7 @@ export function useCollabDoc({
   const fileIdRef = useRef<string | null>(fileId)
   const lastCursorSentAtRef = useRef(0)
   const lastCursorSignatureRef = useRef('')
+  const joinAttemptIdRef = useRef(0)
 
   const [state, setState] = useState<CollabDocState>({
     connectionState: 'idle',
@@ -146,27 +147,25 @@ export function useCollabDoc({
     }
   }, [])
 
-  const bindEditorToLiveDoc = useMemo(() => {
-    return async () => {
-      const editor = bindingTargets.editor
-      const model = bindingTargets.model
-      const doc = collabDocRef.current
-      if (!editor || !model || !doc) {
-        return
-      }
-
-      destroyBinding()
-
-      const module = await import('y-monaco')
-      const yText = doc.getText('content')
-      const binding = new module.MonacoBinding(
-        yText,
-        model,
-        new Set([editor]),
-      ) as MonacoBindingInstance
-      bindingRef.current = binding
+  const bindEditorToLiveDoc = useCallback(async () => {
+    const editor = bindingTargetsRef.current.editor
+    const model = bindingTargetsRef.current.model
+    const doc = collabDocRef.current
+    if (!editor || !model || !doc) {
+      return
     }
-  }, [bindingTargets.editor, bindingTargets.model, destroyBinding])
+
+    destroyBinding()
+
+    const module = await import('y-monaco')
+    const yText = doc.getText('content')
+    const binding = new module.MonacoBinding(
+      yText,
+      model,
+      new Set([editor]),
+    ) as MonacoBindingInstance
+    bindingRef.current = binding
+  }, [destroyBinding])
 
   const collabClient = useMemo(() => {
     return new CollabClient({
@@ -767,16 +766,16 @@ export function useCollabDoc({
   }, [collabClient, fileId, loadTimeline, projectId])
 
   useEffect(() => {
-    const model = bindingTargets.model
-    const editor = bindingTargets.editor
-    const monaco = bindingTargets.monaco
+    const joinAttemptId = joinAttemptIdRef.current + 1
+    joinAttemptIdRef.current = joinAttemptId
 
-    if (!projectId || !fileId || !model || !editor || !monaco) {
+    if (!projectId || !fileId) {
       if (sessionDestroyRef.current) {
         sessionDestroyRef.current()
         sessionDestroyRef.current = null
       }
 
+      collabDocRef.current = null
       sessionStateRef.current = null
 
       if (bindingRef.current) {
@@ -799,6 +798,9 @@ export function useCollabDoc({
       sessionDestroyRef.current = null
     }
 
+    collabDocRef.current = null
+    sessionStateRef.current = null
+
     if (bindingRef.current) {
       destroyBinding()
     }
@@ -806,14 +808,12 @@ export function useCollabDoc({
     void collabClient
       .joinDocument(projectId, fileId)
       .then(async (session) => {
-        if (cancelled) {
+        if (cancelled || joinAttemptIdRef.current !== joinAttemptId) {
           session.destroy()
           return
         }
 
         collabDocRef.current = session.doc
-
-        await bindEditorToLiveDoc()
         sessionStateRef.current = {
           projectId,
           fileId,
@@ -823,9 +823,11 @@ export function useCollabDoc({
           sessionStateRef.current = null
           session.destroy()
         }
+
+        await bindEditorToLiveDoc()
       })
       .catch((error: unknown) => {
-        if (cancelled) {
+        if (cancelled || joinAttemptIdRef.current !== joinAttemptId) {
           return
         }
 
@@ -851,24 +853,36 @@ export function useCollabDoc({
       }
 
       collabDocRef.current = null
-
       sessionStateRef.current = null
 
       if (bindingRef.current) {
         destroyBinding()
       }
     }
-  }, [
-    bindEditorToLiveDoc,
-    bindingTargets.editor,
-    bindingTargets.model,
-    clearRemoteCursorVisuals,
-    bindingTargets.monaco,
-    collabClient,
-    destroyBinding,
-    fileId,
-    projectId,
-  ])
+  }, [bindEditorToLiveDoc, clearRemoteCursorVisuals, collabClient, destroyBinding, fileId, projectId])
+
+  useEffect(() => {
+    const model = bindingTargets.model
+    const editor = bindingTargets.editor
+    const monaco = bindingTargets.monaco
+    const session = sessionStateRef.current
+    const hasMatchingSession = Boolean(
+      session
+      && projectId
+      && fileId
+      && session.projectId === projectId
+      && session.fileId === fileId,
+    )
+
+    if (!model || !editor || !monaco || !hasMatchingSession) {
+      if (bindingRef.current) {
+        destroyBinding()
+      }
+      return
+    }
+
+    void bindEditorToLiveDoc()
+  }, [bindEditorToLiveDoc, bindingTargets.editor, bindingTargets.model, bindingTargets.monaco, destroyBinding, fileId, projectId])
 
   useEffect(() => {
     const editor = bindingTargets.editor

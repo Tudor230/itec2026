@@ -482,7 +482,6 @@ function ProjectsPage() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h3 className="mb-1 mt-0 text-lg font-semibold text-[var(--sea-ink)]">{project.name}</h3>
-                      <p className="m-0 text-xs text-[var(--sea-ink-soft)]">{formatRelativeTime(project.updatedAt)}</p>
                     </div>
                     <span className="inline-flex items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.11em] text-[var(--sea-ink-soft)]">
                       Project
