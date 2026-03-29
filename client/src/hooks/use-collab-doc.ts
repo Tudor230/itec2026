@@ -147,27 +147,25 @@ export function useCollabDoc({
     }
   }, [])
 
-  const bindEditorToLiveDoc = useMemo(() => {
-    return async () => {
-      const editor = bindingTargets.editor
-      const model = bindingTargets.model
-      const doc = collabDocRef.current
-      if (!editor || !model || !doc) {
-        return
-      }
-
-      destroyBinding()
-
-      const module = await import('y-monaco')
-      const yText = doc.getText('content')
-      const binding = new module.MonacoBinding(
-        yText,
-        model,
-        new Set([editor]),
-      ) as MonacoBindingInstance
-      bindingRef.current = binding
+  const bindEditorToLiveDoc = useCallback(async () => {
+    const editor = bindingTargetsRef.current.editor
+    const model = bindingTargetsRef.current.model
+    const doc = collabDocRef.current
+    if (!editor || !model || !doc) {
+      return
     }
-  }, [bindingTargets.editor, bindingTargets.model, destroyBinding])
+
+    destroyBinding()
+
+    const module = await import('y-monaco')
+    const yText = doc.getText('content')
+    const binding = new module.MonacoBinding(
+      yText,
+      model,
+      new Set([editor]),
+    ) as MonacoBindingInstance
+    bindingRef.current = binding
+  }, [destroyBinding])
 
   const collabClient = useMemo(() => {
     return new CollabClient({
