@@ -69,6 +69,8 @@ interface ErrorPayload {
 
 const joinScopedErrorMessages = new Set<string>([
   'Authentication is required',
+  'Not authorized for this project',
+  'Not authorized for this file',
   'Too many join attempts',
   'Too many open documents in this session',
   'Collaboration server is busy, try again later',
@@ -399,6 +401,28 @@ export class CollabClient {
     const doc = new Y.Doc()
     const key = { projectId, fileId }
     let isApplyingRemote = false
+    let joinedDocument = false
+    let disposed = false
+
+    const dispose = (emitLeave: boolean) => {
+      if (disposed) {
+        return
+      }
+
+      disposed = true
+      if (emitLeave && joinedDocument) {
+        socket.emit('collab:doc:leave', {
+          projectId,
+          fileId,
+        })
+      }
+
+      doc.off('update', onDocChange)
+      socket.off('collab:doc:sync', onDocSync)
+      socket.off('collab:doc:update', onDocUpdate)
+      socket.off('collab:error', onError)
+      doc.destroy()
+    }
 
     const onDocSync = (payload: DocSyncPayload) => {
       if (!sameDoc(payload, key)) {
@@ -447,7 +471,15 @@ export class CollabClient {
       })
     }
 
-    const onError = (payload: { message?: string }) => {
+    const onError = (payload: ErrorPayload) => {
+      if (
+        payload.projectId &&
+        payload.fileId &&
+        (payload.projectId !== key.projectId || payload.fileId !== key.fileId)
+      ) {
+        return
+      }
+
       const message = payload.message ?? 'Collaboration error'
       this.onStatus?.({ state: 'error', message })
     }
@@ -469,6 +501,7 @@ export class CollabClient {
           return
         }
 
+        joinedDocument = true
         cleanup()
         resolve()
       }
@@ -497,21 +530,17 @@ export class CollabClient {
         fileId,
       })
     })
+    .catch((error) => {
+      dispose(false)
+      throw error
+    })
 
     this.onStatus?.({ state: 'synced' })
 
     return {
       doc,
       destroy: () => {
-        socket.emit('collab:doc:leave', {
-          projectId,
-          fileId,
-        })
-        doc.off('update', onDocChange)
-        socket.off('collab:doc:sync', onDocSync)
-        socket.off('collab:doc:update', onDocUpdate)
-        socket.off('collab:error', onError)
-        doc.destroy()
+        dispose(true)
       },
     }
   }
