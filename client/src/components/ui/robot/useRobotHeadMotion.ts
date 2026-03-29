@@ -30,6 +30,8 @@ interface PoseVars {
   shiftY: string
 }
 
+export const EYE_FOCUS_LOCK_MS = 1500
+
 const REACTION_POSE_BY_SECTION: Record<RobotSection, PoseVars> = {
   hero: {
     tilt: '0deg',
@@ -160,7 +162,7 @@ export function useRobotHeadMotion(section: RobotSection, zoom: number, shouldAn
 
     const focusTimeoutId = window.setTimeout(() => {
       setIsEyeFocusLocked(false)
-    }, 1000)
+    }, EYE_FOCUS_LOCK_MS)
 
     return () => {
       window.clearTimeout(transitionTimeoutId)

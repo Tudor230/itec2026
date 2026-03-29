@@ -64,6 +64,48 @@ type DocDirtyStatePayload = {
   updatedAt: string
 }
 
+type DocTimelineEntry = {
+  sequence: number
+  kind: 'snapshot' | 'update'
+  createdAt: string
+}
+
+type DocTimelinePayload = {
+  projectId: string
+  fileId: string
+  headSequence: number
+  entries: DocTimelineEntry[]
+  rewindEdges: Array<{
+    appliedSequence: number
+    targetSequence: number
+    previousHeadSequence: number
+    createdAt: string
+  }>
+}
+
+type DocRewindResultPayload = {
+  projectId: string
+  fileId: string
+  previousHeadSequence: number
+  targetSequence: number
+  appliedSequence: number
+}
+
+type DocSnapshotPreviewDataPayload = {
+  projectId: string
+  fileId: string
+  requestId?: string
+  sequence: number
+  content: string
+  headSequence: number
+}
+
+type YjsHistoryState = {
+  snapshot: Uint8Array | null
+  updates: Uint8Array[]
+  lastSequence: number
+}
+
 type FileCreatedPayload = {
   id: string
   projectId: string
@@ -241,7 +283,26 @@ describe('collab gateway', () => {
   const clients: ClientSocket[] = []
   let persistedUpdateSequence = 0
   let snapshotSaveCount = 0
+  let savedSnapshots: Array<{ fileId: string; sequence: number }> = []
+  let savedRewinds: Array<{
+    fileId: string
+    appliedSequence: number
+    targetSequence: number
+    previousHeadSequence: number
+  }> = []
   let prewarmCalls: Array<{ projectId: string; ownerSubject: string }> = []
+  let timelineByFile = new Map<string, {
+    headSequence: number
+    entries: DocTimelineEntry[]
+    rewindEdges: Array<{
+      appliedSequence: number
+      targetSequence: number
+      previousHeadSequence: number
+      createdAt: string
+    }>
+  }>()
+  let historyAtSequenceByFileAndSequence = new Map<string, YjsHistoryState | null>()
+  let snapshotSequencesByFile = new Map<string, Set<number>>()
 
   beforeEach(async () => {
     const httpServer = createServer()
@@ -292,15 +353,67 @@ describe('collab gateway', () => {
       return { sequence: persistedUpdateSequence }
     }
 
+    const loadYjsTimeline = async (
+      _actor: ActorContext,
+      _projectId: string,
+      fileId: string,
+    ) => {
+      const fromFixture = timelineByFile.get(fileId)
+      if (fromFixture) {
+        return fromFixture
+      }
+
+      return {
+        entries: [],
+        rewindEdges: [],
+        headSequence: persistedUpdateSequence,
+      }
+    }
+
+    const loadYjsHistoryAtSequence = async (
+      _actor: ActorContext,
+      _projectId: string,
+      fileId: string,
+      sequence: number,
+    ) => {
+      return historyAtSequenceByFileAndSequence.get(`${fileId}:${sequence}`) ?? null
+    }
+
+    const hasYjsSnapshotAtSequence = async (
+      _actor: ActorContext,
+      _projectId: string,
+      fileId: string,
+      sequence: number,
+    ) => {
+      return snapshotSequencesByFile.get(fileId)?.has(sequence) ?? false
+    }
+
     const saveYjsSnapshot = async (
       _actor: ActorContext,
       _projectId: string,
-      _fileId: string,
-      _sequence: number,
+      fileId: string,
+      sequence: number,
       _update: Uint8Array,
     ) => {
       snapshotSaveCount += 1
+      savedSnapshots.push({ fileId, sequence })
       return
+    }
+
+    const recordYjsRewind = async (
+      _actor: ActorContext,
+      _projectId: string,
+      fileId: string,
+      appliedSequence: number,
+      targetSequence: number,
+      previousHeadSequence: number,
+    ) => {
+      savedRewinds.push({
+        fileId,
+        appliedSequence,
+        targetSequence,
+        previousHeadSequence,
+      })
     }
 
     const canUseTerminal = async (_actor: ActorContext, projectId: string) => {
@@ -323,8 +436,12 @@ describe('collab gateway', () => {
       canJoinFile,
       loadFileContent,
       loadYjsHistory,
+      loadYjsTimeline,
+      loadYjsHistoryAtSequence,
+      hasYjsSnapshotAtSequence,
       appendYjsUpdate,
       saveYjsSnapshot,
+      recordYjsRewind,
       canUseTerminal,
       terminalSessionManager,
     )
@@ -385,7 +502,21 @@ describe('collab gateway', () => {
   beforeEach(() => {
     persistedUpdateSequence = 0
     snapshotSaveCount = 0
+    savedSnapshots = []
     prewarmCalls = []
+    savedRewinds = []
+    timelineByFile = new Map<string, {
+      headSequence: number
+      entries: DocTimelineEntry[]
+      rewindEdges: Array<{
+        appliedSequence: number
+        targetSequence: number
+        previousHeadSequence: number
+        createdAt: string
+      }>
+    }>()
+    historyAtSequenceByFileAndSequence = new Map<string, YjsHistoryState | null>()
+    snapshotSequencesByFile = new Map<string, Set<number>>()
   })
 
   it('prewarms terminal when project is joined', async () => {
@@ -847,9 +978,459 @@ describe('collab gateway', () => {
       update: encodeYUpdate('second update'),
     })
 
+    client.emit('collab:doc:saved', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+    })
+
+    client.emit('collab:doc:update', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      update: encodeYUpdate('third update'),
+    })
+
+    client.emit('collab:doc:saved', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+    })
+
     await new Promise((resolve) => setTimeout(resolve, 200))
 
     assert.equal(snapshotSaveCount, 1)
+  })
+
+  it('returns timeline entries for a file', async () => {
+    timelineByFile.set('file-1', {
+      headSequence: 7,
+      entries: [
+        {
+          sequence: 7,
+          kind: 'update',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          sequence: 6,
+          kind: 'snapshot',
+          createdAt: new Date(Date.now() - 1_000).toISOString(),
+        },
+      ],
+      rewindEdges: [
+        {
+          appliedSequence: 7,
+          targetSequence: 3,
+          previousHeadSequence: 6,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|timeline-user', 'jwt-timeline-user') },
+    })
+
+    clients.push(client)
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    const timelineEvent = waitForEvent<DocTimelinePayload>(
+      client,
+      'collab:doc:timeline',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1',
+    )
+
+    client.emit('collab:doc:timeline:list', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      limit: 10,
+    })
+
+    const payload = await timelineEvent
+    assert.equal(payload.headSequence, 7)
+    assert.equal(payload.entries.length, 2)
+    assert.equal(payload.entries[0].sequence, 7)
+    assert.equal(payload.rewindEdges.length, 1)
+    assert.equal(payload.rewindEdges[0].appliedSequence, 7)
+  })
+
+  it('rejects rewind when target sequence is ahead of current head', async () => {
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|rewind-invalid-user', 'jwt-rewind-invalid-user') },
+    })
+
+    clients.push(client)
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    client.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    await waitForEvent<DocSyncPayload>(client, 'collab:doc:sync')
+
+    const errorEvent = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      (payload) => payload.message === 'Invalid rewind target sequence',
+    )
+
+    client.emit('collab:doc:rewind', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      targetSequence: 1,
+      expectedHeadSequence: 0,
+    })
+
+    const payload = await errorEvent
+    assert.equal(payload.message, 'Invalid rewind target sequence')
+  })
+
+  it('rejects rewind when expected head sequence does not match current head', async () => {
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|rewind-head-mismatch-user', 'jwt-rewind-head-mismatch-user') },
+    })
+
+    clients.push(client)
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    client.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    await waitForEvent<DocSyncPayload>(client, 'collab:doc:sync')
+
+    const errorEvent = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      (payload) => payload.message === 'Document has changed, refresh timeline and retry',
+    )
+
+    client.emit('collab:doc:rewind', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      targetSequence: 1,
+      expectedHeadSequence: 1,
+    })
+
+    const payload = await errorEvent
+    assert.equal(payload.message, 'Document has changed, refresh timeline and retry')
+  })
+
+  it('rewinds document by appending a new update', async () => {
+    const rewindDoc = new Y.Doc()
+    rewindDoc.getText('content').insert(0, 'rewound text')
+    historyAtSequenceByFileAndSequence.set('file-1:1', {
+      snapshot: Y.encodeStateAsUpdate(rewindDoc),
+      updates: [],
+      lastSequence: 1,
+    })
+    snapshotSequencesByFile.set('file-1', new Set([1]))
+
+    const clientA = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|rewind-user-a', 'jwt-rewind-user-a') },
+    })
+    const clientB = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|rewind-user-b', 'jwt-rewind-user-b') },
+    })
+
+    clients.push(clientA, clientB)
+    clientA.connect()
+    clientB.connect()
+
+    await Promise.all([
+      waitForEvent<ConnectedPayload>(clientA, 'collab:connected'),
+      waitForEvent<ConnectedPayload>(clientB, 'collab:connected'),
+    ])
+
+    clientA.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    clientB.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+
+    await Promise.all([
+      waitForEvent<DocSyncPayload>(clientA, 'collab:doc:sync'),
+      waitForEvent<DocSyncPayload>(clientB, 'collab:doc:sync'),
+    ])
+
+    clientA.emit('collab:doc:update', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      update: encodeYUpdate('head update'),
+    })
+
+    clientA.emit('collab:doc:saved', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+    })
+
+    await waitForEvent<DocUpdatePayload>(
+      clientB,
+      'collab:doc:update',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1',
+    )
+
+    const rewindResultEvent = waitForEvent<DocRewindResultPayload>(
+      clientA,
+      'collab:doc:rewind:result',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1',
+    )
+
+    const rewindBroadcastEvent = waitForEvent<DocUpdatePayload>(
+      clientB,
+      'collab:doc:update',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1',
+    )
+
+    clientA.emit('collab:doc:rewind', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      targetSequence: 1,
+      expectedHeadSequence: 1,
+    })
+
+    const [rewindResult] = await Promise.all([rewindResultEvent, rewindBroadcastEvent])
+    assert.equal(rewindResult.previousHeadSequence, 1)
+    assert.equal(rewindResult.targetSequence, 1)
+    assert.equal(rewindResult.appliedSequence, 2)
+    assert.equal(savedRewinds.length, 1)
+    assert.deepEqual(savedRewinds[0], {
+      fileId: 'file-1',
+      appliedSequence: 2,
+      targetSequence: 1,
+      previousHeadSequence: 1,
+    })
+  })
+
+  it('captures a snapshot at previous head during rewind when needed', async () => {
+    const rewindDoc = new Y.Doc()
+    rewindDoc.getText('content').insert(0, 'rewind source snapshot')
+    historyAtSequenceByFileAndSequence.set('file-1:1', {
+      snapshot: Y.encodeStateAsUpdate(rewindDoc),
+      updates: [],
+      lastSequence: 1,
+    })
+    snapshotSequencesByFile.set('file-1', new Set([1]))
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|rewind-save-head-user', 'jwt-rewind-save-head-user') },
+    })
+
+    clients.push(client)
+    client.connect()
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+
+    client.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    await waitForEvent<DocSyncPayload>(client, 'collab:doc:sync')
+
+    client.emit('collab:doc:update', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      update: encodeYUpdate('head update before rewind'),
+    })
+
+    client.emit('collab:doc:saved', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    client.emit('collab:doc:update', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      update: encodeYUpdate('second head update before rewind'),
+    })
+
+    client.emit('collab:doc:saved', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    snapshotSaveCount = 0
+    savedSnapshots = []
+    snapshotSequencesByFile.set('file-1', new Set([1]))
+    const headDoc = new Y.Doc()
+    headDoc.getText('content').insert(0, 'persisted head before rewind')
+    historyAtSequenceByFileAndSequence.set('file-1:2', {
+      snapshot: Y.encodeStateAsUpdate(headDoc),
+      updates: [],
+      lastSequence: 2,
+    })
+
+    const rewindResultEvent = waitForEvent<DocRewindResultPayload>(
+      client,
+      'collab:doc:rewind:result',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1',
+    )
+
+    client.emit('collab:doc:rewind', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      targetSequence: 1,
+      expectedHeadSequence: 2,
+    })
+
+    const rewindResult = await rewindResultEvent
+    assert.equal(rewindResult.previousHeadSequence, 2)
+    assert.equal(snapshotSaveCount, 1)
+    assert.deepEqual(savedSnapshots, [{ fileId: 'file-1', sequence: 2 }])
+  })
+
+  it('rejects rewind when target sequence is not a snapshot', async () => {
+    const rewindDoc = new Y.Doc()
+    rewindDoc.getText('content').insert(0, 'update-only target')
+    historyAtSequenceByFileAndSequence.set('file-1:1', {
+      snapshot: null,
+      updates: [Y.encodeStateAsUpdate(rewindDoc)],
+      lastSequence: 1,
+    })
+    snapshotSequencesByFile.set('file-1', new Set([99]))
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|rewind-snapshot-only-user', 'jwt-rewind-snapshot-only-user') },
+    })
+
+    clients.push(client)
+    client.connect()
+
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+    client.emit('collab:join-project', 'project-123')
+    await waitForEvent<PresencePayload>(
+      client,
+      'collab:presence',
+      (payload) => payload.type === 'joined' && payload.projectId === 'project-123',
+    )
+
+    client.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    await waitForEvent<DocSyncPayload>(client, 'collab:doc:sync')
+
+    const dirtyEvent = waitForEvent<DocDirtyStatePayload>(
+      client,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1' && payload.isDirty,
+    )
+
+    client.emit('collab:doc:update', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      update: encodeYUpdate('head update for non-snapshot rewind test'),
+    })
+
+    await dirtyEvent
+
+    client.emit('collab:doc:saved', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+    })
+
+    await waitForEvent<DocDirtyStatePayload>(
+      client,
+      'collab:doc:dirty-state',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1' && !payload.isDirty,
+    )
+
+    const rewindError = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      () => true,
+    )
+
+    client.emit('collab:doc:rewind', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      targetSequence: 1,
+      expectedHeadSequence: 1,
+    })
+
+    const errorPayload = await rewindError
+    assert.equal(errorPayload.message, 'Rewind target must be a snapshot sequence')
+  })
+
+  it('returns snapshot preview content for snapshot sequence', async () => {
+    const snapshotDoc = new Y.Doc()
+    snapshotDoc.getText('content').insert(0, 'snapshot preview text')
+    historyAtSequenceByFileAndSequence.set('file-1:1', {
+      snapshot: Y.encodeStateAsUpdate(snapshotDoc),
+      updates: [],
+      lastSequence: 1,
+    })
+    snapshotSequencesByFile.set('file-1', new Set([1]))
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|snapshot-preview-user', 'jwt-snapshot-preview-user') },
+    })
+
+    clients.push(client)
+    client.connect()
+
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+    client.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    await waitForEvent<DocSyncPayload>(client, 'collab:doc:sync')
+
+    const previewEvent = waitForEvent<DocSnapshotPreviewDataPayload>(
+      client,
+      'collab:doc:snapshot:preview:data',
+      (payload) => payload.projectId === 'project-123' && payload.fileId === 'file-1' && payload.sequence === 1,
+    )
+
+    client.emit('collab:doc:snapshot:preview', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      sequence: 1,
+      requestId: 'preview-test-request',
+    })
+
+    const previewPayload = await previewEvent
+    assert.equal(previewPayload.content, 'snapshot preview text')
+    assert.equal(previewPayload.sequence, 1)
+  })
+
+  it('rejects snapshot preview for non-snapshot sequence', async () => {
+    historyAtSequenceByFileAndSequence.set('file-1:1', {
+      snapshot: null,
+      updates: [],
+      lastSequence: 1,
+    })
+    snapshotSequencesByFile.set('file-1', new Set([99]))
+
+    const client = createClient(baseUrl, {
+      transports: ['websocket'],
+      autoConnect: false,
+      auth: { token: createJwt('auth0|snapshot-preview-deny-user', 'jwt-snapshot-preview-deny-user') },
+    })
+
+    clients.push(client)
+    client.connect()
+
+    await waitForEvent<ConnectedPayload>(client, 'collab:connected')
+    client.emit('collab:doc:join', { projectId: 'project-123', fileId: 'file-1' })
+    await waitForEvent<DocSyncPayload>(client, 'collab:doc:sync')
+
+    const errorEvent = waitForEvent<{ message: string }>(
+      client,
+      'collab:error',
+      (payload) => payload.message === 'Preview target must be a snapshot sequence',
+    )
+
+    client.emit('collab:doc:snapshot:preview', {
+      projectId: 'project-123',
+      fileId: 'file-1',
+      sequence: 1,
+      requestId: 'preview-deny-request',
+    })
+
+    const errorPayload = await errorEvent
+    assert.equal(errorPayload.message, 'Preview target must be a snapshot sequence')
   })
 
   it('broadcasts project presence events within a project room', async () => {

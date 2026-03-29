@@ -35,6 +35,7 @@ model File {
   yjsAggregate YjsAggregate?
   yjsUpdates   YjsUpdate[]
   yjsSnapshots YjsSnapshot[]
+  yjsRewinds   YjsRewind[]
 
   @@unique([projectId, path])
   @@unique([storageKey])
@@ -75,6 +76,21 @@ model YjsSnapshot {
   @@index([fileId, sequence])
   @@index([fileId, createdAt])
   @@map("yjs_snapshots")
+}
+
+model YjsRewind {
+  id                   String   @id
+  fileId               String   @map("file_id")
+  appliedSequence      Int      @map("applied_sequence")
+  targetSequence       Int      @map("target_sequence")
+  previousHeadSequence Int      @map("previous_head_sequence")
+  createdAt            DateTime @default(now()) @map("created_at")
+  file                 File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, appliedSequence])
+  @@index([fileId, createdAt])
+  @@index([fileId, targetSequence])
+  @@map("yjs_rewinds")
 }
 
 model ProjectMember {

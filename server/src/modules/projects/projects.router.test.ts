@@ -7,6 +7,7 @@ import type { PrismaClient } from '@prisma/client'
 import express from 'express'
 import { errorHandler } from '../../http/error-handler.js'
 import { authBoundaryMiddleware } from '../auth/auth-boundary.middleware.js'
+import { createInvitesRouter } from './invites.router.js'
 import { createProjectsRouter } from './projects.router.js'
 
 type InviteRow = {
@@ -48,7 +49,12 @@ type ProjectRow = {
 
 type ProjectFindManyArgs = {
   where: {
-    ownerSubject: string
+    ownerSubject?: string
+    members?: {
+      some: {
+        subject: string
+      }
+    }
   }
   orderBy: {
     updatedAt: 'desc'
@@ -87,12 +93,294 @@ type ProjectDeleteManyArgs = {
   }
 }
 
+type MemberRow = {
+  id: string
+  projectId: string
+  subject: string
+  role: string
+  addedBySubject: string | null
+  createdAt: Date
+}
+
+class InMemoryProjectMembersTable {
+  private rows: MemberRow[] = []
+
+  rowsForRead() {
+    return this.rows.map((row) => ({ ...row }))
+  }
+
+  async findFirst(args: {
+    where: {
+      projectId: string
+      subject: string
+      role?: string
+    }
+    select?: {
+      id: true
+    }
+  }): Promise<{ id: string } | null> {
+    const found = this.rows.find((row) => {
+      if (args.where.role !== undefined) {
+        return row.projectId === args.where.projectId
+          && row.subject === args.where.subject
+          && row.role === args.where.role
+      }
+
+      return row.projectId === args.where.projectId && row.subject === args.where.subject
+    })
+
+    return found ? { id: found.id } : null
+  }
+
+  async findMany(args: {
+    where: {
+      projectId: string
+    }
+    orderBy: {
+      createdAt: 'asc'
+    }
+  }): Promise<Array<{
+    subject: string
+    role: string
+    addedBySubject: string | null
+    createdAt: Date
+  }>> {
+    return this.rows
+      .filter((row) => row.projectId === args.where.projectId)
+      .slice()
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map((row) => ({
+        subject: row.subject,
+        role: row.role,
+        addedBySubject: row.addedBySubject,
+        createdAt: new Date(row.createdAt),
+      }))
+  }
+
+  async deleteMany(args: {
+    where: {
+      projectId: string
+      subject: string
+    }
+  }): Promise<{ count: number }> {
+    const beforeLength = this.rows.length
+
+    this.rows = this.rows.filter((row) => {
+      return !(row.projectId === args.where.projectId && row.subject === args.where.subject)
+    })
+
+    return { count: beforeLength - this.rows.length }
+  }
+
+  async upsert(args: {
+    where: {
+      projectId_subject: {
+        projectId: string
+        subject: string
+      }
+    }
+    create: {
+      id: string
+      projectId: string
+      subject: string
+      role: string
+      addedBySubject: string | null
+    }
+    update: {
+      role: string
+      addedBySubject: string | null
+    }
+  }): Promise<MemberRow> {
+    const key = args.where.projectId_subject
+    const existing = this.rows.find((row) => {
+      return row.projectId === key.projectId && row.subject === key.subject
+    })
+
+    if (existing) {
+      const updated: MemberRow = {
+        ...existing,
+        role: args.update.role,
+        addedBySubject: args.update.addedBySubject,
+      }
+
+      this.rows = this.rows.map((row) => (row.id === existing.id ? updated : row))
+      return { ...updated }
+    }
+
+    const created: MemberRow = {
+      id: args.create.id,
+      projectId: args.create.projectId,
+      subject: args.create.subject,
+      role: args.create.role,
+      addedBySubject: args.create.addedBySubject,
+      createdAt: new Date(),
+    }
+
+    this.rows = [...this.rows, created]
+    return { ...created }
+  }
+
+  seed(projectId: string, subject: string, role = 'editor') {
+    this.rows = [
+      ...this.rows,
+      {
+        id: `member-${projectId}-${subject}`,
+        projectId,
+        subject,
+        role,
+        addedBySubject: null,
+        createdAt: new Date(),
+      },
+    ]
+  }
+}
+
+type InviteRow = {
+  id: string
+  projectId: string
+  tokenHash: string
+  role: string
+  createdBySubject: string
+  expiresAt: Date
+  consumedAt: Date | null
+  consumedBySubject: string | null
+  revokedAt: Date | null
+  createdAt: Date
+}
+
+class InMemoryProjectInvitesTable {
+  private rows: InviteRow[] = []
+
+  async create(args: {
+    data: {
+      id: string
+      projectId: string
+      tokenHash: string
+      role: string
+      createdBySubject: string
+      expiresAt: Date
+    }
+  }): Promise<InviteRow> {
+    const row: InviteRow = {
+      id: args.data.id,
+      projectId: args.data.projectId,
+      tokenHash: args.data.tokenHash,
+      role: args.data.role,
+      createdBySubject: args.data.createdBySubject,
+      expiresAt: args.data.expiresAt,
+      consumedAt: null,
+      consumedBySubject: null,
+      revokedAt: null,
+      createdAt: new Date(),
+    }
+
+    this.rows = [...this.rows, row]
+    return { ...row }
+  }
+
+  async findFirst(args: {
+    where: {
+      tokenHash: string
+    }
+    include?: {
+      project: {
+        select: {
+          id: true
+          name: true
+        }
+      }
+    }
+  }): Promise<(InviteRow & { project?: { id: string, name: string } }) | null> {
+    const found = this.rows.find((row) => row.tokenHash === args.where.tokenHash)
+    return found ? { ...found } : null
+  }
+
+  async updateMany(args: {
+    where: {
+      id: string
+      consumedAt: null
+      revokedAt: null
+      expiresAt: {
+        gt: Date
+      }
+    }
+    data: {
+      consumedAt: Date
+      consumedBySubject: string
+    }
+  }): Promise<{ count: number }> {
+    let count = 0
+
+    this.rows = this.rows.map((row) => {
+      const matches = row.id === args.where.id
+        && row.consumedAt === args.where.consumedAt
+        && row.revokedAt === args.where.revokedAt
+        && row.expiresAt.getTime() > args.where.expiresAt.gt.getTime()
+
+      if (!matches) {
+        return row
+      }
+
+      count += 1
+      return {
+        ...row,
+        consumedAt: args.data.consumedAt,
+        consumedBySubject: args.data.consumedBySubject,
+      }
+    })
+
+    return { count }
+  }
+
+  async findMany(args: {
+    where: {
+      projectId: string
+      consumedAt: null
+      revokedAt: null
+      expiresAt: {
+        gt: Date
+      }
+    }
+    orderBy: {
+      createdAt: 'desc'
+    }
+  }): Promise<InviteRow[]> {
+    return this.rows
+      .filter((row) => {
+        return row.projectId === args.where.projectId
+          && row.consumedAt === args.where.consumedAt
+          && row.revokedAt === args.where.revokedAt
+          && row.expiresAt.getTime() > args.where.expiresAt.gt.getTime()
+      })
+      .slice()
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map((row) => ({ ...row }))
+  }
+}
+
 class InMemoryProjectTable {
   private rows: ProjectRow[] = []
 
+  constructor(private readonly getMembers: () => MemberRow[]) {}
+
   async findMany(args: ProjectFindManyArgs): Promise<ProjectRow[]> {
+    const ownerSubject = args.where.ownerSubject
+    const memberSubject = args.where.members?.some.subject
+
     return this.rows
-      .filter((row) => row.ownerSubject === args.where.ownerSubject)
+      .filter((row) => {
+        if (ownerSubject !== undefined) {
+          return row.ownerSubject === ownerSubject
+        }
+
+        if (memberSubject !== undefined) {
+          return this.getMembers().some((member) => {
+            return member.projectId === row.id && member.subject === memberSubject
+          })
+        }
+
+        return true
+      })
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
       .map((row) => this.cloneRow(row))
   }
@@ -441,11 +729,18 @@ function createPrismaDouble() {
   const projectMember = new InMemoryProjectMembersTable()
   const projectInvite = new InMemoryProjectInvitesTable()
 
-  return {
+  const prisma = {
     project,
     projectMember,
     projectInvite,
-  } as unknown as PrismaClient
+    projectMember,
+    projectInvite,
+    $transaction: async <T>(callback: (transaction: unknown) => Promise<T>) => {
+      return callback(prisma)
+    },
+  }
+
+  return prisma as unknown as PrismaClient
 }
 
 async function startServer(prisma: PrismaClient): Promise<{
@@ -456,6 +751,7 @@ async function startServer(prisma: PrismaClient): Promise<{
   app.use(express.json())
   app.use(authBoundaryMiddleware)
   app.use('/api/projects', createProjectsRouter({ prisma }))
+  app.use('/api/invites', createInvitesRouter({ prisma }))
   app.use(errorHandler)
 
   const server = await new Promise<Server>((resolve) => {
@@ -682,6 +978,89 @@ describe('projects router', () => {
     assert.equal(deletedPayload.data.deleted, true)
     assert.equal(afterDelete.status, 404)
     assert.equal(afterDeletePayload.error.code, 'PROJECT_NOT_FOUND')
+  })
+
+  it('returns project dashboard and allows owner to remove collaborator', async () => {
+    const ownerSubject = 'auth0|owner-dashboard'
+    const memberSubject = 'auth0|member-dashboard'
+    const ownerToken = createJwt(ownerSubject, 'jwt-owner-dashboard')
+    const memberToken = createJwt(memberSubject, 'jwt-member-dashboard')
+
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: 'Dashboard test project' }),
+    })
+    const createdPayload = await created.json()
+    const projectId = createdPayload.data.id
+
+    const invite = await fetch(`${baseUrl}/api/projects/${projectId}/invites`, {
+      method: 'POST',
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: 'editor' }),
+    })
+    const invitePayload = await invite.json()
+
+    const accepted = await fetch(`${baseUrl}/api/invites/${invitePayload.data.inviteToken}/accept`, {
+      method: 'POST',
+      headers: authHeaders(memberToken),
+    })
+
+    assert.equal(accepted.status, 200)
+
+    const dashboardAsOwner = await fetch(`${baseUrl}/api/projects/${projectId}/dashboard`, {
+      headers: authHeaders(ownerToken),
+    })
+    const dashboardAsOwnerPayload = await dashboardAsOwner.json()
+
+    const dashboardAsMember = await fetch(`${baseUrl}/api/projects/${projectId}/dashboard`, {
+      headers: authHeaders(memberToken),
+    })
+    const dashboardAsMemberPayload = await dashboardAsMember.json()
+
+    const removeByMember = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators/${encodeURIComponent(memberSubject)}`, {
+      method: 'DELETE',
+      headers: authHeaders(memberToken),
+    })
+    const removeByMemberPayload = await removeByMember.json()
+
+    const removeByOwner = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators/${encodeURIComponent(memberSubject)}`, {
+      method: 'DELETE',
+      headers: authHeaders(ownerToken),
+    })
+    const removeByOwnerPayload = await removeByOwner.json()
+
+    const dashboardAfterRemove = await fetch(`${baseUrl}/api/projects/${projectId}/dashboard`, {
+      headers: authHeaders(ownerToken),
+    })
+    const dashboardAfterRemovePayload = await dashboardAfterRemove.json()
+
+    assert.equal(dashboardAsOwner.status, 200)
+    assert.equal(dashboardAsOwnerPayload.data.actorRole, 'owner')
+    assert.equal(dashboardAsOwnerPayload.data.project.id, projectId)
+    assert.equal(
+      dashboardAsOwnerPayload.data.collaborators.some((item: { subject: string; role: string }) => item.subject === ownerSubject && item.role === 'owner'),
+      true,
+    )
+    assert.equal(
+      dashboardAsOwnerPayload.data.collaborators.some((item: { subject: string; role: string }) => item.subject === memberSubject && item.role === 'editor'),
+      true,
+    )
+
+    assert.equal(dashboardAsMember.status, 200)
+    assert.equal(dashboardAsMemberPayload.data.actorRole, 'editor')
+
+    assert.equal(removeByMember.status, 404)
+    assert.equal(removeByMemberPayload.error.code, 'COLLABORATOR_NOT_FOUND')
+
+    assert.equal(removeByOwner.status, 200)
+    assert.equal(removeByOwnerPayload.data.removed, true)
+
+    assert.equal(dashboardAfterRemove.status, 200)
+    assert.equal(
+      dashboardAfterRemovePayload.data.collaborators.some((item: { subject: string }) => item.subject === memberSubject),
+      false,
+    )
   })
 
   it('returns project members including owner snapshot', async () => {

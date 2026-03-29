@@ -38,6 +38,7 @@ describe('docker shell runtime', () => {
   const originalTerm = process.env.COLLAB_TERMINAL_TERM
   const originalLang = process.env.COLLAB_TERMINAL_LANG
   const originalLcAll = process.env.COLLAB_TERMINAL_LC_ALL
+  const originalPs1 = process.env.COLLAB_TERMINAL_PS1
 
   afterEach(() => {
     if (originalTerm === undefined) {
@@ -56,6 +57,12 @@ describe('docker shell runtime', () => {
       delete process.env.COLLAB_TERMINAL_LC_ALL
     } else {
       process.env.COLLAB_TERMINAL_LC_ALL = originalLcAll
+    }
+
+    if (originalPs1 === undefined) {
+      delete process.env.COLLAB_TERMINAL_PS1
+    } else {
+      process.env.COLLAB_TERMINAL_PS1 = originalPs1
     }
   })
 
@@ -96,6 +103,7 @@ describe('docker shell runtime', () => {
     delete process.env.COLLAB_TERMINAL_TERM
     delete process.env.COLLAB_TERMINAL_LANG
     delete process.env.COLLAB_TERMINAL_LC_ALL
+    delete process.env.COLLAB_TERMINAL_PS1
 
     const sandboxManager = new DockerSandboxManagerDouble()
     const runtime = new DockerShellRuntime(
@@ -117,6 +125,75 @@ describe('docker shell runtime', () => {
       TERM: 'xterm-256color',
       LANG: 'C.UTF-8',
       LC_ALL: 'C.UTF-8',
+      PS1: '$PWD $ ',
     })
+  })
+
+  it('reports session open state based on interactive handle', async () => {
+    const sandboxManager = new DockerSandboxManagerDouble()
+    const runtime = new DockerShellRuntime(
+      sandboxManager as never,
+      'project-1',
+      'owner-1',
+    )
+
+    assert.equal(runtime.isSessionOpen(), false)
+
+    await runtime.openSession(
+      {
+        cwd: '/workspace',
+        projectId: 'project-1',
+        ownerSubject: 'owner-1',
+      },
+      () => undefined,
+    )
+
+    assert.equal(runtime.isSessionOpen(), true)
+
+    await runtime.closeSession(
+      {
+        cwd: '/workspace',
+        projectId: 'project-1',
+        ownerSubject: 'owner-1',
+      },
+    )
+
+    assert.equal(runtime.isSessionOpen(), false)
+  })
+
+  it('marks session closed when interactive write fails with closed-session error', async () => {
+    const sandboxManager = new DockerSandboxManagerDouble()
+    const runtime = new DockerShellRuntime(
+      sandboxManager as never,
+      'project-1',
+      'owner-1',
+    )
+
+    await runtime.openSession(
+      {
+        cwd: '/workspace',
+        projectId: 'project-1',
+        ownerSubject: 'owner-1',
+      },
+      () => undefined,
+    )
+
+    ;(runtime as unknown as {
+      interactiveSession: { write: () => Promise<void> }
+    }).interactiveSession = {
+      write: async () => {
+        throw new Error('Terminal session is not open')
+      },
+    }
+
+    await assert.rejects(async () => {
+      await runtime.writeInput('echo test\n', {
+        cwd: '/workspace',
+        projectId: 'project-1',
+        ownerSubject: 'owner-1',
+      })
+    }, /Terminal session is not open/)
+
+    assert.equal(runtime.isSessionOpen(), false)
   })
 })

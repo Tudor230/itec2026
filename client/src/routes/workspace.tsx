@@ -24,15 +24,16 @@ import EditorPane from '../components/workspace/EditorPane'
 import QuickOpenModal from '../components/workspace/QuickOpenModal'
 import TerminalPane from '../components/workspace/TerminalPane'
 import RunButton from '../components/workspace/RunButton'
-import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
-import BottomDrawers, { type DrawerTab } from '../components/workspace/BottomDrawers'
+import RightSidebar from '../components/workspace/RightSidebar'
+import type {SidebarTab} from '../components/workspace/RightSidebar';
+import BottomDrawers from '../components/workspace/BottomDrawers'
+import type {DrawerTab} from '../components/workspace/BottomDrawers';
 import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
 import ProfileButton from '../components/profile/ProfileButton'
 import { useToast } from '../components/ToastProvider'
 import { getWorkspaceShortcut } from '../components/workspace/workspace-shortcuts'
-import WorkspaceAuthOverlay, {
-  type AuthTab,
-} from '../components/workspace/WorkspaceAuthOverlay'
+import WorkspaceAuthOverlay from '../components/workspace/WorkspaceAuthOverlay'
+import type {AuthTab} from '../components/workspace/WorkspaceAuthOverlay';
 import { auth0Config } from '../lib/auth0-config'
 import {
   createFolder,
@@ -61,11 +62,15 @@ import {
   type CollabFileDeletedPayload,
   type CollabFileUpdatedPayload,
 } from '../lib/collab-client'
+
 import { getCollaboratorColor } from '../components/workspace/collab-colors'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 import { useRunCurrentFile } from '../hooks/use-run-current-file'
 import { cn } from '../lib/utils'
 import { workspaceHudChipClass } from '../components/workspace/ui-classes'
+import type {
+  WorkspaceAiResponseCard,
+} from '../components/workspace/ai-response-types'
 
 const AUTOSAVE_DELAY_MS = 200
 
@@ -74,7 +79,8 @@ export const Route = createFileRoute('/workspace')({
     const normalizedProjectId =
       typeof search.projectId === 'string' ? search.projectId.trim() : ''
 
-    const projectId = normalizedProjectId.length > 0 ? normalizedProjectId : undefined
+    const projectId =
+      normalizedProjectId.length > 0 ? normalizedProjectId : undefined
 
     return {
       projectId,
@@ -128,8 +134,12 @@ function WorkspaceWithHostedAuth() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [openFileIds, setOpenFileIds] = useState<string[]>([])
-  const [draftsByFileId, setDraftsByFileId] = useState<Record<string, string>>({})
-  const [collabDirtyByFileId, setCollabDirtyByFileId] = useState<Record<string, boolean>>({})
+  const [draftsByFileId, setDraftsByFileId] = useState<Record<string, string>>(
+    {},
+  )
+  const [collabDirtyByFileId, setCollabDirtyByFileId] = useState<
+    Record<string, boolean>
+  >({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
@@ -142,6 +152,14 @@ function WorkspaceWithHostedAuth() {
   const [authActionPending, setAuthActionPending] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
   const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
+  const [timelineRewindPending, setTimelineRewindPending] = useState(false)
+  const [timelineReturnSequence, setTimelineReturnSequence] = useState<
+    number | null
+  >(null)
+  const [editorInstanceNonce, setEditorInstanceNonce] = useState(0)
+  const [autosaveBlockedFileId, setAutosaveBlockedFileId] = useState<string | null>(null)
+  const [aiResponseByFileId, setAiResponseByFileId] = useState<Record<string, WorkspaceAiResponseCard>>({})
+  const [editorAiActionPending, setEditorAiActionPending] = useState<boolean>(false)
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
   const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
   const [inviteLinksByInviteId, setInviteLinksByInviteId] = useState<Record<string, string>>({})
@@ -151,7 +169,9 @@ function WorkspaceWithHostedAuth() {
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
 
-  const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
+  const authRuntimeError = error
+    ? 'Authentication failed. Please try again.'
+    : null
 
   const startHostedAuth = async (
     mode: AuthTab,
@@ -172,7 +192,10 @@ function WorkspaceWithHostedAuth() {
         },
       })
     } catch (caughtError) {
-      const message = caughtError instanceof Error ? caughtError.message : 'Could not start login flow.'
+      const message =
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'Could not start login flow.'
       setAuthError(message)
       setAuthActionPending(false)
     }
@@ -274,98 +297,125 @@ function WorkspaceWithHostedAuth() {
     enabled: isAuthenticated && activeProjectId !== null,
   })
 
-  const upsertFileInCache = useCallback((incomingFile: FileDto) => {
-    queryClient.setQueryData<FileDto[]>(
-      ['workspace', 'files', true, incomingFile.projectId],
-      (previous) => {
-        const current = previous ?? []
-        const exists = current.some((file) => file.id === incomingFile.id)
 
-        const next = exists
-          ? current.map((file) => (file.id === incomingFile.id ? incomingFile : file))
-          : [incomingFile, ...current]
+  const upsertFileInCache = useCallback(
+    (incomingFile: FileDto) => {
+      queryClient.setQueryData<FileDto[]>(
+        ['workspace', 'files', true, incomingFile.projectId],
+        (previous) => {
+          const current = previous ?? []
+          const exists = current.some((file) => file.id === incomingFile.id)
 
-        return [...next].sort((left, right) => {
-          return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+          const next = exists
+            ? current.map((file) =>
+                file.id === incomingFile.id ? incomingFile : file,
+              )
+            : [incomingFile, ...current]
+
+          return [...next].sort((left, right) => {
+            return (
+              new Date(right.updatedAt).getTime() -
+              new Date(left.updatedAt).getTime()
+            )
+          })
+        },
+      )
+    },
+    [queryClient],
+  )
+
+  const onCollabFileCreated = useCallback(
+    (payload: CollabFileCreatedPayload) => {
+      upsertFileInCache({
+        ...payload,
+        content: '',
+        ownerSubject: null,
+      })
+    },
+    [upsertFileInCache],
+  )
+
+  const onCollabFileUpdated = useCallback(
+    (payload: CollabFileUpdatedPayload) => {
+      queryClient
+        .invalidateQueries({
+          queryKey: ['workspace', 'files', true, payload.projectId],
         })
-      },
-    )
-  }, [queryClient])
+        .catch(() => undefined)
+    },
+    [queryClient],
+  )
 
-  const onCollabFileCreated = useCallback((payload: CollabFileCreatedPayload) => {
-    upsertFileInCache({
-      ...payload,
-      content: '',
-      ownerSubject: null,
-    })
-  }, [upsertFileInCache])
+  const onCollabFileDeleted = useCallback(
+    (payload: CollabFileDeletedPayload) => {
+      queryClient.setQueryData<FileDto[]>(
+        ['workspace', 'files', true, payload.projectId],
+        (previous) => (previous ?? []).filter((file) => file.id !== payload.id),
+      )
 
-  const onCollabFileUpdated = useCallback((payload: CollabFileUpdatedPayload) => {
-    queryClient.invalidateQueries({
-      queryKey: ['workspace', 'files', true, payload.projectId],
-    }).catch(() => undefined)
-  }, [queryClient])
-
-  const onCollabFileDeleted = useCallback((payload: CollabFileDeletedPayload) => {
-    queryClient.setQueryData<FileDto[]>(
-      ['workspace', 'files', true, payload.projectId],
-      (previous) => (previous ?? []).filter((file) => file.id !== payload.id),
-    )
-
-    setOpenFileIds((previous) => previous.filter((fileId) => fileId !== payload.id))
-    setDraftsByFileId((previous) => {
-      if (!(payload.id in previous)) {
-        return previous
-      }
-
-      const next = { ...previous }
-      delete next[payload.id]
-      return next
-    })
-
-    setCollabDirtyByFileId((previous) => {
-      if (!(payload.id in previous)) {
-        return previous
-      }
-
-      const next = { ...previous }
-      delete next[payload.id]
-      return next
-    })
-
-    setActiveFileId((previous) => (previous === payload.id ? null : previous))
-  }, [queryClient])
-
-  const onCollabDirtyStateChanged = useCallback((payload: CollabDocDirtyStatePayload) => {
-    setCollabDirtyByFileId((previous) => {
-      if (payload.isDirty) {
-        if (previous[payload.fileId]) {
+      setOpenFileIds((previous) =>
+        previous.filter((fileId) => fileId !== payload.id),
+      )
+      setDraftsByFileId((previous) => {
+        if (!(payload.id in previous)) {
           return previous
         }
 
-        return {
-          ...previous,
-          [payload.fileId]: true,
-        }
-      }
-
-      if (!(payload.fileId in previous)) {
-        return previous
-      }
-
-      const next = { ...previous }
-      delete next[payload.fileId]
-      return next
-    })
-
-    if (!payload.isDirty) {
-      queryClient.invalidateQueries({
-        queryKey: ['workspace', 'files', true, payload.projectId],
-      }).catch(() => {
-        return undefined
+        const next = { ...previous }
+        delete next[payload.id]
+        return next
       })
-    }
-  }, [queryClient])
+
+      setCollabDirtyByFileId((previous) => {
+        if (!(payload.id in previous)) {
+          return previous
+        }
+
+        const next = { ...previous }
+        delete next[payload.id]
+        return next
+      })
+
+      setActiveFileId((previous) => (previous === payload.id ? null : previous))
+    },
+    [queryClient],
+  )
+
+  const onCollabDirtyStateChanged = useCallback(
+    (payload: CollabDocDirtyStatePayload) => {
+      setCollabDirtyByFileId((previous) => {
+        if (payload.isDirty) {
+          if (previous[payload.fileId]) {
+            return previous
+          }
+
+          return {
+            ...previous,
+            [payload.fileId]: true,
+          }
+        }
+
+        if (!(payload.fileId in previous)) {
+          return previous
+        }
+
+        const next = { ...previous }
+        delete next[payload.fileId]
+        return next
+      })
+
+      if (!payload.isDirty) {
+        queryClient
+          .invalidateQueries({
+            queryKey: ['workspace', 'files', true, payload.projectId],
+          })
+          .catch(() => {
+            return undefined
+          })
+      }
+    },
+    [queryClient],
+  )
 
   const onProjectActivityChanged = useCallback((payload: CollabProjectActivityPayload) => {
     setCollabActivityByFileId((previous) => {
@@ -419,7 +469,9 @@ function WorkspaceWithHostedAuth() {
       success(`File created: ${createdFile.path.split('/').pop()}`)
       setActiveFileId(createdFile.id)
       setOpenFileIds((previous) =>
-        previous.includes(createdFile.id) ? previous : [...previous, createdFile.id],
+        previous.includes(createdFile.id)
+          ? previous
+          : [...previous, createdFile.id],
       )
       setDraftsByFileId((previous) => {
         const next = { ...previous }
@@ -502,7 +554,9 @@ function WorkspaceWithHostedAuth() {
         })
       }
 
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'folders'],
+      })
       success('Folder created')
     },
     onError: (error) => {
@@ -522,7 +576,14 @@ function WorkspaceWithHostedAuth() {
         throw new Error('Authentication token is required to rename folders.')
       }
 
-      return renameFolder({ projectId: activeProjectId, fromPath: input.fromPath, toPath: input.toPath }, token)
+      return renameFolder(
+        {
+          projectId: activeProjectId,
+          fromPath: input.fromPath,
+          toPath: input.toPath,
+        },
+        token,
+      )
     },
     onSuccess: async (_result, input) => {
       if (activeProjectId) {
@@ -548,7 +609,9 @@ function WorkspaceWithHostedAuth() {
       }
 
       await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'folders'],
+      })
       success('Folder renamed')
     },
     onError: (error) => {
@@ -592,14 +655,18 @@ function WorkspaceWithHostedAuth() {
             return false
           }
 
-          return !(file.path === folderPath || file.path.startsWith(`${folderPath}/`))
+          return !(
+            file.path === folderPath || file.path.startsWith(`${folderPath}/`)
+          )
         })
 
         return next
       })
 
       await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'folders'],
+      })
       success('Folder deleted')
     },
     onError: (error) => {
@@ -622,8 +689,8 @@ function WorkspaceWithHostedAuth() {
       upsertFileInCache(updated)
       markSaved(updated.projectId, updated.id)
       setDraftsByFileId((previous) => {
-        const latestDraft = previous[updated.id]
-        if (latestDraft !== undefined && latestDraft !== updated.content) {
+        const hasDraft = Object.hasOwn(previous, updated.id)
+        if (hasDraft && previous[updated.id] !== updated.content) {
           return previous
         }
 
@@ -649,17 +716,40 @@ function WorkspaceWithHostedAuth() {
     autosaveTimeoutRef.current = null
   }, [])
 
-  const triggerSave = useCallback((fileId: string, content: string) => {
+  const triggerSave = useCallback(
+    (fileId: string, content: string) => {
+      clearAutosaveTimeout()
+
+      if (saveFileMutation.isPending) {
+        return
+      }
+
+      void saveFileMutation.mutateAsync({
+        fileId,
+        content,
+      })
+    },
+    [clearAutosaveTimeout, saveFileMutation],
+  )
+
+  const queueSaveNow = useCallback(async (fileId: string, content: string) => {
     clearAutosaveTimeout()
 
-    if (saveFileMutation.isPending) {
-      return
-    }
+    try {
+      await saveFileMutation.mutateAsync({
+        fileId,
+        content,
+      })
 
-    void saveFileMutation.mutateAsync({
-      fileId,
-      content,
-    })
+      return {
+        ok: true as const,
+      }
+    } catch (error) {
+      return {
+        ok: false as const,
+        errorMessage: error instanceof Error ? error.message : 'Could not save file',
+      }
+    }
   }, [clearAutosaveTimeout, saveFileMutation])
 
   const files = filesQuery.data ?? []
@@ -668,12 +758,15 @@ function WorkspaceWithHostedAuth() {
     .map((fileId) => files.find((file) => file.id === fileId))
     .filter((file): file is FileDto => file !== undefined)
   const editorValue = activeFile
-    ? draftsByFileId[activeFile.id] ?? activeFile.content
+    ? (draftsByFileId[activeFile.id] ?? activeFile.content)
     : ''
   const localIsDirty = activeFile
-    ? (draftsByFileId[activeFile.id] ?? activeFile.content) !== activeFile.content
+    ? (draftsByFileId[activeFile.id] ?? activeFile.content) !==
+      activeFile.content
     : false
-  const isDirty = activeFile ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id]) : false
+  const isDirty = activeFile
+    ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id])
+    : false
   const {
     queuedTerminalCommand,
     runCurrentFile,
@@ -688,38 +781,12 @@ function WorkspaceWithHostedAuth() {
     onRunError: toastError,
   })
 
-  useEffect(() => {
-    clearAutosaveTimeout()
-
-    if (!isAuthenticated || !activeFile || !localIsDirty) {
-      return
-    }
-
-    autosaveTimeoutRef.current = window.setTimeout(() => {
-      if (saveFileMutation.isPending) {
-        return
-      }
-
-      triggerSave(activeFile.id, editorValue)
-    }, AUTOSAVE_DELAY_MS)
-
-    return clearAutosaveTimeout
-  }, [
-    activeFile,
-    clearAutosaveTimeout,
-    editorValue,
-    isAuthenticated,
-    localIsDirty,
-    saveFileMutation.isPending,
-    triggerSave,
-  ])
-
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
 
   const dirtyFileIds = files
     .filter((file) => {
-      const draftValue = draftsByFileId[file.id]
-      const locallyDirty = draftValue !== undefined ? draftValue !== file.content : false
+      const hasDraft = Object.hasOwn(draftsByFileId, file.id)
+      const locallyDirty = hasDraft && draftsByFileId[file.id] !== file.content
       return locallyDirty || Boolean(collabDirtyByFileId[file.id])
     })
     .map((file) => file.id)
@@ -729,7 +796,9 @@ function WorkspaceWithHostedAuth() {
       return []
     }
 
-    const backendFolders = (foldersQuery.data ?? []).map((folder) => folder.path)
+    const backendFolders = (foldersQuery.data ?? []).map(
+      (folder) => folder.path,
+    )
     const localFolders = virtualFoldersByProjectId[activeProjectId] ?? []
 
     return [...new Set([...backendFolders, ...localFolders])]
@@ -769,7 +838,20 @@ function WorkspaceWithHostedAuth() {
     return collaboratorNameBySubject[subject] ?? 'Collaborator'
   }, [collaboratorNameBySubject])
 
-  const { collabState, onEditorMount, markSaved } = useCollabDoc({
+  const {
+    collabState,
+    onEditorMount,
+    applyAiContentToYjs,
+    markSaved,
+    timelineState,
+    previewState,
+    loadTimeline,
+    previewSnapshot,
+    clearPreviewAndRestoreHead,
+    clearPreviewAfterRewind,
+    cancelPreviewRequests,
+    rewindToSequence,
+  } = useCollabDoc({
     projectId: activeProjectId,
     fileId: activeFileId,
     onFileCreated: onCollabFileCreated,
@@ -779,6 +861,34 @@ function WorkspaceWithHostedAuth() {
     onProjectActivityChanged,
     resolveCollaboratorName,
   })
+
+  useEffect(() => {
+    clearAutosaveTimeout()
+
+    if (!isAuthenticated || !activeFile || !localIsDirty || autosaveBlockedFileId === activeFile.id) {
+      return
+    }
+
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      if (saveFileMutation.isPending) {
+        return
+      }
+
+      triggerSave(activeFile.id, editorValue)
+    }, AUTOSAVE_DELAY_MS)
+
+    return clearAutosaveTimeout
+  }, [
+    activeFile,
+    clearAutosaveTimeout,
+    editorValue,
+    autosaveBlockedFileId,
+    isAuthenticated,
+    localIsDirty,
+    previewState.isActive,
+    saveFileMutation.isPending,
+    triggerSave,
+  ])
 
   const collaboratorInitials = useMemo(() => {
     return collabMembers
@@ -947,7 +1057,9 @@ function WorkspaceWithHostedAuth() {
       return
     }
 
-    const stillExists = projectsQuery.data.some((project) => project.id === activeProjectId)
+    const stillExists = projectsQuery.data.some(
+      (project) => project.id === activeProjectId,
+    )
     if (!stillExists) {
       setActiveProjectId(projectsQuery.data[0].id)
     }
@@ -960,14 +1072,18 @@ function WorkspaceWithHostedAuth() {
     setHasClosedAllTabs(false)
     setDraftsByFileId({})
     setCollabDirtyByFileId({})
+    setAiResponseByFileId({})
     setSaveError(null)
     setCreateError(null)
+    setEditorAiActionPending(false)
+    setAutosaveBlockedFileId(null)
     clearAutosaveTimeout()
   }, [activeProjectId, clearAutosaveTimeout, resetQueuedTerminalCommand])
 
   useEffect(() => {
     if (!isAuthenticated) {
       setActiveFileId(null)
+      setAiResponseByFileId({})
       return
     }
 
@@ -988,7 +1104,9 @@ function WorkspaceWithHostedAuth() {
 
       const firstFileId = filesQuery.data[0].id
       setActiveFileId(firstFileId)
-      setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
+      setOpenFileIds((previous) =>
+        previous.includes(firstFileId) ? previous : [...previous, firstFileId],
+      )
       return
     }
 
@@ -996,7 +1114,9 @@ function WorkspaceWithHostedAuth() {
     if (!stillExists) {
       const firstFileId = filesQuery.data[0].id
       setActiveFileId(firstFileId)
-      setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
+      setOpenFileIds((previous) =>
+        previous.includes(firstFileId) ? previous : [...previous, firstFileId],
+      )
     }
   }, [activeFileId, filesQuery.data, hasClosedAllTabs, isAuthenticated])
 
@@ -1039,7 +1159,9 @@ function WorkspaceWithHostedAuth() {
 
       if (shortcut === 'toggle-terminal') {
         event.preventDefault()
-        setCenterView((current) => (current === 'editor' ? 'terminal' : 'editor'))
+        setCenterView((current) =>
+          current === 'editor' ? 'terminal' : 'editor',
+        )
         return
       }
 
@@ -1059,6 +1181,11 @@ function WorkspaceWithHostedAuth() {
         return
       }
 
+      if (previewState.isActive) {
+        toast('Exit timeline preview before saving', 'info', 2500)
+        return
+      }
+
       triggerSave(activeFile.id, editorValue)
     }
 
@@ -1066,7 +1193,15 @@ function WorkspaceWithHostedAuth() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [activeFile, editorValue, isAuthenticated, localIsDirty, saveFileMutation.isPending, triggerSave])
+  }, [
+    activeFile,
+    editorValue,
+    isAuthenticated,
+    localIsDirty,
+    previewState.isActive,
+    saveFileMutation.isPending,
+    triggerSave,
+  ])
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -1130,6 +1265,36 @@ function WorkspaceWithHostedAuth() {
     }
   }, [isRightSidebarOpen, rightPanelRef])
 
+  useEffect(() => {
+    if (bottomDrawerTab !== 'timeline' && previewState.isActive) {
+      cancelPreviewRequests()
+      void clearPreviewAndRestoreHead().catch(() => {
+        // error is reflected via preview state
+      })
+    }
+  }, [
+    bottomDrawerTab,
+    cancelPreviewRequests,
+    clearPreviewAndRestoreHead,
+    previewState.isActive,
+  ])
+
+  useEffect(() => {
+    if (bottomDrawerTab !== 'timeline') {
+      return
+    }
+
+    if (!activeProjectId || !activeFileId) {
+      return
+    }
+
+    void loadTimeline()
+  }, [activeFileId, activeProjectId, bottomDrawerTab, loadTimeline])
+
+  useEffect(() => {
+    setTimelineReturnSequence(null)
+  }, [activeFileId])
+
   const openFileById = (fileId: string) => {
     setHasClosedAllTabs(false)
     setActiveFileId(fileId)
@@ -1154,7 +1319,7 @@ function WorkspaceWithHostedAuth() {
 
       if (activeFileId === fileId) {
         const closedIndex = previous.indexOf(fileId)
-        const fallbackId = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null
+        const fallbackId = next[Math.max(0, closedIndex - 1)] ?? null
         setActiveFileId(fallbackId)
       }
 
@@ -1170,6 +1335,11 @@ function WorkspaceWithHostedAuth() {
       delete next[fileId]
       return next
     })
+
+    setAutosaveBlockedFileId((previous) => {
+      return previous === fileId ? null : previous
+    })
+
   }
 
   const closeOthers = (fileId: string) => {
@@ -1188,7 +1358,161 @@ function WorkspaceWithHostedAuth() {
     setOpenFileIds([])
     setActiveFileId(null)
     setDraftsByFileId({})
+    setAutosaveBlockedFileId(null)
   }
+
+  const loadHistoryVersionIntoEditor = useCallback((fileId: string, content: string) => {
+    setHasClosedAllTabs(false)
+    setCenterView('editor')
+    setSaveError(null)
+    setActiveFileId(fileId)
+    setOpenFileIds((previous) => {
+      if (previous.includes(fileId)) {
+        return previous
+      }
+
+      return [...previous, fileId]
+    })
+
+    setDraftsByFileId((previous) => {
+      return {
+        ...previous,
+        [fileId]: content,
+      }
+    })
+    setEditorInstanceNonce((previous) => previous + 1)
+    setAutosaveBlockedFileId(fileId)
+  }, [])
+
+  const currentFileAiResponse = useMemo(() => {
+    if (!activeFileId) {
+      return null
+    }
+
+    return aiResponseByFileId[activeFileId] ?? null
+  }, [activeFileId, aiResponseByFileId])
+
+  const focusFileInEditor = useCallback((fileId: string) => {
+    setHasClosedAllTabs(false)
+    setCenterView('editor')
+    setSaveError(null)
+    setActiveFileId(fileId)
+    setOpenFileIds((previous) => {
+      if (previous.includes(fileId)) {
+        return previous
+      }
+
+      return [...previous, fileId]
+    })
+  }, [])
+
+  const handleAiResponseReady = useCallback((card: WorkspaceAiResponseCard) => {
+    const baseFile = files.find((file) => file.id === card.fileId) ?? null
+    if (!baseFile) {
+      return
+    }
+
+    if (card.diff.hunks.length === 0) {
+      return
+    }
+
+    const originalContent = draftsByFileId[card.fileId] ?? baseFile.content
+
+    setAiResponseByFileId((previous) => {
+      return {
+        ...previous,
+        [card.fileId]: {
+          ...card,
+          originalContent,
+        },
+      }
+    })
+
+    focusFileInEditor(card.fileId)
+  }, [draftsByFileId, files, focusFileInEditor])
+
+  const handleJumpToSuggestionFile = useCallback((fileId: string) => {
+    focusFileInEditor(fileId)
+  }, [focusFileInEditor])
+
+  const handleAiDiffReject = useCallback(() => {
+    if (!activeFileId) {
+      return
+    }
+
+    setAiResponseByFileId((previous) => {
+      const next = { ...previous }
+      delete next[activeFileId]
+      return next
+    })
+  }, [activeFileId])
+
+  const handleAiDiffChange = useCallback((nextValue: string) => {
+    if (!activeFileId) {
+      return
+    }
+
+    setAiResponseByFileId((previous) => {
+      const current = previous[activeFileId]
+      if (!current || current.updatedContent === nextValue) {
+        return previous
+      }
+
+      return {
+        ...previous,
+        [activeFileId]: {
+          ...current,
+          updatedContent: nextValue,
+        },
+      }
+    })
+  }, [activeFileId])
+
+  const handleAiDiffAccept = useCallback(async () => {
+    if (!activeFileId) {
+      return
+    }
+
+    const response = aiResponseByFileId[activeFileId]
+    if (!response) {
+      return
+    }
+
+    setEditorAiActionPending(true)
+    try {
+      const applied = applyAiContentToYjs(response.updatedContent)
+      if (!applied.ok) {
+        toast(`Could not apply AI suggestion: ${applied.reason}`, 'error')
+        return
+      }
+
+      if (applied.warning) {
+        // toast(applied.warning, 'warning', 6000)
+      }
+
+      setDraftsByFileId((previous) => {
+        return {
+          ...previous,
+          [activeFileId]: applied.content,
+        }
+      })
+      setAutosaveBlockedFileId(activeFileId)
+
+      const saveResult = await queueSaveNow(activeFileId, applied.content)
+      if (!saveResult.ok) {
+        toast(`Applied in editor but failed to save: ${saveResult.errorMessage}`, 'error')
+        return
+      }
+
+      setAiResponseByFileId((previous) => {
+        const next = { ...previous }
+        delete next[activeFileId]
+        return next
+      })
+    } finally {
+      setEditorAiActionPending(false)
+    }
+  }, [activeFileId, aiResponseByFileId, applyAiContentToYjs, queueSaveNow, toast])
 
   if (isLoading && isAuthenticated) {
     return <WorkspaceSkeleton />
@@ -1215,7 +1539,8 @@ function WorkspaceWithHostedAuth() {
         <div
           className={cn(
             'relative flex min-h-0 flex-1 flex-col overflow-hidden',
-            isLocked && 'pointer-events-none select-none [transform:scale(0.998)] [filter:blur(12px)_saturate(0.86)]'
+            isLocked &&
+              'pointer-events-none select-none [transform:scale(0.998)] [filter:blur(12px)_saturate(0.86)]',
           )}
           {...lockedContentProps}
         >
@@ -1227,7 +1552,7 @@ function WorkspaceWithHostedAuth() {
                 aria-label="Back to projects"
                 className={cn(
                   workspaceControlButtonClass,
-                  'inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors'
+                  'inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
                 )}
                 title="Back to projects"
               >
@@ -1261,19 +1586,23 @@ function WorkspaceWithHostedAuth() {
                   type="button"
                   onClick={() => setCenterView('editor')}
                   className={cn(
-                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
-                    centerView === 'editor' 
-                      ? "text-white" 
-                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                    'relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10',
+                    centerView === 'editor'
+                      ? 'text-white'
+                      : 'text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]',
                   )}
                 >
                   <Code size={14} />
                   <span>Editor</span>
                   {centerView === 'editor' && (
-                    <motion.div 
+                    <motion.div
                       layoutId="workspace-view-toggle"
                       className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 300,
+                        damping: 30,
+                      }}
                     />
                   )}
                 </button>
@@ -1281,19 +1610,23 @@ function WorkspaceWithHostedAuth() {
                   type="button"
                   onClick={() => setCenterView('terminal')}
                   className={cn(
-                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
-                    centerView === 'terminal' 
-                      ? "text-white" 
-                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                    'relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10',
+                    centerView === 'terminal'
+                      ? 'text-white'
+                      : 'text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]',
                   )}
                 >
                   <TerminalIcon size={14} />
                   <span>Terminal</span>
                   {centerView === 'terminal' && (
-                    <motion.div 
+                    <motion.div
                       layoutId="workspace-view-toggle"
                       className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 300,
+                        damping: 30,
+                      }}
                     />
                   )}
                 </button>
@@ -1306,7 +1639,8 @@ function WorkspaceWithHostedAuth() {
                   <GitBranch size={11} /> main
                 </span>
                 <span className={workspaceHudChipClass}>
-                  <Activity size={11} /> {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
+                  <Activity size={11} />{' '}
+                  {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
                 </span>
               </div>
 
@@ -1319,7 +1653,10 @@ function WorkspaceWithHostedAuth() {
                 <button
                   type="button"
                   aria-label="Search"
-                  className={cn(workspaceControlButtonClass, 'rounded-md p-1.5 transition-colors')}
+                  className={cn(
+                    workspaceControlButtonClass,
+                    'rounded-md p-1.5 transition-colors',
+                  )}
                   title="Search"
                 >
                   <Search size={14} />
@@ -1327,16 +1664,21 @@ function WorkspaceWithHostedAuth() {
                 <button
                   type="button"
                   aria-label="Notifications"
-                  className={cn(workspaceControlButtonClass, 'rounded-md p-1.5 transition-colors')}
+                  className={cn(
+                    workspaceControlButtonClass,
+                    'rounded-md p-1.5 transition-colors',
+                  )}
                   title="Notifications"
                 >
                   <Bell size={14} />
                 </button>
                 <div className="w-[1px] h-4 bg-[var(--line)]" />
-                <ProfileButton 
+                <ProfileButton
                   onLogout={() => {
-                    void logout({ logoutParams: { returnTo: window.location.origin } })
-                  }} 
+                    void logout({
+                      logoutParams: { returnTo: window.location.origin },
+                    })
+                  }}
                 />
               </div>
             </div>
@@ -1344,8 +1686,8 @@ function WorkspaceWithHostedAuth() {
 
           <FileTabs
             tabs={openTabs.map((file) => {
-              const draftValue = draftsByFileId[file.id]
-              const localDirty = draftValue !== undefined ? draftValue !== file.content : false
+              const hasDraft = Object.hasOwn(draftsByFileId, file.id)
+              const localDirty = hasDraft && draftsByFileId[file.id] !== file.content
               const dirty = localDirty || Boolean(collabDirtyByFileId[file.id])
 
               return {
@@ -1371,8 +1713,10 @@ function WorkspaceWithHostedAuth() {
             onLayoutChanged={(nextLayout) => {
               const nextLeftSize = nextLayout['left-sidebar'] ?? 0
               const nextRightSize = nextLayout['right-sidebar'] ?? 0
-              const isLeftCollapsedNext = nextLeftSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
-              const isRightCollapsedNext = nextRightSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
+              const isLeftCollapsedNext =
+                nextLeftSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
+              const isRightCollapsedNext =
+                nextRightSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
 
               if (isLeftSidebarCollapsed !== isLeftCollapsedNext) {
                 setIsLeftSidebarCollapsed(isLeftCollapsedNext)
@@ -1448,63 +1792,78 @@ function WorkspaceWithHostedAuth() {
             </Separator>
 
             {/* Central Editor/Terminal Panel */}
-            <Panel id="main-editor" className="relative flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)] [background:linear-gradient(160deg,color-mix(in_oklab,var(--surface)_66%,transparent_34%)_0%,color-mix(in_oklab,var(--surface-strong)_52%,transparent_48%)_100%)] before:pointer-events-none before:absolute before:inset-0 before:opacity-[0.18] before:[background:radial-gradient(circle_at_16%_14%,color-mix(in_oklab,var(--lagoon)_34%,transparent),transparent_30%),radial-gradient(circle_at_86%_18%,color-mix(in_oklab,var(--palm)_30%,transparent),transparent_34%)]">
-                <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
-                  {/* Sidebar Toggle Handle for Left */}
-                   {isLeftSidebarCollapsed ? (
-                    <button
-                     type="button"
-                     aria-label="Open files panel"
-                     onClick={() => setIsLeftSidebarCollapsed(false)}
-                     className="absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border border-l-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
-                     title="Open files panel"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                   ) : null}
+            <Panel
+              id="main-editor"
+              className="relative flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)] [background:linear-gradient(160deg,color-mix(in_oklab,var(--surface)_66%,transparent_34%)_0%,color-mix(in_oklab,var(--surface-strong)_52%,transparent_48%)_100%)] before:pointer-events-none before:absolute before:inset-0 before:opacity-[0.18] before:[background:radial-gradient(circle_at_16%_14%,color-mix(in_oklab,var(--lagoon)_34%,transparent),transparent_30%),radial-gradient(circle_at_86%_18%,color-mix(in_oklab,var(--palm)_30%,transparent),transparent_34%)]"
+            >
+              <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
+                {/* Sidebar Toggle Handle for Left */}
+                {isLeftSidebarCollapsed ? (
+                  <button
+                    type="button"
+                    aria-label="Open files panel"
+                    onClick={() => setIsLeftSidebarCollapsed(false)}
+                    className="absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border border-l-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
+                    title="Open files panel"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                ) : null}
 
-                  {/* Sidebar Toggle Handle for Right */}
-                   {!isRightSidebarOpen ? (
-                    <button
-                     type="button"
-                     aria-label="Open assistant panel"
-                     onClick={() => setIsRightSidebarOpen(true)}
-                     className="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border border-r-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
-                     title="Open assistant panel"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                   ) : null}
+                {/* Sidebar Toggle Handle for Right */}
+                {!isRightSidebarOpen ? (
+                  <button
+                    type="button"
+                    aria-label="Open assistant panel"
+                    onClick={() => setIsRightSidebarOpen(true)}
+                    className="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border border-r-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
+                    title="Open assistant panel"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                ) : null}
 
                   {centerView === 'editor' ? (
                     <EditorPane
                       file={activeFile}
                       initialValue={editorValue}
+                      instanceNonce={editorInstanceNonce}
                       isDirty={isDirty}
                       saveError={saveError}
                       collabState={collabState}
+                      aiResponse={currentFileAiResponse}
+                      aiActionPending={editorAiActionPending}
+                      onAiDiffChange={handleAiDiffChange}
+                      onAiDiffAccept={() => {
+                        void handleAiDiffAccept()
+                      }}
+                      onAiDiffReject={handleAiDiffReject}
                       onEditorMount={onEditorMount}
                       onChange={(nextValue) => {
                         if (!activeFile) {
                           return
                         }
 
-                        setDraftsByFileId((previous) => {
-                          return {
-                            ...previous,
-                            [activeFile.id]: nextValue,
-                          }
-                        })
-                      }}
-                    />
-                  ) : (
-                    <TerminalPane
-                      projectId={activeProjectId}
-                      queuedCommand={queuedTerminalCommand}
-                      onQueuedCommandSent={clearQueuedTerminalCommand}
-                    />
-                  )}
-               </div>
+                        if (autosaveBlockedFileId === activeFile.id) {
+                          setAutosaveBlockedFileId(null)
+                        }
+
+                      setDraftsByFileId((previous) => {
+                        return {
+                          ...previous,
+                          [activeFile.id]: nextValue,
+                        }
+                      })
+                    }}
+                  />
+                ) : (
+                  <TerminalPane
+                    projectId={activeProjectId}
+                    queuedCommand={queuedTerminalCommand}
+                    onQueuedCommandSent={clearQueuedTerminalCommand}
+                  />
+                )}
+              </div>
             </Panel>
 
             {/* Right Sidebar Panel */}
@@ -1531,11 +1890,14 @@ function WorkspaceWithHostedAuth() {
                 setActiveTab={setRightSidebarTab}
                 activeFileContext={activeFile
                   ? {
+                      fileId: activeFile.id,
                       path: activeFile.path,
                       content: editorValue,
                     }
                   : null}
                 getAccessToken={getApiAccessToken}
+                onAiResponseReady={handleAiResponseReady}
+                onJumpToSuggestionFile={handleJumpToSuggestionFile}
               />
             </Panel>
           </Group>
@@ -1544,6 +1906,116 @@ function WorkspaceWithHostedAuth() {
           <BottomDrawers
             activeTab={bottomDrawerTab}
             onActiveTabChange={setBottomDrawerTab}
+            projectId={activeProjectId}
+            activeFileId={activeFileId}
+            getAccessToken={getApiAccessToken}
+            onLoadVersion={loadHistoryVersionIntoEditor}
+            timelineEntries={timelineState.entries}
+            timelineRewindEdges={timelineState.rewindEdges}
+            timelineHeadSequence={timelineState.headSequence}
+            timelineIsLoading={timelineState.isLoading}
+            timelineError={timelineState.error}
+            timelineRewindPending={timelineRewindPending}
+            timelinePreviewPending={previewState.isLoading}
+            timelinePreviewSequence={previewState.sequence}
+            timelinePreviewError={previewState.error}
+            onTimelineRefresh={() => {
+              void loadTimeline()
+            }}
+            onTimelinePreview={(targetSequence) => {
+              if (!activeProjectId || !activeFileId) {
+                return
+              }
+
+              const targetIsSnapshot = timelineState.entries.some((entry) => {
+                return (
+                  entry.sequence === targetSequence && entry.kind === 'snapshot'
+                )
+              })
+              if (!targetIsSnapshot) {
+                toastError('Preview target must be a snapshot sequence')
+                return
+              }
+
+              void previewSnapshot(targetSequence).catch((error: unknown) => {
+                toastError(
+                  error instanceof Error
+                    ? error.message
+                    : 'Could not preview snapshot',
+                )
+              })
+            }}
+            onTimelineRewind={(targetSequence) => {
+              if (!activeProjectId || !activeFileId) {
+                toastError('Select a file before rewinding timeline')
+                return
+              }
+
+              const targetIsSnapshot = timelineState.entries.some((entry) => {
+                return (
+                  entry.sequence === targetSequence && entry.kind === 'snapshot'
+                )
+              })
+              if (!targetIsSnapshot) {
+                toastError('Rewind target must be a snapshot sequence')
+                return
+              }
+
+              const headBeforeRewind = timelineState.headSequence
+              if (timelineReturnSequence === null && headBeforeRewind > 0) {
+                setTimelineReturnSequence(headBeforeRewind)
+              }
+
+              setTimelineRewindPending(true)
+              void rewindToSequence(targetSequence, headBeforeRewind)
+                .then((result) => {
+                  return clearPreviewAfterRewind().then(() => result)
+                })
+                .then((result) => {
+                  success(`Rewound to sequence #${result.targetSequence}`)
+                })
+                .catch((error: unknown) => {
+                  toastError(
+                    error instanceof Error
+                      ? error.message
+                      : 'Could not rewind timeline',
+                  )
+                })
+                .finally(() => {
+                  setTimelineRewindPending(false)
+                })
+            }}
+            onTimelineReturnToLatest={() => {
+              if (!activeProjectId || !activeFileId) {
+                return
+              }
+
+              const targetSequence = timelineReturnSequence
+              if (!targetSequence || targetSequence <= 0) {
+                toast('No saved latest point available yet', 'info', 3000)
+                return
+              }
+
+              setTimelineRewindPending(true)
+              void rewindToSequence(targetSequence, timelineState.headSequence)
+                .then(() => {
+                  return clearPreviewAfterRewind()
+                })
+                .then(() => {
+                  success(`Returned to latest snapshot #${targetSequence}`)
+                  setTimelineReturnSequence(null)
+                })
+                .catch((error: unknown) => {
+                  toastError(
+                    error instanceof Error
+                      ? error.message
+                      : 'Could not return to latest',
+                  )
+                })
+                .finally(() => {
+                  setTimelineRewindPending(false)
+                })
+            }}
             collabMembers={collabMembers}
             activeInviteLinks={activeInviteLinks}
             isInvitePending={createInviteMutation.isPending}

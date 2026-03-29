@@ -22,6 +22,9 @@ const KEYBOARD_DELTA = 96
 const TOP_RELOCK_THRESHOLD = 2
 const INTRO_VISUAL_PROGRESS_MAX = 1
 const INTRO_UNLOCK_PROGRESS = 1.18
+const INFO_TRANSITION_START = 0.72
+const INFO_TRANSITION_END = 0.9
+const INTRO_END_LOOKBACK_PROGRESS = INTRO_VISUAL_PROGRESS_MAX + (INTRO_UNLOCK_PROGRESS - INTRO_VISUAL_PROGRESS_MAX) / 2
 
 function clampDelta(value: number) {
   return Math.max(-MAX_DELTA, Math.min(MAX_DELTA, value))
@@ -71,13 +74,21 @@ export function resolveLandingActionVariant(state: LandingActionState): LandingA
   return 'guest'
 }
 
-function resolveSection(progress: number): SectionKey {
+export function resolveSection(progress: number): SectionKey {
+  if (progress >= INTRO_END_LOOKBACK_PROGRESS) {
+    return 'hero'
+  }
+
   if (progress < 0.3) {
     return 'hero'
   }
 
-  if (progress < 0.9) {
+  if (progress < INFO_TRANSITION_START) {
     return 'split'
+  }
+
+  if (progress < INFO_TRANSITION_END) {
+    return 'hero'
   }
 
   return 'auth'
@@ -173,10 +184,9 @@ export default function LandingRobotStory() {
 
   const applyProgress = (nextProgress: number) => {
     const clamped = clampIntroProgress(nextProgress)
-    const visualProgress = resolveVisualProgress(clamped)
     progressRef.current = clamped
     setProgress(clamped)
-    setActiveSection(resolveSection(visualProgress))
+    setActiveSection(resolveSection(clamped))
 
     if (shouldUnlockIntro(clamped) && isLockedRef.current) {
       isLockedRef.current = false

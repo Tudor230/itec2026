@@ -6,9 +6,11 @@ import type {
   ActiveProjectInviteRecord,
   CreateProjectInviteResult,
   InvitePreviewRecord,
+  ProjectDashboardRecord,
   ProjectMemberProfileInput,
   ProjectMemberRecord,
   ProjectInput,
+  ProjectCollaboratorRecord,
   ProjectInviteRecord,
   ProjectRecord,
   ProjectUpdateInput,
@@ -97,6 +99,8 @@ type ProjectMemberModel = {
     displayName: string | null
     email: string | null
     role: string
+    addedBySubject: string | null
+    createdAt: Date
   }>>
   upsert: (args: {
     where: {
@@ -131,6 +135,48 @@ type ProjectMemberModel = {
       email: string | null
     }
   }) => Promise<{ count: number }>
+  deleteMany: (args: {
+    where: {
+      projectId: string
+      subject: string
+    }
+  }) => Promise<{ count: number }>
+}
+
+type ProjectInviteListItem = {
+  id: string
+  projectId: string
+  role: string
+  createdBySubject: string
+  expiresAt: Date
+  consumedAt: Date | null
+  consumedBySubject: string | null
+  revokedAt: Date | null
+  createdAt: Date
+}
+
+type ProjectInviteFindManyArgs = {
+  where: {
+    projectId: string
+    consumedAt: null
+    revokedAt: null
+    expiresAt: {
+      gt: Date
+    }
+  }
+  orderBy: {
+    createdAt: 'desc'
+  }
+  // updateMany: (args: {
+  //   where: {
+  //     projectId: string
+  //     subject: string
+  //   }
+  //   data: {
+  //     displayName: string
+  //     email: string | null
+  //   }
+  // }) => Promise<{ count: number }>
 }
 
 function getProjectInviteModel(prisma: PrismaClient): ProjectInviteModel | null {
@@ -140,6 +186,24 @@ function getProjectInviteModel(prisma: PrismaClient): ProjectInviteModel | null 
   }
 
   return model
+}
+
+function getProjectInviteListModel(prisma: PrismaClient): {
+  findMany: (args: ProjectInviteFindManyArgs) => Promise<ProjectInviteListItem[]>
+} | null {
+  const model = (prisma as unknown as {
+    projectInvite?: { findMany?: (args: ProjectInviteFindManyArgs) => Promise<ProjectInviteListItem[]> }
+  }).projectInvite
+
+  if (!model?.findMany) {
+    return null
+  }
+
+  const findMany = model.findMany.bind(model)
+
+  return {
+    findMany: (args) => findMany(args),
+  }
 }
 
 function getProjectMemberModel(prisma: PrismaClient): ProjectMemberModel | null {
@@ -458,6 +522,104 @@ export class ProjectsRepository {
     const result = await this.prisma.project.deleteMany({
       where: {
         id,
+      },
+    })
+
+    return result.count > 0
+  }
+
+  async getDashboard(actor: ActorContext, projectId: string): Promise<ProjectDashboardRecord | null> {
+    const project = await this.getById(actor, projectId)
+    if (!project) {
+      return null
+    }
+
+    const owner = await isProjectOwner(this.prisma, actor, projectId)
+    const actorRole: 'owner' | 'editor' = owner ? 'owner' : 'editor'
+
+    const projectMemberModel = getProjectMemberModel(this.prisma)
+    const inviteListModel = getProjectInviteListModel(this.prisma)
+
+    const memberRows = projectMemberModel
+      ? await projectMemberModel.findMany({
+        where: {
+          projectId,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      })
+      : []
+
+    const collaborators: ProjectCollaboratorRecord[] = [
+      {
+        subject: project.ownerSubject,
+        role: 'owner',
+        addedBySubject: null,
+        createdAt: project.createdAt,
+      },
+      ...memberRows.map((member) => ({
+        subject: member.subject,
+        role: 'editor' as const,
+        addedBySubject: member.addedBySubject,
+        createdAt: member.createdAt.toISOString(),
+      })),
+    ]
+
+    const activeInvites = inviteListModel
+      ? (await inviteListModel.findMany({
+        where: {
+          projectId,
+          consumedAt: null,
+          revokedAt: null,
+          expiresAt: {
+            gt: new Date(),
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      })).map((invite) => toInviteRecord(invite))
+      : []
+
+    return {
+      project,
+      actorRole,
+      collaborators,
+      activeInvites,
+    }
+  }
+
+  async removeCollaborator(actor: ActorContext, projectId: string, subject: string): Promise<boolean> {
+    const ownerProject = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+        ownerSubject: actor.subject ?? '__none__',
+      },
+      select: {
+        ownerSubject: true,
+      },
+    })
+
+    if (!ownerProject) {
+      return false
+    }
+
+    if (ownerProject.ownerSubject === subject) {
+      throw Object.assign(new Error('Cannot remove owner'), {
+        code: 'PROJECT_OWNER_IMMUTABLE',
+      })
+    }
+
+    const projectMemberModel = getProjectMemberModel(this.prisma)
+    if (!projectMemberModel) {
+      return false
+    }
+
+    const result = await projectMemberModel.deleteMany({
+      where: {
+        projectId,
+        subject,
       },
     })
 
