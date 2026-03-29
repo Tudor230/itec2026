@@ -43,6 +43,24 @@ export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
     })
   }))
 
+  router.get('/:projectId/dashboard', requireTokenPresent, asyncHandler(async (request, response) => {
+    const actor = actorFromRequest(request)
+    const dashboard = await service.getDashboard(actor, request.params.projectId)
+
+    if (!dashboard) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Project not found', code: 'PROJECT_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: dashboard,
+    })
+  }))
+
   router.post('/', requireTokenPresent, asyncHandler(async (request, response) => {
     const parsed = createProjectSchema.safeParse(request.body)
     if (!parsed.success) {
@@ -105,6 +123,43 @@ export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
       ok: true,
       data: { deleted: true },
     })
+  }))
+
+  router.delete('/:projectId/collaborators/:subject', requireTokenPresent, asyncHandler(async (request, response) => {
+    const actor = actorFromRequest(request)
+
+    try {
+      const removed = await service.removeCollaborator(
+        actor,
+        request.params.projectId,
+        request.params.subject,
+      )
+
+      if (!removed) {
+        response.status(404).json({
+          ok: false,
+          error: { message: 'Project or collaborator not found', code: 'COLLABORATOR_NOT_FOUND' },
+        })
+        return
+      }
+
+      response.json({
+        ok: true,
+        data: { removed: true },
+      })
+    } catch (error) {
+      const dbLikeError = error as { code?: string }
+
+      if (dbLikeError.code === 'PROJECT_OWNER_IMMUTABLE') {
+        response.status(400).json({
+          ok: false,
+          error: { message: 'Project owner cannot be removed', code: 'PROJECT_OWNER_IMMUTABLE' },
+        })
+        return
+      }
+
+      throw error
+    }
   }))
 
   router.post('/:projectId/invites', requireTokenPresent, asyncHandler(async (request, response) => {

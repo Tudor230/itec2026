@@ -1,7 +1,7 @@
 import { useAuth0 } from '@auth0/auth0-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { FolderOpenDot, Plus } from 'lucide-react'
+import { ArrowUpRight, FolderOpenDot, LayoutPanelTop, Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import ProtectedRoute from '../auth/ProtectedRoute'
 import { createProject, listProjects } from '../services/projects-api'
@@ -83,14 +83,14 @@ function ProjectsPage() {
 
   return (
     <ProtectedRoute>
-      <main className="mx-auto w-full max-w-[1080px] px-4 py-10 sm:py-12">
+      <main className="mx-auto w-full max-w-[1160px] px-4 py-10 sm:py-12">
         <section className="rounded-[1.8rem] border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] px-6 py-8 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] sm:px-8">
           <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Projects Hub</p>
           <h1 className="mb-3 font-[Fraunces,Georgia,serif] text-4xl font-bold text-[var(--sea-ink)] sm:text-5xl">
-            Pick a project and jump into the editor.
+            Pick a project and run your workflow from one place.
           </h1>
           <p className="mb-6 max-w-3xl text-sm leading-7 text-[var(--sea-ink-soft)] sm:text-base">
-            Create, browse, and open projects directly in the editor.
+            Create, browse, and launch projects in the editor or open the project dashboard for collaborator management.
           </p>
 
           <form
@@ -130,7 +130,7 @@ function ProjectsPage() {
           ) : null}
         </section>
 
-        <section className="mt-7 rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] sm:p-7">
+        <section className="mt-7 rounded-[1.4rem] border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-6 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px] sm:p-7">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="mb-1 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">All Projects</p>
@@ -172,15 +172,20 @@ function ProjectsPage() {
           ) : null}
 
           {!projectsQuery.isLoading && !projectsQuery.isError && filteredProjects.length > 0 ? (
-            <div className="grid gap-[0.85rem] lg:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-2">
               {filteredProjects.map((project) => (
                 <article
                   key={project.id}
-                  className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-4 shadow-[inset_0_1px_0_var(--inset-glint),0_10px_24px_rgba(23,58,64,0.08)] transition-transform duration-180 hover:-translate-y-px hover:border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--line))]"
+                  className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(170deg,color-mix(in_oklab,var(--surface-strong)_90%,white)_0%,var(--surface)_100%)] p-4 shadow-[inset_0_1px_0_var(--inset-glint),0_12px_28px_rgba(23,58,64,0.09)] transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-px hover:border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--line))] hover:shadow-[inset_0_1px_0_var(--inset-glint),0_18px_30px_rgba(23,58,64,0.12)]"
                 >
-                  <div>
-                    <h3 className="mb-1 mt-0 text-lg font-semibold text-[var(--sea-ink)]">{project.name}</h3>
-                    <p className="m-0 text-xs text-[var(--sea-ink-soft)]">{formatRelativeTime(project.updatedAt)}</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="mb-1 mt-0 text-lg font-semibold text-[var(--sea-ink)]">{project.name}</h3>
+                      <p className="m-0 text-xs text-[var(--sea-ink-soft)]">{formatRelativeTime(project.updatedAt)}</p>
+                    </div>
+                    <span className="inline-flex items-center rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.11em] text-[var(--sea-ink-soft)]">
+                      Project
+                    </span>
                   </div>
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -194,10 +199,31 @@ function ProjectsPage() {
                           },
                         })
                       }}
-                      className="rounded-full border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-4 py-2 text-sm font-semibold text-[var(--lagoon-deep)]"
+                      className="inline-flex items-center gap-2 rounded-full border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-4 py-2 text-sm font-semibold text-[var(--lagoon-deep)]"
                     >
+                      <ArrowUpRight size={14} />
                       Open in editor
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigate({
+                          to: '/dashboard',
+                          search: {
+                            projectId: project.id,
+                          },
+                        })
+                      }}
+                      className="inline-flex items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 py-2 text-sm font-semibold text-[var(--sea-ink)]"
+                    >
+                      <LayoutPanelTop size={14} />
+                      Dashboard
+                    </button>
+                  </div>
+
+                  <div className="mt-4 border-t border-[var(--line)] pt-3">
+                    <p className="m-0 text-xs text-[var(--sea-ink-soft)]">{formatRelativeTime(project.updatedAt)}</p>
                   </div>
                 </article>
               ))}

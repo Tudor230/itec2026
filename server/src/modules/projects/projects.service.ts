@@ -2,6 +2,7 @@ import type { ActorContext } from '../auth/actor-context.js'
 import type {
   CreateProjectInviteResult,
   InvitePreviewRecord,
+  ProjectDashboardRecord,
   ProjectInput,
   ProjectRecord,
   ProjectUpdateInput,
@@ -29,6 +30,14 @@ export class ProjectsService {
 
   remove(actor: ActorContext, projectId: string) {
     return this.repository.remove(actor, projectId)
+  }
+
+  getDashboard(actor: ActorContext, projectId: string): Promise<ProjectDashboardRecord | null> {
+    return this.repository.getDashboard(actor, projectId)
+  }
+
+  removeCollaborator(actor: ActorContext, projectId: string, subject: string): Promise<boolean> {
+    return this.repository.removeCollaborator(actor, projectId, subject)
   }
 
   createInvite(actor: ActorContext, projectId: string): Promise<CreateProjectInviteResult> {

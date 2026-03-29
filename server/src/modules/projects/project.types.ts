@@ -26,6 +26,20 @@ export interface ProjectInviteRecord {
   createdAt: string
 }
 
+export interface ProjectCollaboratorRecord {
+  subject: string | null
+  role: 'owner' | 'editor'
+  addedBySubject: string | null
+  createdAt: string
+}
+
+export interface ProjectDashboardRecord {
+  project: ProjectRecord
+  actorRole: 'owner' | 'editor'
+  collaborators: ProjectCollaboratorRecord[]
+  activeInvites: ProjectInviteRecord[]
+}
+
 export interface CreateProjectInviteResult {
   invite: ProjectInviteRecord
   inviteToken: string

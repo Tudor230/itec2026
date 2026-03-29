@@ -32,7 +32,21 @@ export interface ProjectInviteDto {
   consumedBySubject: string | null
   revokedAt: string | null
   createdAt: string
-  inviteToken: string
+  inviteToken?: string
+}
+
+export interface ProjectCollaboratorDto {
+  subject: string | null
+  role: 'owner' | 'editor'
+  addedBySubject: string | null
+  createdAt: string
+}
+
+export interface ProjectDashboardDto {
+  project: ProjectDto
+  actorRole: 'owner' | 'editor'
+  collaborators: ProjectCollaboratorDto[]
+  activeInvites: ProjectInviteDto[]
 }
 
 export interface InvitePreviewDto {
@@ -53,6 +67,43 @@ export function createProject(name: string, accessToken?: string | null) {
   return apiRequest<ProjectDto>('/api/projects', {
     method: 'POST',
     body: { name },
+    accessToken,
+  })
+}
+
+export function getProject(projectId: string, accessToken?: string | null) {
+  return apiRequest<ProjectDto>(`/api/projects/${projectId}`, { accessToken })
+}
+
+export function getProjectDashboard(projectId: string, accessToken?: string | null) {
+  return apiRequest<ProjectDashboardDto>(`/api/projects/${projectId}/dashboard`, { accessToken })
+}
+
+export function updateProject(projectId: string, input: { name?: string }, accessToken?: string | null) {
+  return apiRequest<ProjectDto>(`/api/projects/${projectId}`, {
+    method: 'PATCH',
+    body: input,
+    accessToken,
+  })
+}
+
+export function removeProjectCollaborator(
+  projectId: string,
+  subject: string,
+  accessToken?: string | null,
+) {
+  return apiRequest<{ removed: boolean }>(
+    `/api/projects/${projectId}/collaborators/${encodeURIComponent(subject)}`,
+    {
+      method: 'DELETE',
+      accessToken,
+    },
+  )
+}
+
+export function deleteProject(projectId: string, accessToken?: string | null) {
+  return apiRequest<{ deleted: boolean }>(`/api/projects/${projectId}`, {
+    method: 'DELETE',
     accessToken,
   })
 }

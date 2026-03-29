@@ -289,6 +289,45 @@ class InMemoryProjectMembersTable {
     return row
   }
 
+  async findMany(args: {
+    where: {
+      projectId: string
+    }
+    orderBy: {
+      createdAt: 'asc'
+    }
+  }): Promise<Array<{
+    subject: string
+    role: string
+    addedBySubject: string | null
+    createdAt: Date
+  }>> {
+    return this.rows
+      .filter((row) => row.projectId === args.where.projectId)
+      .slice()
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map((row) => ({
+        subject: row.subject,
+        role: row.role,
+        addedBySubject: row.addedBySubject,
+        createdAt: new Date(row.createdAt),
+      }))
+  }
+
+  async deleteMany(args: {
+    where: {
+      projectId: string
+      subject: string
+    }
+  }): Promise<{ count: number }> {
+    const beforeLength = this.rows.length
+    this.rows = this.rows.filter((row) => {
+      return !(row.projectId === args.where.projectId && row.subject === args.where.subject)
+    })
+
+    return { count: beforeLength - this.rows.length }
+  }
+
   all() {
     return this.rows.map((row) => ({ ...row }))
   }
@@ -401,6 +440,31 @@ class InMemoryProjectInvitesTable {
     return { count }
   }
 
+  async findMany(args: {
+    where: {
+      projectId: string
+      consumedAt: null
+      revokedAt: null
+      expiresAt: {
+        gt: Date
+      }
+    }
+    orderBy: {
+      createdAt: 'desc'
+    }
+  }): Promise<InviteRow[]> {
+    return this.rows
+      .filter((row) => {
+        return row.projectId === args.where.projectId
+          && row.consumedAt === args.where.consumedAt
+          && row.revokedAt === args.where.revokedAt
+          && row.expiresAt.getTime() > args.where.expiresAt.gt.getTime()
+      })
+      .slice()
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      .map((row) => this.cloneRow(row))
+  }
+
   private cloneRow(row: InviteRow): InviteRow {
     return {
       ...row,
@@ -427,12 +491,15 @@ function createPrismaDouble() {
     },
     projectMember: {
       findFirst: members.findFirst.bind(members),
+      findMany: members.findMany.bind(members),
       upsert: members.upsert.bind(members),
+      deleteMany: members.deleteMany.bind(members),
     },
     projectInvite: {
       create: invites.create.bind(invites),
       findFirst: invites.findFirst.bind(invites),
       updateMany: invites.updateMany.bind(invites),
+      findMany: invites.findMany.bind(invites),
     },
     $transaction: async <T>(callback: (transaction: unknown) => Promise<T>) => {
       return callback(prisma)
