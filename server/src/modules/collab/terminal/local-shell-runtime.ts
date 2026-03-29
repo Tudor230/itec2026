@@ -14,6 +14,18 @@ export class LocalShellRuntime implements TerminalRuntime {
 
   private onOutput: ((chunk: RuntimeOutputChunk) => void) | null = null
 
+  isSessionOpen() {
+    return this.shell !== null
+  }
+
+  private emitSafely(chunk: RuntimeOutputChunk) {
+    try {
+      this.onOutput?.(chunk)
+    } catch {
+      // Keep runtime stable even if consumer callback throws.
+    }
+  }
+
   async openSession(
     _context: { cwd: string; projectId: string; ownerSubject: string },
     onOutput: (chunk: RuntimeOutputChunk) => void,
@@ -30,19 +42,19 @@ export class LocalShellRuntime implements TerminalRuntime {
       : spawn('/bin/sh', [], { cwd: _context.cwd })
 
     shell.stdout.on('data', (buffer: Buffer) => {
-      this.onOutput?.(makeChunk('stdout', buffer.toString('utf8')))
+      this.emitSafely(makeChunk('stdout', buffer.toString('utf8')))
     })
 
     shell.stderr.on('data', (buffer: Buffer) => {
-      this.onOutput?.(makeChunk('stderr', buffer.toString('utf8')))
+      this.emitSafely(makeChunk('stderr', buffer.toString('utf8')))
     })
 
     shell.on('error', (error) => {
-      this.onOutput?.(makeChunk('stderr', `${error.message}\n`))
+      this.emitSafely(makeChunk('stderr', `${error.message}\n`))
     })
 
     shell.on('close', (code) => {
-      this.onOutput?.(makeChunk('system', `\n[exit ${code ?? 0}]\n`))
+      this.emitSafely(makeChunk('system', `\n[exit ${code ?? 0}]\n`))
       this.shell = null
       this.onOutput = null
     })
@@ -58,7 +70,17 @@ export class LocalShellRuntime implements TerminalRuntime {
       throw new Error('Terminal session is not open')
     }
 
-    this.shell.stdin.write(input)
+    if (this.shell.stdin.destroyed || this.shell.stdin.writableEnded) {
+      this.shell = null
+      throw new Error('Terminal session is not open')
+    }
+
+    try {
+      this.shell.stdin.write(input)
+    } catch {
+      this.shell = null
+      throw new Error('Could not write to terminal session')
+    }
   }
 
   async resizeSession(

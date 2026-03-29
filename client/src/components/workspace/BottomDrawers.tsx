@@ -13,10 +13,22 @@ import {
   Sparkles,
   Users,
   X,
+  FileClock,
+  FolderGit2,
+  Download,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { workspaceHudChipClass } from './ui-classes'
+import {
+  getFileHistoryVersion,
+  listFileHistory,
+  listProjectHistory,
+  restoreFileHistoryEntry,
+  restoreProjectHistoryEntry,
+  type FileHistoryEntryDto,
+  type ProjectHistoryEntryDto,
+} from '../../services/projects-api'
 
 export type DrawerTab = 'timeline' | 'run' | 'env' | 'collab'
 
@@ -37,6 +49,10 @@ interface BottomDrawersProps {
   activeTab?: DrawerTab | null
   onActiveTabChange?: (tab: DrawerTab | null) => void
   onClose?: () => void
+  projectId?: string | null
+  activeFileId?: string | null
+  getAccessToken?: () => Promise<string | null>
+  onLoadVersion?: (fileId: string, content: string) => void
   timelineEntries?: TimelineEntry[]
   timelineRewindEdges?: TimelineRewindEdge[]
   timelineHeadSequence?: number
@@ -113,10 +129,46 @@ const DRAWER_ITEMS: {
   },
 ]
 
+type TimelineSubtab = 'project' | 'file'
+
+function toRelativeTime(timestamp: string) {
+  const deltaMs = Date.now() - new Date(timestamp).getTime()
+  const deltaSeconds = Math.max(0, Math.floor(deltaMs / 1000))
+
+  if (deltaSeconds < 60) {
+    return 'just now'
+  }
+
+  const minutes = Math.floor(deltaSeconds / 60)
+  if (minutes < 60) {
+    return `${minutes}m ago`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    return `${hours}h ago`
+  }
+
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+function sourceLabel(source: 'snapshot' | 'update') {
+  if (source === 'snapshot') {
+    return 'Snapshot'
+  }
+
+  return 'Update'
+}
+
 export default function BottomDrawers({
   activeTab: controlledActiveTab,
   onActiveTabChange,
   onClose,
+  projectId,
+  activeFileId,
+  getAccessToken,
+  onLoadVersion,
   timelineEntries = [],
   timelineRewindEdges = [],
   timelineHeadSequence = 0,
@@ -131,8 +183,7 @@ export default function BottomDrawers({
   onTimelineRewind,
   onTimelineReturnToLatest,
 }: BottomDrawersProps) {
-  const [uncontrolledActiveTab, setUncontrolledActiveTab] =
-    useState<DrawerTab | null>(null)
+  const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
   const isDragging = useRef(false)
@@ -143,6 +194,13 @@ export default function BottomDrawers({
   const [replayTargetSequence, setReplayTargetSequence] = useState<
     number | null
   >(null)
+  const [timelineSubtab, setTimelineSubtab] = useState<TimelineSubtab>('project')
+  const [projectHistoryRows, setProjectHistoryRows] = useState<ProjectHistoryEntryDto[]>([])
+  const [fileHistoryRows, setFileHistoryRows] = useState<FileHistoryEntryDto[]>([])
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [loadingEntryId, setLoadingEntryId] = useState<string | null>(null)
+  const [restoringEntryId, setRestoringEntryId] = useState<string | null>(null)
   const isControlled = controlledActiveTab !== undefined
   const activeTab = isControlled ? controlledActiveTab : uncontrolledActiveTab
   const isOpen = activeTab !== null
@@ -343,6 +401,105 @@ export default function BottomDrawers({
       snapshotEntries[snapshotEntries.length - 1].sequence,
     )
   }, [replayTargetSequence, snapshotEntries])
+
+  async function refreshTimelineHistory() {
+    if (!projectId || !getAccessToken) {
+      setProjectHistoryRows([])
+      setFileHistoryRows([])
+      setHistoryError(null)
+      return
+    }
+
+    setIsHistoryLoading(true)
+    setHistoryError(null)
+
+    try {
+      const accessToken = await getAccessToken()
+      const [projectRows, fileRows] = await Promise.all([
+        listProjectHistory(projectId, accessToken),
+        activeFileId
+          ? listFileHistory(projectId, activeFileId, accessToken)
+          : Promise.resolve([]),
+      ])
+
+      setProjectHistoryRows(projectRows)
+      setFileHistoryRows(fileRows)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Could not load history'
+      setHistoryError(reason)
+    } finally {
+      setIsHistoryLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'timeline') {
+      return
+    }
+
+    void refreshTimelineHistory()
+    // intentionally scoped to visible timeline dependencies
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, projectId, activeFileId])
+
+  async function loadHistoryVersion(fileId: string, historyEntryId: string) {
+    if (!projectId || !getAccessToken || !onLoadVersion) {
+      return
+    }
+
+    setLoadingEntryId(`${fileId}:${historyEntryId}`)
+
+    try {
+      const accessToken = await getAccessToken()
+      const version = await getFileHistoryVersion(projectId, fileId, historyEntryId, accessToken)
+      onLoadVersion(fileId, version.content)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Could not load selected version'
+      setHistoryError(reason)
+    } finally {
+      setLoadingEntryId(null)
+    }
+  }
+
+  async function restoreFromProjectHistory(entry: ProjectHistoryEntryDto) {
+    if (!projectId || !getAccessToken) {
+      return
+    }
+
+    setRestoringEntryId(entry.id)
+
+    try {
+      const accessToken = await getAccessToken()
+      const result = await restoreProjectHistoryEntry(entry.id, { projectId }, accessToken)
+      onLoadVersion?.(result.file.id, result.file.content)
+      await refreshTimelineHistory()
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Could not restore selected version'
+      setHistoryError(reason)
+    } finally {
+      setRestoringEntryId(null)
+    }
+  }
+
+  async function restoreFromFileHistory(entry: FileHistoryEntryDto) {
+    if (!projectId || !getAccessToken) {
+      return
+    }
+
+    setRestoringEntryId(`${entry.fileId}:${entry.id}`)
+
+    try {
+      const accessToken = await getAccessToken()
+      const result = await restoreFileHistoryEntry(projectId, entry.fileId, entry.id, accessToken)
+      onLoadVersion?.(result.file.id, result.file.content)
+      await refreshTimelineHistory()
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Could not restore selected version'
+      setHistoryError(reason)
+    } finally {
+      setRestoringEntryId(null)
+    }
+  }
 
   return (
     <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-50 flex flex-col justify-end">

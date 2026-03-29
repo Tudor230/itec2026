@@ -7,6 +7,9 @@ import { RobotBody } from './RobotBody'
 import { RobotHead } from './RobotHead'
 import { useRobotHeadMotion } from './useRobotHeadMotion'
 
+const FOCUS_BLEND_IN_SPEED = 0.22
+const FOCUS_BLEND_OUT_SPEED = 0.09
+
 interface InteractiveRobotProps {
   className?: string
   section: RobotSection
@@ -18,6 +21,7 @@ export function InteractiveRobot({ className, section, zoom = 1, shouldAnimate =
   const { isTransitioning, isFocusLocked, eyeTarget, style } = useRobotHeadMotion(section, zoom, shouldAnimate)
   const [eyeAim, setEyeAim] = useState({ x: '0px', y: '0px' })
   const [phase, setPhase] = useState(0)
+  const [focusBlend, setFocusBlend] = useState(0)
 
   useEffect(() => {
     if (!shouldAnimate) {
@@ -67,6 +71,38 @@ export function InteractiveRobot({ className, section, zoom = 1, shouldAnimate =
     }
   }, [shouldAnimate])
 
+  useEffect(() => {
+    if (!shouldAnimate) {
+      setFocusBlend(0)
+      return
+    }
+
+    let rafId = 0
+
+    const animateBlend = () => {
+      let shouldContinue = false
+
+      setFocusBlend((current) => {
+        const speed = isFocusLocked ? FOCUS_BLEND_IN_SPEED : FOCUS_BLEND_OUT_SPEED
+        const target = isFocusLocked ? 1 : 0
+        const next = current + (target - current) * speed
+        const settled = Math.abs(next - target) < 0.01
+        shouldContinue = !settled
+        return settled ? target : next
+      })
+
+      if (shouldContinue) {
+        rafId = window.requestAnimationFrame(animateBlend)
+      }
+    }
+
+    rafId = window.requestAnimationFrame(animateBlend)
+
+    return () => {
+      window.cancelAnimationFrame(rafId)
+    }
+  }, [isFocusLocked, shouldAnimate])
+
   const effectivePhase = shouldAnimate ? phase : 0
   const headWave = Math.sin(effectivePhase * Math.PI * 2)
   const bob = Number.parseFloat(style['--robot-head-bob'].replace('px', ''))
@@ -81,10 +117,15 @@ export function InteractiveRobot({ className, section, zoom = 1, shouldAnimate =
     transform: `translate3d(${shiftX}, calc(${shiftY} + ${bobOffset.toFixed(2)}px), 0) rotateX(${tilt}) rotateY(${yaw})`,
   } as CSSProperties
 
+  const eyeAimX = Number.parseFloat(eyeAim.x)
+  const eyeAimY = Number.parseFloat(eyeAim.y)
+  const pointerX = eyeAimX * 0.65
+  const pointerY = eyeAimY * 0.65
+  const blendedEyeX = pointerX + (eyeTarget.x - pointerX) * focusBlend
+  const blendedEyeY = pointerY + (eyeTarget.y - pointerY) * focusBlend
+
   const eyeStyle = {
-    transform: isFocusLocked
-      ? `translate3d(${eyeTarget.x.toFixed(2)}px, ${eyeTarget.y.toFixed(2)}px, 0)`
-      : `translate3d(calc(${eyeAim.x} * 0.65), calc(${eyeAim.y} * 0.65), 0)`,
+    transform: `translate3d(${blendedEyeX.toFixed(2)}px, ${blendedEyeY.toFixed(2)}px, 0)`,
   } as CSSProperties
 
   const neckStackStyle = {

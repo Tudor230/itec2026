@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import type { PrismaClient } from '@prisma/client'
+import * as Y from 'yjs'
+import { z } from 'zod'
 import { asyncHandler } from '../../http/async-handler.js'
 import { actorFromRequest } from '../auth/request-actor.js'
 import { requireTokenPresent } from '../auth/require-token-present.middleware.js'
@@ -15,10 +17,180 @@ import {
   renameFolderSchema,
   updateFileSchema,
 } from './file.schema.js'
+import { canEditProject, canReadProject } from './project-access.js'
 import { LocalFileBlobStore, resolveFilesStorageRoot, type FileBlobStore } from './file-blob-store.js'
 import { FilesRepository } from './files.repository.js'
 import { FilesService } from './files.service.js'
 import type { ProjectWorkspaceSyncService } from './project-workspace-sync-service.js'
+
+const MAX_HISTORY_LIMIT = 100
+
+type HistorySource = 'snapshot' | 'update'
+
+interface VersionPreview {
+  source: HistorySource
+  sequence: number
+  content: string
+}
+
+function decodeHistoryUpdate(encoded: string) {
+  return new Uint8Array(Buffer.from(encoded, 'base64'))
+}
+
+function parseHistoryLimit(value: unknown) {
+  if (typeof value !== 'string') {
+    return 50
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 50
+  }
+
+  if (parsed > MAX_HISTORY_LIMIT) {
+    return MAX_HISTORY_LIMIT
+  }
+
+  return parsed
+}
+
+function parseHistoryEntryId(value: string): { source: HistorySource; sequence: number } | null {
+  const match = /^(snapshot|update):(\d+)$/.exec(value)
+  if (!match) {
+    return null
+  }
+
+  const parsedSequence = Number.parseInt(match[2], 10)
+  if (!Number.isFinite(parsedSequence) || parsedSequence <= 0) {
+    return null
+  }
+
+  return {
+    source: match[1] as HistorySource,
+    sequence: parsedSequence,
+  }
+}
+
+function parseProjectHistoryEventId(eventId: string): { fileId: string; entryId: string } | null {
+  const separatorIndex = eventId.indexOf('::')
+  if (separatorIndex <= 0) {
+    return null
+  }
+
+  const fileId = eventId.slice(0, separatorIndex).trim()
+  const entryId = eventId.slice(separatorIndex + 2).trim()
+  if (!fileId || !entryId) {
+    return null
+  }
+
+  return {
+    fileId,
+    entryId,
+  }
+}
+
+async function resolveFileVersionPreview(
+  prisma: PrismaClient,
+  projectId: string,
+  fileId: string,
+  entryId: string,
+): Promise<VersionPreview | null> {
+  const parsedEntryId = parseHistoryEntryId(entryId)
+  if (!parsedEntryId) {
+    return null
+  }
+
+  const file = await prisma.file.findFirst({
+    where: {
+      id: fileId,
+      projectId,
+    },
+    select: {
+      id: true,
+    },
+  })
+
+  if (!file) {
+    return null
+  }
+
+  if (parsedEntryId.source === 'snapshot') {
+    const snapshotEntry = await prisma.yjsSnapshot.findFirst({
+      where: {
+        fileId,
+        sequence: parsedEntryId.sequence,
+      },
+      select: {
+        id: true,
+      },
+    })
+
+    if (!snapshotEntry) {
+      return null
+    }
+  }
+
+  if (parsedEntryId.source === 'update') {
+    const updateEntry = await prisma.yjsUpdate.findFirst({
+      where: {
+        fileId,
+        sequence: parsedEntryId.sequence,
+      },
+      select: {
+        id: true,
+      },
+    })
+
+    if (!updateEntry) {
+      return null
+    }
+  }
+
+  const latestSnapshot = await prisma.yjsSnapshot.findFirst({
+    where: {
+      fileId,
+      sequence: {
+        lte: parsedEntryId.sequence,
+      },
+    },
+    orderBy: [{ sequence: 'desc' }, { createdAt: 'desc' }],
+    select: {
+      sequence: true,
+      updateBase64: true,
+    },
+  })
+
+  const updates = await prisma.yjsUpdate.findMany({
+    where: {
+      fileId,
+      sequence: {
+        gt: latestSnapshot?.sequence ?? 0,
+        lte: parsedEntryId.sequence,
+      },
+    },
+    orderBy: {
+      sequence: 'asc',
+    },
+    select: {
+      updateBase64: true,
+    },
+  })
+
+  const doc = new Y.Doc()
+  if (latestSnapshot) {
+    Y.applyUpdate(doc, decodeHistoryUpdate(latestSnapshot.updateBase64))
+  }
+
+  updates.forEach((entry) => {
+    Y.applyUpdate(doc, decodeHistoryUpdate(entry.updateBase64))
+  })
+
+  return {
+    source: parsedEntryId.source,
+    sequence: parsedEntryId.sequence,
+    content: doc.getText('content').toString(),
+  }
+}
 
 export function createFilesRouter({
   prisma,
@@ -67,6 +239,533 @@ export function createFilesRouter({
     response.json({
       ok: true,
       data: folders,
+    })
+  }))
+
+  router.get('/history/project', requireTokenPresent, asyncHandler(async (request, response) => {
+    const projectId = request.query.projectId
+    if (typeof projectId !== 'string' || projectId.trim().length === 0) {
+      response.status(400).json({
+        ok: false,
+        error: { message: 'projectId query parameter is required', code: 'INVALID_QUERY' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const canRead = await canReadProject(prisma, actor, projectId)
+    if (!canRead) {
+      response.json({
+        ok: true,
+        data: [],
+      })
+      return
+    }
+
+    const limit = parseHistoryLimit(request.query.limit)
+
+    const [snapshots, updates] = await Promise.all([
+      prisma.yjsSnapshot.findMany({
+        where: {
+          file: {
+            projectId,
+          },
+        },
+        orderBy: [{ createdAt: 'desc' }, { sequence: 'desc' }],
+        take: limit * 2,
+        select: {
+          fileId: true,
+          sequence: true,
+          createdAt: true,
+          file: {
+            select: {
+              path: true,
+            },
+          },
+        },
+      }),
+      prisma.yjsUpdate.findMany({
+        where: {
+          file: {
+            projectId,
+          },
+        },
+        orderBy: [{ createdAt: 'desc' }, { sequence: 'desc' }],
+        take: limit * 2,
+        select: {
+          fileId: true,
+          sequence: true,
+          createdAt: true,
+          file: {
+            select: {
+              path: true,
+            },
+          },
+        },
+      }),
+    ])
+
+    const rows = [
+      ...snapshots.map((entry) => {
+        const historyEntryId = `snapshot:${entry.sequence}`
+        return {
+          id: `${entry.fileId}::${historyEntryId}`,
+          fileId: entry.fileId,
+          filePath: entry.file.path,
+          historyEntryId,
+          source: 'snapshot' as const,
+          sequence: entry.sequence,
+          createdAt: entry.createdAt.toISOString(),
+        }
+      }),
+      ...updates.map((entry) => {
+        const historyEntryId = `update:${entry.sequence}`
+        return {
+          id: `${entry.fileId}::${historyEntryId}`,
+          fileId: entry.fileId,
+          filePath: entry.file.path,
+          historyEntryId,
+          source: 'update' as const,
+          sequence: entry.sequence,
+          createdAt: entry.createdAt.toISOString(),
+        }
+      }),
+    ]
+      .sort((left, right) => {
+        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+      })
+      .slice(0, limit)
+
+    response.json({
+      ok: true,
+      data: rows,
+    })
+  }))
+
+  router.post('/history/project/:eventId/restore', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = z.object({
+      projectId: z.string().trim().min(1),
+    }).safeParse(request.body)
+
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FILE_INPUT' },
+      })
+      return
+    }
+
+    const decodedEvent = parseProjectHistoryEventId(request.params.eventId)
+    if (!decodedEvent) {
+      response.status(400).json({
+        ok: false,
+        error: { message: 'Invalid project history event id', code: 'INVALID_QUERY' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const canEdit = await canEditProject(prisma, actor, parsed.data.projectId)
+    if (!canEdit) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    const versionPreview = await resolveFileVersionPreview(
+      prisma,
+      parsed.data.projectId,
+      decodedEvent.fileId,
+      decodedEvent.entryId,
+    )
+
+    if (!versionPreview) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File history entry not found', code: 'FILE_HISTORY_NOT_FOUND' },
+      })
+      return
+    }
+
+    const previousFile = await service.getById(actor, decodedEvent.fileId)
+    if (!previousFile) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    if (!workspaceSync) {
+      const updated = await service.update(actor, decodedEvent.fileId, {
+        content: versionPreview.content,
+      })
+
+      if (!updated) {
+        response.status(404).json({
+          ok: false,
+          error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+        })
+        return
+      }
+
+      emitCollabFileUpdated({
+        id: updated.id,
+        projectId: updated.projectId,
+        path: updated.path,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
+      })
+
+      response.json({
+        ok: true,
+        data: {
+          file: updated,
+          restoredFrom: {
+            fileId: decodedEvent.fileId,
+            historyEntryId: decodedEvent.entryId,
+            source: versionPreview.source,
+            sequence: versionPreview.sequence,
+          },
+        },
+      })
+      return
+    }
+
+    const updated = await workspaceSync.runLocked(previousFile.projectId, async () => {
+      const nextFile = await service.update(actor, decodedEvent.fileId, {
+        content: versionPreview.content,
+      })
+
+      if (!nextFile) {
+        return null
+      }
+
+      try {
+        await workspaceSync.applyApiUpdateAlreadyLocked(previousFile, nextFile)
+      } catch (error) {
+        await service.updateFromSync(nextFile.id, {
+          path: previousFile.path,
+          content: previousFile.content,
+        })
+        throw error
+      }
+
+      return nextFile
+    })
+
+    if (!updated) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    emitCollabFileUpdated({
+      id: updated.id,
+      projectId: updated.projectId,
+      path: updated.path,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    })
+
+    response.json({
+      ok: true,
+      data: {
+        file: updated,
+        restoredFrom: {
+          fileId: decodedEvent.fileId,
+          historyEntryId: decodedEvent.entryId,
+          source: versionPreview.source,
+          sequence: versionPreview.sequence,
+        },
+      },
+    })
+  }))
+
+  router.get('/history/file/:fileId', requireTokenPresent, asyncHandler(async (request, response) => {
+    const projectId = request.query.projectId
+    if (typeof projectId !== 'string' || projectId.trim().length === 0) {
+      response.status(400).json({
+        ok: false,
+        error: { message: 'projectId query parameter is required', code: 'INVALID_QUERY' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const canRead = await canReadProject(prisma, actor, projectId)
+    if (!canRead) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    const file = await prisma.file.findFirst({
+      where: {
+        id: request.params.fileId,
+        projectId,
+      },
+      select: {
+        id: true,
+        path: true,
+      },
+    })
+
+    if (!file) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    const limit = parseHistoryLimit(request.query.limit)
+
+    const [snapshots, updates] = await Promise.all([
+      prisma.yjsSnapshot.findMany({
+        where: {
+          fileId: file.id,
+        },
+        orderBy: [{ sequence: 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        select: {
+          sequence: true,
+          createdAt: true,
+        },
+      }),
+      prisma.yjsUpdate.findMany({
+        where: {
+          fileId: file.id,
+        },
+        orderBy: [{ sequence: 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        select: {
+          sequence: true,
+          createdAt: true,
+        },
+      }),
+    ])
+
+    const rows = [
+      ...snapshots.map((entry) => {
+        return {
+          id: `snapshot:${entry.sequence}`,
+          source: 'snapshot' as const,
+          sequence: entry.sequence,
+          createdAt: entry.createdAt.toISOString(),
+          fileId: file.id,
+          filePath: file.path,
+        }
+      }),
+      ...updates.map((entry) => {
+        return {
+          id: `update:${entry.sequence}`,
+          source: 'update' as const,
+          sequence: entry.sequence,
+          createdAt: entry.createdAt.toISOString(),
+          fileId: file.id,
+          filePath: file.path,
+        }
+      }),
+    ]
+      .sort((left, right) => {
+        if (right.sequence !== left.sequence) {
+          return right.sequence - left.sequence
+        }
+
+        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+      })
+      .slice(0, limit)
+
+    response.json({
+      ok: true,
+      data: rows,
+    })
+  }))
+
+  router.get('/history/file/:fileId/:entryId', requireTokenPresent, asyncHandler(async (request, response) => {
+    const projectId = request.query.projectId
+    if (typeof projectId !== 'string' || projectId.trim().length === 0) {
+      response.status(400).json({
+        ok: false,
+        error: { message: 'projectId query parameter is required', code: 'INVALID_QUERY' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const canRead = await canReadProject(prisma, actor, projectId)
+    if (!canRead) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    const versionPreview = await resolveFileVersionPreview(
+      prisma,
+      projectId,
+      request.params.fileId,
+      request.params.entryId,
+    )
+
+    if (!versionPreview) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File history entry not found', code: 'FILE_HISTORY_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: {
+        id: request.params.entryId,
+        fileId: request.params.fileId,
+        source: versionPreview.source,
+        sequence: versionPreview.sequence,
+        content: versionPreview.content,
+      },
+    })
+  }))
+
+  router.post('/history/file/:fileId/:entryId/restore', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = z.object({
+      projectId: z.string().trim().min(1),
+    }).safeParse(request.body)
+
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FILE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const canEdit = await canEditProject(prisma, actor, parsed.data.projectId)
+    if (!canEdit) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    const versionPreview = await resolveFileVersionPreview(
+      prisma,
+      parsed.data.projectId,
+      request.params.fileId,
+      request.params.entryId,
+    )
+
+    if (!versionPreview) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File history entry not found', code: 'FILE_HISTORY_NOT_FOUND' },
+      })
+      return
+    }
+
+    const previousFile = await service.getById(actor, request.params.fileId)
+    if (!previousFile) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    if (!workspaceSync) {
+      const updated = await service.update(actor, request.params.fileId, {
+        content: versionPreview.content,
+      })
+
+      if (!updated) {
+        response.status(404).json({
+          ok: false,
+          error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+        })
+        return
+      }
+
+      emitCollabFileUpdated({
+        id: updated.id,
+        projectId: updated.projectId,
+        path: updated.path,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
+      })
+
+      response.json({
+        ok: true,
+        data: {
+          file: updated,
+          restoredFrom: {
+            historyEntryId: request.params.entryId,
+            source: versionPreview.source,
+            sequence: versionPreview.sequence,
+          },
+        },
+      })
+      return
+    }
+
+    const updated = await workspaceSync.runLocked(previousFile.projectId, async () => {
+      const nextFile = await service.update(actor, request.params.fileId, {
+        content: versionPreview.content,
+      })
+
+      if (!nextFile) {
+        return null
+      }
+
+      try {
+        await workspaceSync.applyApiUpdateAlreadyLocked(previousFile, nextFile)
+      } catch (error) {
+        await service.updateFromSync(nextFile.id, {
+          path: previousFile.path,
+          content: previousFile.content,
+        })
+        throw error
+      }
+
+      return nextFile
+    })
+
+    if (!updated) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'File not found', code: 'FILE_NOT_FOUND' },
+      })
+      return
+    }
+
+    emitCollabFileUpdated({
+      id: updated.id,
+      projectId: updated.projectId,
+      path: updated.path,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    })
+
+    response.json({
+      ok: true,
+      data: {
+        file: updated,
+        restoredFrom: {
+          historyEntryId: request.params.entryId,
+          source: versionPreview.source,
+          sequence: versionPreview.sequence,
+        },
+      },
     })
   }))
 

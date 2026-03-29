@@ -54,6 +54,9 @@ import { useCollabDoc } from '../hooks/use-collab-doc'
 import { useRunCurrentFile } from '../hooks/use-run-current-file'
 import { cn } from '../lib/utils'
 import { workspaceHudChipClass } from '../components/workspace/ui-classes'
+import type {
+  WorkspaceAiResponseCard,
+} from '../components/workspace/ai-response-types'
 
 const AUTOSAVE_DELAY_MS = 200
 
@@ -138,6 +141,10 @@ function WorkspaceWithHostedAuth() {
   const [timelineReturnSequence, setTimelineReturnSequence] = useState<
     number | null
   >(null)
+  const [editorInstanceNonce, setEditorInstanceNonce] = useState(0)
+  const [autosaveBlockedFileId, setAutosaveBlockedFileId] = useState<string | null>(null)
+  const [aiResponseByFileId, setAiResponseByFileId] = useState<Record<string, WorkspaceAiResponseCard>>({})
+  const [editorAiActionPending, setEditorAiActionPending] = useState<boolean>(false)
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
   const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<
     Record<string, string[]>
@@ -629,6 +636,26 @@ function WorkspaceWithHostedAuth() {
     [clearAutosaveTimeout, saveFileMutation],
   )
 
+  const queueSaveNow = useCallback(async (fileId: string, content: string) => {
+    clearAutosaveTimeout()
+
+    try {
+      await saveFileMutation.mutateAsync({
+        fileId,
+        content,
+      })
+
+      return {
+        ok: true as const,
+      }
+    } catch (error) {
+      return {
+        ok: false as const,
+        errorMessage: error instanceof Error ? error.message : 'Could not save file',
+      }
+    }
+  }, [clearAutosaveTimeout, saveFileMutation])
+
   const files = filesQuery.data ?? []
   const activeFile = files.find((file) => file.id === activeFileId) ?? null
   const openTabs = openFileIds
@@ -659,9 +686,9 @@ function WorkspaceWithHostedAuth() {
   })
 
   const {
-    collabState,
-    onEditorMount,
-    markSaved,
+    // collabState,
+    // onEditorMount,
+    // markSaved,
     timelineState,
     previewState,
     loadTimeline,
@@ -682,12 +709,7 @@ function WorkspaceWithHostedAuth() {
   useEffect(() => {
     clearAutosaveTimeout()
 
-    if (
-      !isAuthenticated ||
-      !activeFile ||
-      !localIsDirty ||
-      previewState.isActive
-    ) {
+    if (!isAuthenticated || !activeFile || !localIsDirty || autosaveBlockedFileId === activeFile.id) {
       return
     }
 
@@ -704,6 +726,7 @@ function WorkspaceWithHostedAuth() {
     activeFile,
     clearAutosaveTimeout,
     editorValue,
+    autosaveBlockedFileId,
     isAuthenticated,
     localIsDirty,
     previewState.isActive,
@@ -711,9 +734,16 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const selectedProject =
-    projectsQuery.data?.find((project) => project.id === activeProjectId) ??
-    null
+  const { collabState, onEditorMount, applyAiContentToYjs, markSaved } = useCollabDoc({
+    projectId: activeProjectId,
+    fileId: activeFileId,
+    onFileCreated: onCollabFileCreated,
+    onFileUpdated: onCollabFileUpdated,
+    onFileDeleted: onCollabFileDeleted,
+    onDirtyStateChanged: onCollabDirtyStateChanged,
+  })
+
+  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
 
   const dirtyFileIds = files
     .filter((file) => {
@@ -800,14 +830,18 @@ function WorkspaceWithHostedAuth() {
     setHasClosedAllTabs(false)
     setDraftsByFileId({})
     setCollabDirtyByFileId({})
+    setAiResponseByFileId({})
     setSaveError(null)
     setCreateError(null)
+    setEditorAiActionPending(false)
+    setAutosaveBlockedFileId(null)
     clearAutosaveTimeout()
   }, [activeProjectId, clearAutosaveTimeout, resetQueuedTerminalCommand])
 
   useEffect(() => {
     if (!isAuthenticated) {
       setActiveFileId(null)
+      setAiResponseByFileId({})
       return
     }
 
@@ -1059,6 +1093,11 @@ function WorkspaceWithHostedAuth() {
       delete next[fileId]
       return next
     })
+
+    setAutosaveBlockedFileId((previous) => {
+      return previous === fileId ? null : previous
+    })
+
   }
 
   const closeOthers = (fileId: string) => {
@@ -1077,7 +1116,161 @@ function WorkspaceWithHostedAuth() {
     setOpenFileIds([])
     setActiveFileId(null)
     setDraftsByFileId({})
+    setAutosaveBlockedFileId(null)
   }
+
+  const loadHistoryVersionIntoEditor = useCallback((fileId: string, content: string) => {
+    setHasClosedAllTabs(false)
+    setCenterView('editor')
+    setSaveError(null)
+    setActiveFileId(fileId)
+    setOpenFileIds((previous) => {
+      if (previous.includes(fileId)) {
+        return previous
+      }
+
+      return [...previous, fileId]
+    })
+
+    setDraftsByFileId((previous) => {
+      return {
+        ...previous,
+        [fileId]: content,
+      }
+    })
+    setEditorInstanceNonce((previous) => previous + 1)
+    setAutosaveBlockedFileId(fileId)
+  }, [])
+
+  const currentFileAiResponse = useMemo(() => {
+    if (!activeFileId) {
+      return null
+    }
+
+    return aiResponseByFileId[activeFileId] ?? null
+  }, [activeFileId, aiResponseByFileId])
+
+  const focusFileInEditor = useCallback((fileId: string) => {
+    setHasClosedAllTabs(false)
+    setCenterView('editor')
+    setSaveError(null)
+    setActiveFileId(fileId)
+    setOpenFileIds((previous) => {
+      if (previous.includes(fileId)) {
+        return previous
+      }
+
+      return [...previous, fileId]
+    })
+  }, [])
+
+  const handleAiResponseReady = useCallback((card: WorkspaceAiResponseCard) => {
+    const baseFile = files.find((file) => file.id === card.fileId) ?? null
+    if (!baseFile) {
+      return
+    }
+
+    if (card.diff.hunks.length === 0) {
+      return
+    }
+
+    const originalContent = draftsByFileId[card.fileId] ?? baseFile.content
+
+    setAiResponseByFileId((previous) => {
+      return {
+        ...previous,
+        [card.fileId]: {
+          ...card,
+          originalContent,
+        },
+      }
+    })
+
+    focusFileInEditor(card.fileId)
+  }, [draftsByFileId, files, focusFileInEditor])
+
+  const handleJumpToSuggestionFile = useCallback((fileId: string) => {
+    focusFileInEditor(fileId)
+  }, [focusFileInEditor])
+
+  const handleAiDiffReject = useCallback(() => {
+    if (!activeFileId) {
+      return
+    }
+
+    setAiResponseByFileId((previous) => {
+      const next = { ...previous }
+      delete next[activeFileId]
+      return next
+    })
+  }, [activeFileId])
+
+  const handleAiDiffChange = useCallback((nextValue: string) => {
+    if (!activeFileId) {
+      return
+    }
+
+    setAiResponseByFileId((previous) => {
+      const current = previous[activeFileId]
+      if (!current || current.updatedContent === nextValue) {
+        return previous
+      }
+
+      return {
+        ...previous,
+        [activeFileId]: {
+          ...current,
+          updatedContent: nextValue,
+        },
+      }
+    })
+  }, [activeFileId])
+
+  const handleAiDiffAccept = useCallback(async () => {
+    if (!activeFileId) {
+      return
+    }
+
+    const response = aiResponseByFileId[activeFileId]
+    if (!response) {
+      return
+    }
+
+    setEditorAiActionPending(true)
+    try {
+      const applied = applyAiContentToYjs(response.updatedContent)
+      if (!applied.ok) {
+        toast(`Could not apply AI suggestion: ${applied.reason}`, 'error')
+        return
+      }
+
+      if (applied.warning) {
+        // toast(applied.warning, 'warning', 6000)
+      }
+
+      setDraftsByFileId((previous) => {
+        return {
+          ...previous,
+          [activeFileId]: applied.content,
+        }
+      })
+      setAutosaveBlockedFileId(activeFileId)
+
+      const saveResult = await queueSaveNow(activeFileId, applied.content)
+      if (!saveResult.ok) {
+        toast(`Applied in editor but failed to save: ${saveResult.errorMessage}`, 'error')
+        return
+      }
+
+      setAiResponseByFileId((previous) => {
+        const next = { ...previous }
+        delete next[activeFileId]
+        return next
+      })
+    } finally {
+      setEditorAiActionPending(false)
+    }
+  }, [activeFileId, aiResponseByFileId, applyAiContentToYjs, queueSaveNow, toast])
 
   if (isLoading && isAuthenticated) {
     return <WorkspaceSkeleton />
@@ -1387,18 +1580,30 @@ function WorkspaceWithHostedAuth() {
                   </button>
                 ) : null}
 
-                {centerView === 'editor' ? (
-                  <EditorPane
-                    file={activeFile}
-                    initialValue={editorValue}
-                    isDirty={isDirty}
-                    saveError={saveError}
-                    collabState={collabState}
-                    onEditorMount={onEditorMount}
-                    onChange={(nextValue) => {
-                      if (!activeFile) {
-                        return
-                      }
+                  {centerView === 'editor' ? (
+                    <EditorPane
+                      file={activeFile}
+                      initialValue={editorValue}
+                      instanceNonce={editorInstanceNonce}
+                      isDirty={isDirty}
+                      saveError={saveError}
+                      collabState={collabState}
+                      aiResponse={currentFileAiResponse}
+                      aiActionPending={editorAiActionPending}
+                      onAiDiffChange={handleAiDiffChange}
+                      onAiDiffAccept={() => {
+                        void handleAiDiffAccept()
+                      }}
+                      onAiDiffReject={handleAiDiffReject}
+                      onEditorMount={onEditorMount}
+                      onChange={(nextValue) => {
+                        if (!activeFile) {
+                          return
+                        }
+
+                        if (autosaveBlockedFileId === activeFile.id) {
+                          setAutosaveBlockedFileId(null)
+                        }
 
                       setDraftsByFileId((previous) => {
                         return {
@@ -1440,15 +1645,16 @@ function WorkspaceWithHostedAuth() {
                 onToggle={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
                 activeTab={rightSidebarTab}
                 setActiveTab={setRightSidebarTab}
-                activeFileContext={
-                  activeFile
-                    ? {
-                        path: activeFile.path,
-                        content: editorValue,
-                      }
-                    : null
-                }
+                activeFileContext={activeFile
+                  ? {
+                      fileId: activeFile.id,
+                      path: activeFile.path,
+                      content: editorValue,
+                    }
+                  : null}
                 getAccessToken={getApiAccessToken}
+                onAiResponseReady={handleAiResponseReady}
+                onJumpToSuggestionFile={handleJumpToSuggestionFile}
               />
             </Panel>
           </Group>
@@ -1457,6 +1663,10 @@ function WorkspaceWithHostedAuth() {
           <BottomDrawers
             activeTab={bottomDrawerTab}
             onActiveTabChange={setBottomDrawerTab}
+            projectId={activeProjectId}
+            activeFileId={activeFileId}
+            getAccessToken={getApiAccessToken}
+            onLoadVersion={loadHistoryVersionIntoEditor}
             timelineEntries={timelineState.entries}
             timelineRewindEdges={timelineState.rewindEdges}
             timelineHeadSequence={timelineState.headSequence}

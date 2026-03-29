@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import type { Doc as YDoc } from 'yjs'
+import type { StructuredDiffHunk } from '../services/ai-api'
+import { applySingleHunk } from '../lib/apply-structured-diff'
 import {
   CollabClient
   
@@ -56,6 +58,12 @@ interface MonacoBindingInstance {
   destroy: () => void
 }
 
+interface CollabDocSessionState {
+  projectId: string
+  fileId: string
+  doc: import('yjs').Doc
+}
+
 export function useCollabDoc({
   projectId,
   fileId,
@@ -77,6 +85,7 @@ export function useCollabDoc({
   const timelineRequestIdRef = useRef(0)
   const previewRequestIdRef = useRef(0)
   const activeDocKeyRef = useRef('')
+  const sessionStateRef = useRef<CollabDocSessionState | null>(null)
 
   const [state, setState] = useState<CollabDocState>({
     connectionState: 'idle',
@@ -154,6 +163,8 @@ export function useCollabDoc({
       }
 
       collabDocRef.current = null
+
+      sessionStateRef.current = null
 
       if (bindingRef.current) {
         destroyBinding()
@@ -499,6 +510,8 @@ export function useCollabDoc({
         sessionDestroyRef.current = null
       }
 
+      sessionStateRef.current = null
+
       if (bindingRef.current) {
         destroyBinding()
       }
@@ -532,7 +545,15 @@ export function useCollabDoc({
         collabDocRef.current = session.doc
 
         await bindEditorToLiveDoc()
-        sessionDestroyRef.current = session.destroy
+        sessionStateRef.current = {
+          projectId,
+          fileId,
+          doc: session.doc,
+        }
+        sessionDestroyRef.current = () => {
+          sessionStateRef.current = null
+          session.destroy()
+        }
       })
       .catch((error: unknown) => {
         if (cancelled) {
@@ -546,6 +567,7 @@ export function useCollabDoc({
               ? error.message
               : 'Could not join collaboration session',
         })
+        sessionStateRef.current = null
       })
 
     return () => {
@@ -557,6 +579,8 @@ export function useCollabDoc({
       }
 
       collabDocRef.current = null
+
+      sessionStateRef.current = null
 
       if (bindingRef.current) {
         destroyBinding()
@@ -579,6 +603,117 @@ export function useCollabDoc({
     })
   }
 
+  function applyEditorContent(nextContent: string) {
+    const sessionState = sessionStateRef.current
+    const hasActiveSession = Boolean(
+      sessionState
+      && sessionState.projectId === projectId
+      && sessionState.fileId === fileId,
+    )
+
+    const model = bindingTargets.model
+    const modelReady = Boolean(
+      model
+      && typeof model.getValue === 'function'
+      && !(typeof model.isDisposed === 'function' && model.isDisposed()),
+    )
+
+    const yText = hasActiveSession ? sessionState.doc.getText('content') : null
+
+    const currentContent = modelReady
+      ? model.getValue()
+      : (yText ? yText.toString() : null)
+
+    if (currentContent === null) {
+      return {
+        ok: false as const,
+        reason: 'Neither editor model nor active collaboration document is ready.',
+      }
+    }
+
+    if (nextContent === currentContent) {
+      return {
+        ok: true as const,
+        content: nextContent,
+      }
+    }
+
+    let changeStart = 0
+    while (
+      changeStart < currentContent.length
+      && changeStart < nextContent.length
+      && currentContent[changeStart] === nextContent[changeStart]
+    ) {
+      changeStart += 1
+    }
+
+    let currentEnd = currentContent.length - 1
+    let nextEnd = nextContent.length - 1
+    while (
+      currentEnd >= changeStart
+      && nextEnd >= changeStart
+      && currentContent[currentEnd] === nextContent[nextEnd]
+    ) {
+      currentEnd -= 1
+      nextEnd -= 1
+    }
+
+    const deleteLength = currentEnd >= changeStart ? (currentEnd - changeStart + 1) : 0
+    const insertText = nextContent.slice(changeStart, nextEnd + 1)
+
+    if (modelReady && model) {
+      const startPosition = model.getPositionAt(changeStart)
+      const endPosition = model.getPositionAt(changeStart + deleteLength)
+
+      const editOperation = {
+        range: {
+          startLineNumber: startPosition.lineNumber,
+          startColumn: startPosition.column,
+          endLineNumber: endPosition.lineNumber,
+          endColumn: endPosition.column,
+        },
+        text: insertText,
+        forceMoveMarkers: true,
+      }
+
+      if (bindingTargets.editor) {
+        bindingTargets.editor.pushUndoStop()
+        bindingTargets.editor.executeEdits('ai-suggestion-accept', [editOperation])
+        bindingTargets.editor.pushUndoStop()
+      } else {
+        model.applyEdits([editOperation])
+      }
+    } else if (yText) {
+      sessionState.doc.transact(() => {
+        const currentLength = yText.length
+        if (currentLength > 0) {
+          yText.delete(0, currentLength)
+        }
+        if (nextContent.length > 0) {
+          yText.insert(0, nextContent)
+        }
+      }, 'ai-diff-accept')
+    } else {
+      return {
+        ok: false as const,
+        reason: 'Could not apply AI edits because no target editor model is available.',
+      }
+    }
+
+    if (!hasActiveSession) {
+      return {
+        ok: true as const,
+        content: nextContent,
+        warning: 'Applied locally while collaboration session was reconnecting.',
+      }
+    }
+
+    return {
+      ok: true as const,
+      content: nextContent,
+    }
+  }
+
   return {
     collabState: state,
     onEditorMount,
@@ -591,6 +726,29 @@ export function useCollabDoc({
     cancelPreviewRequests,
     clearPreviewState,
     rewindToSequence,
+    applyAiContentToYjs: (nextContent: string) => {
+      return applyEditorContent(nextContent)
+    },
+    applyAiHunkToYjs: (hunk: StructuredDiffHunk) => {
+      const model = bindingTargets.model
+      if (!model) {
+        return {
+          ok: false as const,
+          reason: 'Editor model is not ready for this file.',
+        }
+      }
+
+      const currentContent = model.getValue()
+      const applied = applySingleHunk(currentContent, hunk)
+      if (!applied.ok) {
+        return {
+          ok: false as const,
+          reason: applied.reason,
+        }
+      }
+
+      return applyEditorContent(applied.content)
+    },
     markSaved: (nextProjectId: string, nextFileId: string) => {
       void collabClient.markDocumentSaved(nextProjectId, nextFileId)
     },

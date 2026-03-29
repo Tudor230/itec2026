@@ -24,6 +24,7 @@ export interface DockerInteractiveSessionHandle {
   write: (input: string) => Promise<void>
   resize: (size: RuntimeTerminalSize) => Promise<void>
   close: () => Promise<void>
+  closed: Promise<void>
 }
 
 type DockerLogLevel = 'silent' | 'error' | 'info' | 'debug'
@@ -764,6 +765,18 @@ export class DockerSandboxManager {
         stdin: true,
       })
       const outputParser = new DockerTtyOutputParser()
+      let settleClosed = () => undefined
+      const closed = new Promise<void>((resolve) => {
+        let settled = false
+        settleClosed = () => {
+          if (settled) {
+            return
+          }
+
+          settled = true
+          resolve()
+        }
+      })
 
       const execInfo = await execInstance.inspect()
       const execId = (execInstance as { id?: string }).id
@@ -796,6 +809,12 @@ export class DockerSandboxManager {
           ...current,
           interactiveSession: undefined,
         })
+
+        settleClosed()
+      })
+
+      stream.on('error', () => {
+        settleClosed()
       })
 
       this.sandboxes.set(key, {
@@ -874,6 +893,7 @@ export class DockerSandboxManager {
 
           await this.closeInteractiveSession(projectId, ownerSubject)
         },
+        closed,
       }
     } catch (error) {
       this.logError('docker interactive exec failed', {
