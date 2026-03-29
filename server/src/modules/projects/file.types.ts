@@ -20,3 +20,35 @@ export interface FileInput {
 export interface FolderRecord {
   path: string
 }
+
+export interface ImportFileInput {
+  path: string
+  content: string
+}
+
+export interface LocalFilesImportInput {
+  projectId: string
+  files: ImportFileInput[]
+}
+
+export interface GithubImportInput {
+  projectId: string
+  repositoryUrl: string
+  branch?: string
+}
+
+export interface FileImportSkippedEntry {
+  path: string
+  reason: string
+}
+
+export interface FileImportFailedEntry {
+  path: string
+  reason: string
+}
+
+export interface FileImportResult {
+  imported: FileRecord[]
+  skipped: FileImportSkippedEntry[]
+  failed: FileImportFailedEntry[]
+}

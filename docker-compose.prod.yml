@@ -1,0 +1,105 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-itec2026}
+      POSTGRES_USER: ${POSTGRES_USER:-itec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-itec} -d ${POSTGRES_DB:-itec2026}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  dockerd:
+    image: docker:27-dind
+    privileged: true
+    restart: unless-stopped
+    environment:
+      DOCKER_TLS_CERTDIR: ''
+    command:
+      - --host=unix:///var/run/docker.sock
+    healthcheck:
+      test: ['CMD', 'docker', 'info']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - dockerd_socket:/var/run
+      - dockerd_data:/var/lib/docker
+      - server_workspaces_data:/data/workspaces
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    command: npm run start:docker:prod
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-itec}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-itec2026}
+      CLIENT_ORIGIN: ${PUBLIC_APP_URL}
+      COLLAB_TERMINAL_DOCKER_IMAGE: ${COLLAB_TERMINAL_DOCKER_IMAGE:-node:20.0}
+      FILES_STORAGE_ROOT: /data/files
+      COLLAB_WORKSPACE_ROOT: /data/workspaces
+      DOCKER_HOST: unix:///var/run/docker.sock
+      COLLAB_DOCKER_LOG_LEVEL: ${COLLAB_DOCKER_LOG_LEVEL:-info}
+      COLLAB_TERMINAL_DOCKER_AUTO_PULL: ${COLLAB_TERMINAL_DOCKER_AUTO_PULL:-true}
+      COLLAB_TERMINAL_DOCKER_UID: ${COLLAB_TERMINAL_DOCKER_UID:-1000}
+      COLLAB_TERMINAL_DOCKER_GID: ${COLLAB_TERMINAL_DOCKER_GID:-1000}
+      COLLAB_SNAPSHOT_INTERVAL_UPDATES: ${COLLAB_SNAPSHOT_INTERVAL_UPDATES:-10}
+      COLLAB_WORKSPACE_EXCLUDED_DIRS: node_modules,.git,dist,build,.next,coverage,.cache
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      AUTH0_ISSUER: ${AUTH0_ISSUER:-}
+      AUTH_JWT_HS256_SECRET: ${AUTH_JWT_HS256_SECRET:-}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-}
+      AUTH_JWT_PUBLIC_KEY: ${AUTH_JWT_PUBLIC_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-30000}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dockerd:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:4000:4000'
+    volumes:
+      - dockerd_socket:/var/run
+      - server_files_data:/data/files
+      - server_workspaces_data:/data/workspaces
+
+  client:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    restart: unless-stopped
+    command: sh -c "npm run build && npm run preview -- --host 0.0.0.0 --port 3000"
+    environment:
+      VITE_API_BASE_URL: ${PUBLIC_APP_URL}
+      VITE_AUTH0_DOMAIN: ${VITE_AUTH0_DOMAIN}
+      VITE_AUTH0_CLIENT_ID: ${VITE_AUTH0_CLIENT_ID}
+      VITE_AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      VITE_AUTH0_REDIRECT_URI: ${PUBLIC_APP_URL}
+      VITE_AUTH0_LOGOUT_RETURN_TO: ${PUBLIC_APP_URL}
+      VITE_AUTH0_ROLES_CLAIM: ${VITE_AUTH0_ROLES_CLAIM:-https://itec2026-api/roles}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS}
+    depends_on:
+      - server
+    ports:
+      - '127.0.0.1:3000:3000'
+
+volumes:
+  dockerd_socket:
+  postgres_data:
+  dockerd_data:
+  server_files_data:
+  server_workspaces_data:

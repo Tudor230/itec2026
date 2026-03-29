@@ -9,6 +9,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "start": "node dist/index.js",
     "start:docker": "npm run prisma:migrate:deploy && npm run dev",
+    "start:docker:prod": "npm run prisma:migrate:deploy && npm run build && npm run start",
     "socket:test": "node scripts/socket-smoke-test.mjs",
     "backfill:file-blobs": "node scripts/backfill-file-blobs.mjs",
     "prisma:generate": "prisma generate",

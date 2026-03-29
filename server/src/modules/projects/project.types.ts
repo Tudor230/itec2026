@@ -28,6 +28,8 @@ export interface ProjectInviteRecord {
 
 export interface ProjectCollaboratorRecord {
   subject: string | null
+  displayName: string | null
+  email: string | null
   role: 'owner' | 'editor'
   addedBySubject: string | null
   createdAt: string

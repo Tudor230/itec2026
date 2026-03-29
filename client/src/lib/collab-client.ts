@@ -67,6 +67,31 @@ interface ErrorPayload {
   requestId?: string
 }
 
+const joinScopedErrorMessages = new Set<string>([
+  'Authentication is required',
+  'Too many join attempts',
+  'Too many open documents in this session',
+  'Collaboration server is busy, try again later',
+  'File not found',
+  'Could not join document',
+])
+
+function isJoinErrorForDocument(payload: ErrorPayload, key: DocKey) {
+  const hasProjectId = typeof payload.projectId === 'string' && payload.projectId.length > 0
+  const hasFileId = typeof payload.fileId === 'string' && payload.fileId.length > 0
+
+  if (hasProjectId && hasFileId) {
+    return payload.projectId === key.projectId && payload.fileId === key.fileId
+  }
+
+  if (hasProjectId || hasFileId) {
+    return false
+  }
+
+  const message = payload.message?.trim() ?? ''
+  return joinScopedErrorMessages.has(message)
+}
+
 function createRequestId() {
   if (
     typeof crypto !== 'undefined' &&
@@ -437,7 +462,7 @@ export class CollabClient {
       const timeout = setTimeout(() => {
         cleanup()
         reject(new Error('Timed out waiting for initial document sync'))
-      }, 6000)
+      }, 15000)
 
       const onSynced = (payload: DocSyncPayload) => {
         if (!sameDoc(payload, key)) {
@@ -448,7 +473,11 @@ export class CollabClient {
         resolve()
       }
 
-      const onCollabError = (payload: { message?: string }) => {
+      const onCollabError = (payload: ErrorPayload) => {
+        if (!isJoinErrorForDocument(payload, key)) {
+          return
+        }
+
         const message = payload.message ?? 'Collaboration error'
         cleanup()
         reject(new Error(message))
