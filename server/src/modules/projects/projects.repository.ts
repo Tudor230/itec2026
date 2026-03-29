@@ -3,8 +3,10 @@ import type { ActorContext } from '../auth/actor-context.js'
 import { createId } from './id.js'
 import { canEditProject, canReadProject, isProjectOwner } from './project-access.js'
 import type {
+  ActiveProjectInviteRecord,
   CreateProjectInviteResult,
   InvitePreviewRecord,
+  ProjectMemberRecord,
   ProjectInput,
   ProjectInviteRecord,
   ProjectRecord,
@@ -82,6 +84,19 @@ type ProjectInviteModel = {
 }
 
 type ProjectMemberModel = {
+  findMany: (args: {
+    where: {
+      projectId: string
+    }
+    orderBy: {
+      createdAt: 'asc' | 'desc'
+    }
+  }) => Promise<Array<{
+    subject: string
+    displayName: string | null
+    email: string | null
+    role: string
+  }>>
   upsert: (args: {
     where: {
       projectId_subject: {
@@ -93,10 +108,14 @@ type ProjectMemberModel = {
       id: string
       projectId: string
       subject: string
+      displayName: string | null
+      email: string | null
       role: string
       addedBySubject: string | null
     }
     update: {
+      displayName: string | null
+      email: string | null
       role: string
       addedBySubject: string | null
     }
@@ -229,7 +248,98 @@ export class ProjectsRepository {
       },
     })
 
+    const projectMemberModel = getProjectMemberModel(this.prisma)
+    if (projectMemberModel) {
+      await projectMemberModel.upsert({
+        where: {
+          projectId_subject: {
+            projectId: project.id,
+            subject: ownerSubject,
+          },
+        },
+        create: {
+          id: createId(),
+          projectId: project.id,
+          subject: ownerSubject,
+          displayName: actor.displayName ?? null,
+          email: actor.email ?? null,
+          role: 'owner',
+          addedBySubject: ownerSubject,
+        },
+        update: {
+          displayName: actor.displayName ?? null,
+          email: actor.email ?? null,
+          role: 'owner',
+          addedBySubject: ownerSubject,
+        },
+      })
+    }
+
     return toProjectRecord(project)
+  }
+
+  async listMembers(actor: ActorContext, projectId: string): Promise<ProjectMemberRecord[]> {
+    const allowed = await canReadProject(this.prisma, actor, projectId)
+    if (!allowed) {
+      return []
+    }
+
+    const project = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+      },
+    })
+
+    if (!project) {
+      return []
+    }
+
+    const ownerEntry: ProjectMemberRecord | null = project.ownerSubject
+      ? {
+          subject: project.ownerSubject,
+          displayName: actor.subject === project.ownerSubject ? actor.displayName ?? null : null,
+          email: actor.subject === project.ownerSubject ? actor.email ?? null : null,
+          role: 'owner',
+        }
+      : null
+
+    const projectMemberModel = getProjectMemberModel(this.prisma)
+    if (!projectMemberModel) {
+      return ownerEntry ? [ownerEntry] : []
+    }
+
+    const members = await projectMemberModel.findMany({
+      where: {
+        projectId,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    })
+
+    const deduped = new Map<string, ProjectMemberRecord>()
+
+    if (ownerEntry) {
+      deduped.set(ownerEntry.subject, ownerEntry)
+    }
+
+    members.forEach((member) => {
+      const existing = deduped.get(member.subject)
+      const isCurrentActor = actor.subject === member.subject
+
+      deduped.set(member.subject, {
+        subject: member.subject,
+        displayName: isCurrentActor
+          ? actor.displayName ?? member.displayName
+          : member.displayName,
+        email: isCurrentActor
+          ? actor.email ?? member.email
+          : member.email,
+        role: existing?.role === 'owner' ? 'owner' : member.role,
+      })
+    })
+
+    return [...deduped.values()]
   }
 
   async update(
@@ -328,6 +438,69 @@ export class ProjectsRepository {
       invite: toInviteRecord(invite),
       inviteToken,
     }
+  }
+
+  async listActiveInvites(actor: ActorContext, projectId: string): Promise<ActiveProjectInviteRecord[]> {
+    const owner = await isProjectOwner(this.prisma, actor, projectId)
+    if (!owner) {
+      return []
+    }
+
+    if (!getProjectInviteModel(this.prisma)) {
+      return []
+    }
+
+    const now = new Date()
+    const invites = await this.prisma.projectInvite.findMany({
+      where: {
+        projectId,
+        consumedAt: null,
+        revokedAt: null,
+        expiresAt: {
+          gt: now,
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    })
+
+    return invites.map((invite) => {
+      return {
+        id: invite.id,
+        projectId: invite.projectId,
+        role: 'editor',
+        createdBySubject: invite.createdBySubject,
+        expiresAt: invite.expiresAt.toISOString(),
+        createdAt: invite.createdAt.toISOString(),
+      }
+    })
+  }
+
+  async revokeInvite(actor: ActorContext, projectId: string, inviteId: string): Promise<boolean> {
+    const owner = await isProjectOwner(this.prisma, actor, projectId)
+    if (!owner) {
+      return false
+    }
+
+    const now = new Date()
+
+    const result = await this.prisma.projectInvite.updateMany({
+      where: {
+        id: inviteId,
+        projectId,
+        consumedAt: null,
+        revokedAt: null,
+        expiresAt: {
+          gt: now,
+        },
+      },
+      data: {
+        revokedAt: now,
+      },
+    })
+
+    return result.count > 0
   }
 
   async getInvitePreview(token: string): Promise<InvitePreviewRecord | null> {
@@ -474,10 +647,14 @@ export class ProjectsRepository {
           id: createId(),
           projectId: latestInvite.projectId,
           subject: actorSubject,
+          displayName: actor.displayName ?? null,
+          email: actor.email ?? null,
           role: 'editor',
           addedBySubject: latestInvite.createdBySubject,
         },
         update: {
+          displayName: actor.displayName ?? null,
+          email: actor.email ?? null,
           role: 'editor',
           addedBySubject: latestInvite.createdBySubject,
         },

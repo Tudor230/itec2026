@@ -13,3 +13,7 @@ export const updateProjectSchema = z.object({
 export const createProjectInviteSchema = z.object({
   role: z.literal('editor').default('editor'),
 })
+
+export const revokeProjectInviteSchema = z.object({
+  inviteId: z.string().trim().min(1),
+})

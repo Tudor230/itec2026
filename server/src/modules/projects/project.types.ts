@@ -26,6 +26,13 @@ export interface ProjectInviteRecord {
   createdAt: string
 }
 
+export interface ProjectMemberRecord {
+  subject: string
+  displayName: string | null
+  email: string | null
+  role: string
+}
+
 export interface CreateProjectInviteResult {
   invite: ProjectInviteRecord
   inviteToken: string
@@ -39,4 +46,13 @@ export interface InvitePreviewRecord {
   isExpired: boolean
   isConsumed: boolean
   isRevoked: boolean
+}
+
+export interface ActiveProjectInviteRecord {
+  id: string
+  projectId: string
+  role: 'editor'
+  createdBySubject: string
+  expiresAt: string
+  createdAt: string
 }

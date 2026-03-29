@@ -42,10 +42,15 @@ import {
   deleteFolder,
   listFiles,
   listFolders,
+  listProjectInvites,
+  listProjectMembers,
   listProjects,
   renameFolder,
+  revokeProjectInvite,
   updateFile,
+  type ActiveProjectInviteDto,
   type FileDto,
+  type ProjectMemberDto,
 } from '../services/projects-api'
 import {
   type CollabDocDirtyStatePayload,
@@ -102,6 +107,7 @@ function WorkspaceWithHostedAuth() {
     isLoading,
     loginWithRedirect,
     logout,
+    user,
     error,
   } = useAuth0()
   const queryClient = useQueryClient()
@@ -134,6 +140,7 @@ function WorkspaceWithHostedAuth() {
   const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
   const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
+  const [inviteLinksByInviteId, setInviteLinksByInviteId] = useState<Record<string, string>>({})
   const autosaveTimeoutRef = useRef<number | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
@@ -203,6 +210,34 @@ function WorkspaceWithHostedAuth() {
       }
 
       return listFolders(activeProjectId, token)
+    },
+    enabled: isAuthenticated && activeProjectId !== null,
+  })
+
+  const projectMembersQuery = useQuery({
+    queryKey: ['workspace', 'project-members', isAuthenticated, activeProjectId],
+    queryFn: async () => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId || !token) {
+        return [] as ProjectMemberDto[]
+      }
+
+      return listProjectMembers(activeProjectId, token)
+    },
+    enabled: isAuthenticated && activeProjectId !== null,
+  })
+
+  const activeInvitesQuery = useQuery({
+    queryKey: ['workspace', 'project-invites', isAuthenticated, activeProjectId],
+    queryFn: async () => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId || !token) {
+        return [] as ActiveProjectInviteDto[]
+      }
+
+      return listProjectInvites(activeProjectId, token)
     },
     enabled: isAuthenticated && activeProjectId !== null,
   })
@@ -652,13 +687,97 @@ function WorkspaceWithHostedAuth() {
     return [...new Set([...backendFolders, ...localFolders])]
   }, [activeProjectId, foldersQuery.data, virtualFoldersByProjectId])
 
-  useMutation({
+  const collabMembers = useMemo(() => {
+    const apiMembers = projectMembersQuery.data ?? []
+    const currentSubject = user?.sub ?? null
+    const currentName = user?.name?.trim() || user?.nickname?.trim() || 'You'
+    const currentEmail = user?.email?.trim() || 'Not available'
+
+    const mapped = apiMembers.map((member) => {
+      const isYou = currentSubject !== null && member.subject === currentSubject
+
+      return {
+        id: member.subject,
+        name: isYou
+          ? currentName
+          : (member.displayName?.trim() || member.subject),
+        email: isYou
+          ? currentEmail
+          : (member.email?.trim() || 'Not available'),
+        role: member.role,
+        isYou,
+      }
+    })
+
+    if (currentSubject && !mapped.some((member) => member.id === currentSubject)) {
+      return [
+        {
+          id: currentSubject,
+          name: currentName,
+          email: currentEmail,
+          role: 'owner',
+          isYou: true,
+        },
+        ...mapped,
+      ]
+    }
+
+    return mapped
+  }, [projectMembersQuery.data, user])
+
+  const collaboratorInitials = useMemo(() => {
+    return collabMembers
+      .slice(0, 3)
+      .map((member) => {
+        const words = member.name.split(/\s+/).filter((word) => word.length > 0)
+        if (words.length === 0) {
+          return member.name.slice(0, 2).toUpperCase()
+        }
+
+        if (words.length === 1) {
+          return words[0].slice(0, 2).toUpperCase()
+        }
+
+        return `${words[0][0] ?? ''}${words[1][0] ?? ''}`.toUpperCase()
+      })
+  }, [collabMembers])
+
+  const activeInviteLinks = useMemo(() => {
+    return (activeInvitesQuery.data ?? []).map((invite) => {
+      return {
+        id: invite.id,
+        url: inviteLinksByInviteId[invite.id] ?? `Invite ${invite.id}`,
+        hasLink: Boolean(inviteLinksByInviteId[invite.id]),
+        expiresAt: invite.expiresAt,
+      }
+    })
+  }, [activeInvitesQuery.data, inviteLinksByInviteId])
+
+  useEffect(() => {
+    setInviteLinksByInviteId({})
+  }, [activeProjectId])
+
+  const createInviteMutation = useMutation({
     mutationFn: async (projectId: string) => {
       const token = await getApiAccessToken()
+
+      if (!token) {
+        throw new Error('Authentication token is required to create invites.')
+      }
+
       return createProjectInvite(projectId, token)
     },
     onSuccess: async (invite) => {
       const inviteLink = `${window.location.origin}/invite/${invite.inviteToken}`
+
+      setInviteLinksByInviteId((previous) => {
+        return {
+          ...previous,
+          [invite.id]: inviteLink,
+        }
+      })
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-invites'] })
 
       try {
         await navigator.clipboard.writeText(inviteLink)
@@ -669,6 +788,39 @@ function WorkspaceWithHostedAuth() {
     },
     onError: (error) => {
       toastError(`Could not create invite: ${error.message}`)
+    },
+  })
+
+  const revokeInviteMutation = useMutation({
+    mutationFn: async (inviteId: string) => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId) {
+        throw new Error('Select a project before revoking invites.')
+      }
+
+      if (!token) {
+        throw new Error('Authentication token is required to revoke invites.')
+      }
+
+      return revokeProjectInvite(activeProjectId, { inviteId }, token)
+    },
+    onSuccess: async (_result, inviteId) => {
+      setInviteLinksByInviteId((previous) => {
+        if (!(inviteId in previous)) {
+          return previous
+        }
+
+        const next = { ...previous }
+        delete next[inviteId]
+        return next
+      })
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-invites'] })
+      success('Invite link invalidated')
+    },
+    onError: (error) => {
+      toastError(`Could not invalidate invite: ${error.message}`)
     },
   })
 
@@ -1113,7 +1265,7 @@ function WorkspaceWithHostedAuth() {
             onCloseTab={closeTabById}
             onCloseOthers={closeOthers}
   onCloseAll={closeAll}
-  collaborators={['JD', 'AS']}
+  collaborators={collaboratorInitials}
   onOpenCollaboration={() => setBottomDrawerTab('collab')}
 />
 
@@ -1297,6 +1449,20 @@ function WorkspaceWithHostedAuth() {
           <BottomDrawers
             activeTab={bottomDrawerTab}
             onActiveTabChange={setBottomDrawerTab}
+            collabMembers={collabMembers}
+            activeInviteLinks={activeInviteLinks}
+            isInvitePending={createInviteMutation.isPending}
+            onCreateInviteLink={() => {
+              if (!activeProjectId) {
+                toastError('Select a project before creating invite links.')
+                return
+              }
+
+              void createInviteMutation.mutateAsync(activeProjectId)
+            }}
+            onInvalidateInviteLink={(inviteId) => {
+              void revokeInviteMutation.mutateAsync(inviteId)
+            }}
           />
         </div>
 

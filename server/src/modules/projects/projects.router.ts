@@ -6,6 +6,7 @@ import { requireTokenPresent } from '../auth/require-token-present.middleware.js
 import {
   createProjectInviteSchema,
   createProjectSchema,
+  revokeProjectInviteSchema,
   updateProjectSchema,
 } from './project.schema.js'
 import { ProjectsRepository } from './projects.repository.js'
@@ -141,6 +142,53 @@ export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
 
       throw error
     }
+  }))
+
+  router.get('/:projectId/members', requireTokenPresent, asyncHandler(async (request, response) => {
+    const actor = actorFromRequest(request)
+    const members = await service.listMembers(actor, request.params.projectId)
+
+    response.json({
+      ok: true,
+      data: members,
+    })
+  }))
+
+  router.get('/:projectId/invites', requireTokenPresent, asyncHandler(async (request, response) => {
+    const actor = actorFromRequest(request)
+    const invites = await service.listActiveInvites(actor, request.params.projectId)
+
+    response.json({
+      ok: true,
+      data: invites,
+    })
+  }))
+
+  router.delete('/:projectId/invites', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = revokeProjectInviteSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_INVITE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const revoked = await service.revokeInvite(actor, request.params.projectId, parsed.data.inviteId)
+
+    if (!revoked) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Invite not found', code: 'INVITE_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: { revoked: true },
+    })
   }))
 
   return router
