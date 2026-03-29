@@ -45,6 +45,7 @@ import {
   listProjectInvites,
   listProjectMembers,
   listProjects,
+  removeProjectMember,
   renameFolder,
   revokeProjectInvite,
   updateFile,
@@ -53,11 +54,13 @@ import {
   type ProjectMemberDto,
 } from '../services/projects-api'
 import {
+  type CollabProjectActivityPayload,
   type CollabDocDirtyStatePayload,
   type CollabFileCreatedPayload,
   type CollabFileDeletedPayload,
   type CollabFileUpdatedPayload,
 } from '../lib/collab-client'
+import { getCollaboratorColor } from '../components/workspace/collab-colors'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 import { useRunCurrentFile } from '../hooks/use-run-current-file'
 import { cn } from '../lib/utils'
@@ -141,6 +144,8 @@ function WorkspaceWithHostedAuth() {
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
   const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
   const [inviteLinksByInviteId, setInviteLinksByInviteId] = useState<Record<string, string>>({})
+  const [collabActivityByFileId, setCollabActivityByFileId] = useState<Record<string, string[]>>({})
+  const collabRefreshTimerRef = useRef<number | null>(null)
   const autosaveTimeoutRef = useRef<number | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
@@ -334,6 +339,31 @@ function WorkspaceWithHostedAuth() {
       })
     }
   }, [queryClient])
+
+  const onProjectActivityChanged = useCallback((payload: CollabProjectActivityPayload) => {
+    setCollabActivityByFileId((previous) => {
+      const next = { ...previous }
+
+      Object.keys(next).forEach((fileId) => {
+        const filtered = next[fileId].filter((subject) => subject !== payload.subject)
+        if (filtered.length === 0) {
+          delete next[fileId]
+          return
+        }
+
+        next[fileId] = filtered
+      })
+
+      if (!payload.cleared && payload.fileId) {
+        const existing = next[payload.fileId] ?? []
+        if (!existing.includes(payload.subject)) {
+          next[payload.fileId] = [...existing, payload.subject]
+        }
+      }
+
+      return next
+    })
+  }, [])
 
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
@@ -664,6 +694,7 @@ function WorkspaceWithHostedAuth() {
     onFileUpdated: onCollabFileUpdated,
     onFileDeleted: onCollabFileDeleted,
     onDirtyStateChanged: onCollabDirtyStateChanged,
+    onProjectActivityChanged,
   })
 
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
@@ -742,6 +773,22 @@ function WorkspaceWithHostedAuth() {
       })
   }, [collabMembers])
 
+  const collabActivityOutlineByFileId = useMemo(() => {
+    const entries = Object.entries(collabActivityByFileId)
+    const mapped: Record<string, string> = {}
+
+    entries.forEach(([fileId, subjects]) => {
+      const firstSubject = subjects[0]
+      if (!firstSubject) {
+        return
+      }
+
+      mapped[fileId] = getCollaboratorColor(firstSubject)
+    })
+
+    return mapped
+  }, [collabActivityByFileId])
+
   const activeInviteLinks = useMemo(() => {
     return (activeInvitesQuery.data ?? []).map((invite) => {
       return {
@@ -755,6 +802,10 @@ function WorkspaceWithHostedAuth() {
 
   useEffect(() => {
     setInviteLinksByInviteId({})
+  }, [activeProjectId])
+
+  useEffect(() => {
+    setCollabActivityByFileId({})
   }, [activeProjectId])
 
   const createInviteMutation = useMutation({
@@ -1313,6 +1364,7 @@ function WorkspaceWithHostedAuth() {
                 virtualFolders={virtualFolders}
                 activeFileId={activeFileId}
                 dirtyFileIds={dirtyFileIds}
+                collabActivityOutlineByFileId={collabActivityOutlineByFileId}
                 isLoading={filesQuery.isLoading || projectsQuery.isLoading}
                 errorMessage={
                   projectsQuery.isError

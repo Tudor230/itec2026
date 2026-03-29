@@ -18,7 +18,9 @@ function decodeTokenProfile(token: string): { displayName: string | null; email:
     const payload = decodeJwt(token)
 
     return {
-      displayName: normalizeOptionalString(payload.name),
+      displayName: normalizeOptionalString(payload.name)
+        ?? normalizeOptionalString(payload.nickname)
+        ?? normalizeOptionalString(payload.preferred_username),
       email: normalizeOptionalString(payload.email),
     }
   } catch {

@@ -174,6 +174,18 @@ export function revokeProjectInvite(
   })
 }
 
+export function removeProjectMember(
+  projectId: string,
+  input: { subject: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<{ removed: boolean }>(`/api/projects/${projectId}/members`, {
+    method: 'DELETE',
+    body: input,
+    accessToken,
+  })
+}
+
 export function getInvitePreview(token: string, accessToken?: string | null) {
   return apiRequest<InvitePreviewDto>(`/api/invites/${token}`, {
     accessToken,
