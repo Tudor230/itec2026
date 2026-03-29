@@ -147,6 +147,7 @@ export function createCollabServer(
       if (!actor.subject) {
         return {
           entries: [],
+          rewindEdges: [],
           headSequence: 0,
         }
       }
@@ -155,6 +156,7 @@ export function createCollabServer(
       if (!canAccess) {
         return {
           entries: [],
+          rewindEdges: [],
           headSequence: 0,
         }
       }
@@ -172,12 +174,17 @@ export function createCollabServer(
       if (!file) {
         return {
           entries: [],
+          rewindEdges: [],
           headSequence: 0,
         }
       }
 
-      const [entries, headSequence] = await Promise.all([
+      const [entries, rewindEdges, headSequence] = await Promise.all([
         yjsHistoryRepository.listTimelineEntries(fileId, options),
+        yjsHistoryRepository.listRewindEdges(fileId, {
+          limit: options?.limit,
+          beforeAppliedSequence: options?.beforeSequence,
+        }),
         yjsHistoryRepository.getHeadSequence(fileId),
       ])
 
@@ -186,6 +193,12 @@ export function createCollabServer(
           sequence: entry.sequence,
           kind: entry.kind,
           createdAt: entry.createdAt.toISOString(),
+        })),
+        rewindEdges: rewindEdges.map((edge) => ({
+          appliedSequence: edge.appliedSequence,
+          targetSequence: edge.targetSequence,
+          previousHeadSequence: edge.previousHeadSequence,
+          createdAt: edge.createdAt.toISOString(),
         })),
         headSequence,
       }
@@ -273,6 +286,27 @@ export function createCollabServer(
       }
 
       await yjsHistoryRepository.saveSnapshot(fileId, sequence, update)
+    },
+    async (actor, projectId, fileId, appliedSequence, targetSequence, previousHeadSequence) => {
+      if (!actor.subject) {
+        throw Object.assign(new Error('Authentication is required'), {
+          code: 'AUTH_REQUIRED',
+        })
+      }
+
+      const canAccess = await canEditFile(actor, projectId, fileId)
+      if (!canAccess) {
+        throw Object.assign(new Error('File not found'), {
+          code: 'P2025',
+        })
+      }
+
+      await yjsHistoryRepository.saveRewind(
+        fileId,
+        appliedSequence,
+        targetSequence,
+        previousHeadSequence,
+      )
     },
     async (actor, projectId) => {
       return canEditProject(prisma, actor, projectId)

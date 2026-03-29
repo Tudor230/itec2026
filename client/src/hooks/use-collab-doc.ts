@@ -3,16 +3,18 @@ import { useAuth0 } from '@auth0/auth0-react'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import type { Doc as YDoc } from 'yjs'
 import {
-  CollabClient,
-  type CollabDocRewindResult,
-  type CollabDocSnapshotPreview,
-  type CollabDocTimelineEntry,
-  type CollabDocDirtyStatePayload,
-  type CollabFileCreatedPayload,
-  type CollabFileDeletedPayload,
-  type CollabFileUpdatedPayload,
-  type WatchProjectCallbacks,
+  CollabClient
+  
+  
+  
+  
+  
+  
+  
+  
+  
 } from '../lib/collab-client'
+import type {CollabDocRewindResult, CollabDocRewindEdge, CollabDocSnapshotPreview, CollabDocTimelineEntry, CollabDocDirtyStatePayload, CollabFileCreatedPayload, CollabFileDeletedPayload, CollabFileUpdatedPayload, WatchProjectCallbacks} from '../lib/collab-client';
 import { auth0Config } from '../lib/auth0-config'
 
 interface CollabDocState {
@@ -36,6 +38,7 @@ interface CollabDocModelBinding {
 
 interface CollabDocTimelineState {
   entries: CollabDocTimelineEntry[]
+  rewindEdges: CollabDocRewindEdge[]
   headSequence: number
   isLoading: boolean
   error: string | null
@@ -81,6 +84,7 @@ export function useCollabDoc({
   })
   const [timelineState, setTimelineState] = useState<CollabDocTimelineState>({
     entries: [],
+    rewindEdges: [],
     headSequence: 0,
     isLoading: false,
     error: null,
@@ -115,7 +119,11 @@ export function useCollabDoc({
 
       const module = await import('y-monaco')
       const yText = doc.getText('content')
-      const binding = new module.MonacoBinding(yText, model, new Set([editor])) as MonacoBindingInstance
+      const binding = new module.MonacoBinding(
+        yText,
+        model,
+        new Set([editor]),
+      ) as MonacoBindingInstance
       bindingRef.current = binding
     }
   }, [bindingTargets.editor, bindingTargets.model, destroyBinding])
@@ -181,16 +189,19 @@ export function useCollabDoc({
 
     let cancelled = false
 
-    void collabClient.watchProject(projectId, watchCallbacks).then((destroyWatch) => {
-      if (cancelled) {
-        destroyWatch()
-        return
-      }
+    void collabClient
+      .watchProject(projectId, watchCallbacks)
+      .then((destroyWatch) => {
+        if (cancelled) {
+          destroyWatch()
+          return
+        }
 
-      projectWatchDestroyRef.current = destroyWatch
-    }).catch(() => {
-      projectWatchDestroyRef.current = null
-    })
+        projectWatchDestroyRef.current = destroyWatch
+      })
+      .catch(() => {
+        projectWatchDestroyRef.current = null
+      })
 
     return () => {
       cancelled = true
@@ -203,7 +214,8 @@ export function useCollabDoc({
   }, [collabClient, projectId, watchCallbacks])
 
   useEffect(() => {
-    activeDocKeyRef.current = projectId && fileId ? `${projectId}:${fileId}` : ''
+    activeDocKeyRef.current =
+      projectId && fileId ? `${projectId}:${fileId}` : ''
 
     setBindingTargets({
       editor: null,
@@ -212,6 +224,7 @@ export function useCollabDoc({
 
     setTimelineState({
       entries: [],
+      rewindEdges: [],
       headSequence: 0,
       isLoading: false,
       error: null,
@@ -242,8 +255,15 @@ export function useCollabDoc({
       }))
 
       try {
-        const preview = await collabClient.getSnapshotPreview(projectId, fileId, sequence)
-        if (requestId !== previewRequestIdRef.current || activeDocKeyRef.current !== expectedDocKey) {
+        const preview = await collabClient.getSnapshotPreview(
+          projectId,
+          fileId,
+          sequence,
+        )
+        if (
+          requestId !== previewRequestIdRef.current ||
+          activeDocKeyRef.current !== expectedDocKey
+        ) {
           return preview
         }
 
@@ -263,14 +283,20 @@ export function useCollabDoc({
         })
         return preview
       } catch (error) {
-        if (requestId !== previewRequestIdRef.current || activeDocKeyRef.current !== expectedDocKey) {
+        if (
+          requestId !== previewRequestIdRef.current ||
+          activeDocKeyRef.current !== expectedDocKey
+        ) {
           throw error
         }
 
         setPreviewState((previous) => ({
           ...previous,
           isLoading: false,
-          error: error instanceof Error ? error.message : 'Could not load snapshot preview',
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Could not load snapshot preview',
         }))
         throw error
       }
@@ -330,12 +356,21 @@ export function useCollabDoc({
         setPreviewState((previous) => ({
           ...previous,
           isLoading: false,
-          error: error instanceof Error ? error.message : 'Could not restore latest state',
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Could not restore latest state',
         }))
         throw error
       }
     }
-  }, [bindEditorToLiveDoc, bindingTargets.model, fileId, previewState.isActive, projectId])
+  }, [
+    bindEditorToLiveDoc,
+    bindingTargets.model,
+    fileId,
+    previewState.isActive,
+    projectId,
+  ])
 
   const clearPreviewState = useMemo(() => {
     return () => {
@@ -366,13 +401,19 @@ export function useCollabDoc({
       await bindEditorToLiveDoc()
       clearPreviewState()
     }
-  }, [bindEditorToLiveDoc, bindingTargets.model, clearPreviewState, previewState.isActive])
+  }, [
+    bindEditorToLiveDoc,
+    bindingTargets.model,
+    clearPreviewState,
+    previewState.isActive,
+  ])
 
   const loadTimeline = useMemo(() => {
     return async (options?: { limit?: number; beforeSequence?: number }) => {
       if (!projectId || !fileId) {
         setTimelineState({
           entries: [],
+          rewindEdges: [],
           headSequence: 0,
           isLoading: false,
           error: null,
@@ -391,38 +432,58 @@ export function useCollabDoc({
       const expectedDocKey = `${projectId}:${fileId}`
 
       try {
-        const timeline = await collabClient.getDocumentTimeline(projectId, fileId, options)
-        if (requestId !== timelineRequestIdRef.current || activeDocKeyRef.current !== expectedDocKey) {
+        const timeline = await collabClient.getDocumentTimeline(
+          projectId,
+          fileId,
+          options,
+        )
+        if (
+          requestId !== timelineRequestIdRef.current ||
+          activeDocKeyRef.current !== expectedDocKey
+        ) {
           return
         }
 
         setTimelineState({
           entries: timeline.entries,
+          rewindEdges: timeline.rewindEdges,
           headSequence: timeline.headSequence,
           isLoading: false,
           error: null,
         })
       } catch (error) {
-        if (requestId !== timelineRequestIdRef.current || activeDocKeyRef.current !== expectedDocKey) {
+        if (
+          requestId !== timelineRequestIdRef.current ||
+          activeDocKeyRef.current !== expectedDocKey
+        ) {
           return
         }
 
         setTimelineState((previous) => ({
           ...previous,
           isLoading: false,
-          error: error instanceof Error ? error.message : 'Could not load timeline',
+          error:
+            error instanceof Error ? error.message : 'Could not load timeline',
         }))
       }
     }
   }, [collabClient, fileId, projectId])
 
   const rewindToSequence = useMemo(() => {
-    return async (targetSequence: number, expectedHeadSequence?: number): Promise<CollabDocRewindResult> => {
+    return async (
+      targetSequence: number,
+      expectedHeadSequence?: number,
+    ): Promise<CollabDocRewindResult> => {
       if (!projectId || !fileId) {
         throw new Error('Select a file to rewind')
       }
 
-      const result = await collabClient.rewindDocument(projectId, fileId, targetSequence, expectedHeadSequence)
+      const result = await collabClient.rewindDocument(
+        projectId,
+        fileId,
+        targetSequence,
+        expectedHeadSequence,
+      )
       await loadTimeline()
       return result
     }
@@ -471,11 +532,6 @@ export function useCollabDoc({
         collabDocRef.current = session.doc
 
         await bindEditorToLiveDoc()
-        if (cancelled) {
-          session.destroy()
-          return
-        }
-
         sessionDestroyRef.current = session.destroy
       })
       .catch((error: unknown) => {
@@ -485,7 +541,10 @@ export function useCollabDoc({
 
         setState({
           connectionState: 'error',
-          message: error instanceof Error ? error.message : 'Could not join collaboration session',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Could not join collaboration session',
         })
       })
 
@@ -503,7 +562,15 @@ export function useCollabDoc({
         destroyBinding()
       }
     }
-  }, [bindEditorToLiveDoc, bindingTargets.editor, bindingTargets.model, collabClient, destroyBinding, fileId, projectId])
+  }, [
+    bindEditorToLiveDoc,
+    bindingTargets.editor,
+    bindingTargets.model,
+    collabClient,
+    destroyBinding,
+    fileId,
+    projectId,
+  ])
 
   function onEditorMount(editor: MonacoEditorTypes.IStandaloneCodeEditor) {
     setBindingTargets({

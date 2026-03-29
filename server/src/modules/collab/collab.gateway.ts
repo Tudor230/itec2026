@@ -41,6 +41,12 @@ export type YjsTimelineEntry = {
   kind: 'snapshot' | 'update'
   createdAt: string
 }
+export type YjsRewindEdge = {
+  appliedSequence: number
+  targetSequence: number
+  previousHeadSequence: number
+  createdAt: string
+}
 export type YjsTimelineLoader = (
   actor: ActorContext,
   projectId: string,
@@ -48,6 +54,7 @@ export type YjsTimelineLoader = (
   options?: { limit?: number; beforeSequence?: number },
 ) => Promise<{
   entries: YjsTimelineEntry[]
+  rewindEdges: YjsRewindEdge[]
   headSequence: number
 }>
 export type YjsHistoryAtSequenceLoader = (
@@ -74,6 +81,14 @@ export type YjsSnapshotSaver = (
   fileId: string,
   sequence: number,
   update: Uint8Array,
+) => Promise<void>
+export type YjsRewindRecorder = (
+  actor: ActorContext,
+  projectId: string,
+  fileId: string,
+  appliedSequence: number,
+  targetSequence: number,
+  previousHeadSequence: number,
 ) => Promise<void>
 export type TerminalCommandAuthorizer = (
   actor: ActorContext,
@@ -231,6 +246,7 @@ interface DocTimelinePayload {
   requestId?: string
   headSequence: number
   entries: YjsTimelineEntry[]
+  rewindEdges: YjsRewindEdge[]
 }
 
 interface DocRewindResultPayload {
@@ -362,6 +378,7 @@ export function createCollabGateway(
   hasYjsSnapshotAtSequence: YjsSnapshotSequenceChecker,
   appendYjsUpdate: YjsUpdateAppender,
   saveYjsSnapshot: YjsSnapshotSaver,
+  recordYjsRewind: YjsRewindRecorder,
   canUseTerminal: TerminalCommandAuthorizer,
   terminalSessionManager: TerminalSessionManager,
 ) {
@@ -910,6 +927,7 @@ export function createCollabGateway(
             requestId: parsedTimeline.data.requestId,
             headSequence: timeline.headSequence,
             entries: timeline.entries,
+            rewindEdges: timeline.rewindEdges,
           } satisfies DocTimelinePayload)
         })().catch(() => {
           socket.emit('collab:error', {
@@ -1067,6 +1085,71 @@ export function createCollabGateway(
             return
           }
 
+          if (parsedRewind.data.expectedHeadSequence !== session.lastSequence) {
+            socket.emit('collab:error', {
+              message: 'Document has changed, refresh timeline and retry',
+              projectId: parsedRewind.data.projectId,
+              fileId: parsedRewind.data.fileId,
+              requestId: parsedRewind.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
+          const previousHeadSequence = session.lastSequence
+          const hasSnapshotAtPreviousHead = previousHeadSequence > 0
+            ? await hasYjsSnapshotAtSequence(
+              actor,
+              parsedRewind.data.projectId,
+              parsedRewind.data.fileId,
+              previousHeadSequence,
+            )
+            : true
+
+          if (!hasSnapshotAtPreviousHead) {
+            const historyAtHead = await loadYjsHistoryAtSequence(
+              actor,
+              parsedRewind.data.projectId,
+              parsedRewind.data.fileId,
+              previousHeadSequence,
+            )
+
+            if (!historyAtHead) {
+              socket.emit('collab:error', {
+                message: 'Current head state not found',
+                projectId: parsedRewind.data.projectId,
+                fileId: parsedRewind.data.fileId,
+                requestId: parsedRewind.data.requestId,
+              } satisfies ErrorEvent)
+              return
+            }
+
+            const headDoc = new Y.Doc()
+            if (historyAtHead.snapshot) {
+              Y.applyUpdate(headDoc, historyAtHead.snapshot)
+            }
+            historyAtHead.updates.forEach((update) => {
+              Y.applyUpdate(headDoc, update)
+            })
+
+            await saveYjsSnapshot(
+              actor,
+              parsedRewind.data.projectId,
+              parsedRewind.data.fileId,
+              previousHeadSequence,
+              Y.encodeStateAsUpdate(headDoc),
+            )
+          }
+
+          if (parsedRewind.data.expectedHeadSequence !== session.lastSequence) {
+            socket.emit('collab:error', {
+              message: 'Document has changed, refresh timeline and retry',
+              projectId: parsedRewind.data.projectId,
+              fileId: parsedRewind.data.fileId,
+              requestId: parsedRewind.data.requestId,
+            } satisfies ErrorEvent)
+            return
+          }
+
           const targetDoc = new Y.Doc()
           if (historyAtTarget.snapshot) {
             Y.applyUpdate(targetDoc, historyAtTarget.snapshot)
@@ -1077,8 +1160,6 @@ export function createCollabGateway(
 
           const targetText = targetDoc.getText('content').toString()
           const liveText = session.doc.getText('content')
-          const previousHeadSequence = session.lastSequence
-
           let rewindUpdate: Uint8Array | null = null
           const captureUpdate = (update: Uint8Array, origin: unknown) => {
             if (origin === 'rewind') {
@@ -1116,6 +1197,14 @@ export function createCollabGateway(
             parsedRewind.data.projectId,
             parsedRewind.data.fileId,
             rewindUpdate,
+          )
+          await recordYjsRewind(
+            actor,
+            parsedRewind.data.projectId,
+            parsedRewind.data.fileId,
+            persisted.sequence,
+            parsedRewind.data.targetSequence,
+            previousHeadSequence,
           )
           session.lastSequence = persisted.sequence
           session.updatesSinceSnapshot += 1

@@ -13,6 +13,13 @@ export interface YjsTimelineEntry {
   createdAt: Date
 }
 
+export interface YjsRewindEdge {
+  appliedSequence: number
+  targetSequence: number
+  previousHeadSequence: number
+  createdAt: Date
+}
+
 function encodeBytes(value: Uint8Array) {
   return Buffer.from(value).toString('base64')
 }
@@ -85,6 +92,33 @@ export class YjsHistoryRepository {
     })
 
     return entries.slice(0, limit)
+  }
+
+  async listRewindEdges(fileId: string, options?: { limit?: number; beforeAppliedSequence?: number }) {
+    const limit = Math.max(1, Math.min(options?.limit ?? 100, 300))
+    const beforeAppliedSequence = options?.beforeAppliedSequence
+
+    const rows = await this.prisma.yjsRewind.findMany({
+      where: {
+        fileId,
+        appliedSequence: beforeAppliedSequence ? { lte: beforeAppliedSequence } : undefined,
+      },
+      orderBy: [{ appliedSequence: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+      select: {
+        appliedSequence: true,
+        targetSequence: true,
+        previousHeadSequence: true,
+        createdAt: true,
+      },
+    })
+
+    return rows.map((row) => ({
+      appliedSequence: row.appliedSequence,
+      targetSequence: row.targetSequence,
+      previousHeadSequence: row.previousHeadSequence,
+      createdAt: row.createdAt,
+    }) satisfies YjsRewindEdge)
   }
 
   async getHydratedStateAtSequence(fileId: string, sequence: number): Promise<YjsHydratedState | null> {
@@ -325,6 +359,23 @@ export class YjsHistoryRepository {
         fileId,
         sequence,
         updateBase64: encodeBytes(update),
+      },
+    })
+  }
+
+  async saveRewind(
+    fileId: string,
+    appliedSequence: number,
+    targetSequence: number,
+    previousHeadSequence: number,
+  ) {
+    await this.prisma.yjsRewind.create({
+      data: {
+        id: createId(),
+        fileId,
+        appliedSequence,
+        targetSequence,
+        previousHeadSequence,
       },
     })
   }

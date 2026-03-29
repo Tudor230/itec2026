@@ -1,20 +1,20 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  History,
-  Play,
-  Settings,
-  Users,
-  RotateCcw,
-  RefreshCw,
   AlertTriangle,
-  X,
+  Clock3,
+  History,
   Maximize2,
   Minimize2,
-  Clock3,
-  Sparkles,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Settings,
   ShieldCheck,
-  type LucideIcon,
+  Sparkles,
+  Users,
+  X,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { workspaceHudChipClass } from './ui-classes'
 
@@ -26,11 +26,19 @@ export interface TimelineEntry {
   createdAt: string
 }
 
+export interface TimelineRewindEdge {
+  appliedSequence: number
+  targetSequence: number
+  previousHeadSequence: number
+  createdAt: string
+}
+
 interface BottomDrawersProps {
   activeTab?: DrawerTab | null
   onActiveTabChange?: (tab: DrawerTab | null) => void
   onClose?: () => void
   timelineEntries?: TimelineEntry[]
+  timelineRewindEdges?: TimelineRewindEdge[]
   timelineHeadSequence?: number
   timelineIsLoading?: boolean
   timelineError?: string | null
@@ -73,11 +81,36 @@ function formatRelativeTime(value: string) {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
 }
 
-const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: LucideIcon }[] = [
-  { id: 'timeline', label: 'Timeline', subtitle: 'recent changes', icon: History },
-  { id: 'run', label: 'Run & Debug', subtitle: 'sandbox execution', icon: Play },
-  { id: 'env', label: 'Environment', subtitle: 'runtime variables', icon: Settings },
-  { id: 'collab', label: 'Collaboration', subtitle: 'team presence', icon: Users },
+const DRAWER_ITEMS: {
+  id: DrawerTab
+  label: string
+  subtitle: string
+  icon: LucideIcon
+}[] = [
+  {
+    id: 'timeline',
+    label: 'Timeline',
+    subtitle: 'recent changes',
+    icon: History,
+  },
+  {
+    id: 'run',
+    label: 'Run & Debug',
+    subtitle: 'sandbox execution',
+    icon: Play,
+  },
+  {
+    id: 'env',
+    label: 'Environment',
+    subtitle: 'runtime variables',
+    icon: Settings,
+  },
+  {
+    id: 'collab',
+    label: 'Collaboration',
+    subtitle: 'team presence',
+    icon: Users,
+  },
 ]
 
 export default function BottomDrawers({
@@ -85,6 +118,7 @@ export default function BottomDrawers({
   onActiveTabChange,
   onClose,
   timelineEntries = [],
+  timelineRewindEdges = [],
   timelineHeadSequence = 0,
   timelineIsLoading = false,
   timelineError = null,
@@ -97,23 +131,143 @@ export default function BottomDrawers({
   onTimelineRewind,
   onTimelineReturnToLatest,
 }: BottomDrawersProps) {
-  const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<DrawerTab | null>(null)
+  const [uncontrolledActiveTab, setUncontrolledActiveTab] =
+    useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
   const isDragging = useRef(false)
   const [isResizing, setIsResizing] = useState(false)
-  const [rewindConfirmSequence, setRewindConfirmSequence] = useState<number | null>(null)
-  const [replayTargetSequence, setReplayTargetSequence] = useState<number | null>(null)
+  const [rewindConfirmSequence, setRewindConfirmSequence] = useState<
+    number | null
+  >(null)
+  const [replayTargetSequence, setReplayTargetSequence] = useState<
+    number | null
+  >(null)
   const isControlled = controlledActiveTab !== undefined
   const activeTab = isControlled ? controlledActiveTab : uncontrolledActiveTab
   const isOpen = activeTab !== null
   const snapshotEntries = timelineEntries
     .filter((entry) => entry.kind === 'snapshot')
     .sort((left, right) => left.sequence - right.sequence)
-  const latestSnapshot = snapshotEntries.length > 0
-    ? snapshotEntries[snapshotEntries.length - 1]
-    : null
-  const selectedSnapshotSequence = replayTargetSequence ?? latestSnapshot?.sequence ?? null
+  const latestSnapshot =
+    snapshotEntries.length > 0
+      ? snapshotEntries[snapshotEntries.length - 1]
+      : null
+  const selectedSnapshotSequence =
+    replayTargetSequence ?? latestSnapshot?.sequence ?? null
+  const orderedRewindEdges = [...timelineRewindEdges].sort(
+    (left, right) => left.appliedSequence - right.appliedSequence,
+  )
+  const nodeLevels = (() => {
+    const levels = new Map<number, number>()
+    if (snapshotEntries.length === 0) {
+      return levels
+    }
+
+    let currentLevel = 0
+    let rewindIndex = 0
+    for (const entry of snapshotEntries) {
+      const sequence = entry.sequence
+
+      while (
+        rewindIndex < orderedRewindEdges.length &&
+        orderedRewindEdges[rewindIndex].appliedSequence <= sequence
+      ) {
+        const rewindEdge = orderedRewindEdges[rewindIndex]
+        const targetLevel = levels.get(rewindEdge.targetSequence) ?? 0
+        currentLevel = targetLevel + 1
+        rewindIndex += 1
+      }
+
+      levels.set(sequence, currentLevel)
+    }
+
+    return levels
+  })()
+  const graphNodes = snapshotEntries.map((entry, index) => {
+    return {
+      ...entry,
+      index,
+      level: nodeLevels.get(entry.sequence) ?? 0,
+    }
+  })
+  const nodeBySequence = new Map(
+    graphNodes.map((node) => [node.sequence, node] as const),
+  )
+  const maxTreeLevel = Array.from(nodeLevels.values()).reduce((max, level) => {
+    return level > max ? level : max
+  }, 0)
+  const laneCount = maxTreeLevel + 1
+  const laneLabelWidth = 68
+  const laneGap = 34
+  const nodeGap = 52
+  const graphPaddingX = 16
+  const graphPaddingY = 16
+  const graphHeight =
+    graphPaddingY * 2 + Math.max(0, (laneCount - 1) * laneGap)
+  const graphCanvasHeight = graphHeight + 18
+  const graphWidth =
+    laneLabelWidth +
+    graphPaddingX * 2 +
+    Math.max(0, (graphNodes.length - 1) * nodeGap)
+  const toGraphXPercent = (x: number) => (x / graphWidth) * 100
+  const graphXForNode = (index: number) =>
+    laneLabelWidth + graphPaddingX + index * nodeGap
+  const graphYForLevel = (level: number) => graphPaddingY + level * laneGap
+  const laneSegments = (() => {
+    const segments: Array<{ fromX: number; toX: number; y: number }> = []
+    for (let level = 0; level <= maxTreeLevel; level += 1) {
+      const row = graphNodes
+        .filter((node) => node.level === level)
+        .sort((left, right) => left.sequence - right.sequence)
+      for (let index = 1; index < row.length; index += 1) {
+        segments.push({
+          fromX: graphXForNode(row[index - 1].index),
+          toX: graphXForNode(row[index].index),
+          y: graphYForLevel(level),
+        })
+      }
+    }
+    return segments
+  })()
+  const forkSegments = (() => {
+    const segments: Array<{
+      fromX: number
+      fromY: number
+      toX: number
+      toY: number
+      toSequence: number
+    }> = []
+    const usedChild = new Set<number>()
+    for (const edge of orderedRewindEdges) {
+      const parent = nodeBySequence.get(edge.targetSequence)
+      if (!parent) {
+        continue
+      }
+
+      const child = graphNodes.find((node) => {
+        return (
+          node.sequence > edge.appliedSequence &&
+          node.level === parent.level + 1 &&
+          !usedChild.has(node.sequence)
+        )
+      })
+
+      if (!child) {
+        continue
+      }
+
+      usedChild.add(child.sequence)
+      segments.push({
+        fromX: graphXForNode(parent.index),
+        fromY: graphYForLevel(parent.level),
+        toX: graphXForNode(child.index),
+        toY: graphYForLevel(child.level),
+        toSequence: child.sequence,
+      })
+    }
+    return segments
+  })()
 
   const setActiveTab = (next: DrawerTab | null) => {
     if (!isControlled) {
@@ -178,11 +332,16 @@ export default function BottomDrawers({
       return
     }
 
-    if (replayTargetSequence !== null && snapshotEntries.some((entry) => entry.sequence === replayTargetSequence)) {
+    if (
+      replayTargetSequence !== null &&
+      snapshotEntries.some((entry) => entry.sequence === replayTargetSequence)
+    ) {
       return
     }
 
-    setReplayTargetSequence(snapshotEntries[snapshotEntries.length - 1].sequence)
+    setReplayTargetSequence(
+      snapshotEntries[snapshotEntries.length - 1].sequence,
+    )
   }, [replayTargetSequence, snapshotEntries])
 
   return (
@@ -201,7 +360,7 @@ export default function BottomDrawers({
                 'group relative flex h-8 items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[11px] transition-colors',
                 isActive
                   ? 'z-30 -mb-px h-9 border-[color-mix(in_oklab,var(--chip-line)_70%,var(--line))] bg-[color-mix(in_oklab,var(--surface-strong)_94%,var(--bg-base)_6%)] text-[var(--sea-ink)] shadow-[0_-5px_14px_rgba(8,22,28,0.15)]'
-                  : 'z-10 border-[color-mix(in_oklab,var(--line)_72%,transparent)] bg-[color-mix(in_oklab,var(--surface-strong)_90%,var(--bg-base)_10%)] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]'
+                  : 'z-10 border-[color-mix(in_oklab,var(--line)_72%,transparent)] bg-[color-mix(in_oklab,var(--surface-strong)_90%,var(--bg-base)_10%)] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]',
               )}
             >
               {isActive ? (
@@ -218,7 +377,7 @@ export default function BottomDrawers({
                   'grid h-4 w-4 shrink-0 place-items-center rounded-sm',
                   isActive
                     ? 'text-[var(--lagoon-deep)]'
-                    : 'text-[var(--sea-ink-soft)]'
+                    : 'text-[var(--sea-ink-soft)]',
                 )}
               >
                 <Icon size={12} />
@@ -242,7 +401,9 @@ export default function BottomDrawers({
         }}
         className={cn(
           'relative z-0 mx-0 mb-0 flex flex-col overflow-hidden rounded-t-xl rounded-b-none border-x border-t border-b-0 border-[var(--line)] bg-[color-mix(in_oklab,var(--surface)_88%,var(--bg-base))] pointer-events-auto backdrop-blur-md',
-          isResizing ? 'transition-none' : 'transition-all duration-[220ms] ease-out'
+          isResizing
+            ? 'transition-none'
+            : 'transition-all duration-[220ms] ease-out',
         )}
       >
         <div
@@ -260,7 +421,11 @@ export default function BottomDrawers({
         <div className="relative z-10 flex items-center justify-between border-b border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.22)] px-4 py-2">
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.62)] text-[var(--lagoon-deep)]">
-              {activeItem ? <activeItem.icon size={15} /> : <Sparkles size={15} />}
+              {activeItem ? (
+                <activeItem.icon size={15} />
+              ) : (
+                <Sparkles size={15} />
+              )}
             </div>
 
             <div className="min-w-0">
@@ -311,7 +476,10 @@ export default function BottomDrawers({
                   className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.45)] px-2 py-1 text-[11px] font-semibold text-[var(--sea-ink)] transition-colors hover:bg-[rgba(var(--chip-bg-rgb),0.68)]"
                   disabled={timelineIsLoading}
                 >
-                  <RefreshCw size={12} className={timelineIsLoading ? 'animate-spin' : ''} />
+                  <RefreshCw
+                    size={12}
+                    className={timelineIsLoading ? 'animate-spin' : ''}
+                  />
                   refresh
                 </button>
 
@@ -342,44 +510,119 @@ export default function BottomDrawers({
 
               {snapshotEntries.length === 0 && !timelineIsLoading ? (
                 <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
-                  No snapshots yet for this file. Save changes to create replay markers.
+                  No snapshots yet for this file. Save changes to create replay
+                  markers.
                 </div>
               ) : null}
 
               {snapshotEntries.length > 0 ? (
                 <div className="space-y-3 rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.32)] p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="m-0 text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--kicker)]">Replay Bar</p>
-                    <span className="text-[11px] text-[var(--sea-ink-soft)]">{snapshotEntries.length} snapshots</span>
+                    <p className="m-0 text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--kicker)]">
+                      Replay Bar
+                    </p>
+                    <span className="text-[11px] text-[var(--sea-ink-soft)]">
+                      {snapshotEntries.length} snapshots
+                    </span>
                   </div>
 
-                  <div className="relative px-2 py-3">
-                    <div className="absolute left-2 right-2 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-[rgba(99,122,138,0.3)]" />
+                  <div className="pb-1">
+                    <div
+                      className="relative"
+                      style={{ width: '100%', height: `${graphCanvasHeight}px` }}
+                    >
+                      <svg
+                        width="100%"
+                        height={graphHeight}
+                        viewBox={`0 0 ${graphWidth} ${graphHeight}`}
+                        preserveAspectRatio="none"
+                        className="absolute inset-0"
+                        aria-hidden
+                      >
+                        {Array.from({ length: laneCount }, (_, level) => {
+                          const y = graphYForLevel(level)
+                          return (
+                            <g key={`lane-${level}`}>
+                              <text
+                                x={4}
+                                y={y + 3}
+                                className="fill-[var(--sea-ink-soft)] text-[10px] font-semibold uppercase tracking-[0.08em]"
+                              >
+                                {level === 0 ? 'main' : `branch ${level}`}
+                              </text>
+                            </g>
+                          )
+                        })}
 
-                    <div className="relative flex items-center justify-between gap-2">
-                      {snapshotEntries.map((entry) => {
+                        {laneSegments.map((segment) => (
+                          <line
+                            key={`lane-segment-${segment.y}-${segment.fromX}-${segment.toX}`}
+                            x1={segment.fromX}
+                            y1={segment.y}
+                            x2={segment.toX}
+                            y2={segment.y}
+                            stroke="rgba(99,122,138,0.5)"
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                          />
+                        ))}
+
+                        {forkSegments.map((segment) => {
+                          const controlDx = Math.max(20, (segment.toX - segment.fromX) * 0.45)
+                          const path = `M ${segment.fromX} ${segment.fromY} C ${segment.fromX + controlDx} ${segment.fromY} ${segment.toX - controlDx} ${segment.toY} ${segment.toX} ${segment.toY}`
+                          return (
+                            <path
+                              key={`fork-${segment.toSequence}`}
+                              d={path}
+                              fill="none"
+                              stroke="rgba(var(--lagoon-rgb),0.65)"
+                              strokeWidth={2.2}
+                              strokeLinecap="round"
+                            />
+                          )
+                        })}
+                      </svg>
+
+                      {graphNodes.map((entry) => {
                         const isSelected = entry.sequence === selectedSnapshotSequence
-                        const isHead = entry.sequence === timelineHeadSequence
+                        const x = graphXForNode(entry.index)
+                        const y = graphYForLevel(entry.level)
 
                         return (
                           <button
-                            key={`snapshot-${entry.sequence}`}
+                            key={`snapshot-node-${entry.sequence}`}
                             type="button"
                             onClick={() => {
                               setReplayTargetSequence(entry.sequence)
                               onTimelinePreview?.(entry.sequence)
                             }}
                             className={cn(
-                              'relative z-10 h-4 w-4 rounded-full border transition-all',
+                              'absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border transition-all',
                               isSelected
                                 ? 'scale-110 border-[var(--lagoon-deep)] bg-[var(--lagoon)] shadow-[0_0_0_4px_rgba(var(--lagoon-rgb),0.2)]'
                                 : 'border-[var(--line)] bg-[color-mix(in_oklab,var(--surface-strong)_88%,var(--bg-base)_12%)] hover:border-[var(--lagoon)]',
-                              timelineRewindPending || timelinePreviewPending ? 'pointer-events-none opacity-60' : ''
+                              timelineRewindPending || timelinePreviewPending
+                                ? 'pointer-events-none opacity-60'
+                                : '',
                             )}
+                            style={{ left: `${toGraphXPercent(x)}%`, top: `${y}px` }}
                             aria-label={`Select snapshot ${entry.sequence}`}
                             title={`Snapshot #${entry.sequence} - ${new Date(entry.createdAt).toLocaleString()}`}
+                          />
+                        )
+                      })}
+
+                      {graphNodes.map((entry) => {
+                        const x = graphXForNode(entry.index)
+                        const y = graphYForLevel(entry.level)
+                        return (
+                          <span
+                            key={`snapshot-label-${entry.sequence}`}
+                            className="pointer-events-none absolute z-10 -translate-x-1/2 text-[10px] font-semibold text-[var(--sea-ink-soft)]"
+                            style={{ left: `${toGraphXPercent(x)}%`, top: `${y + 10}px` }}
                           >
-                          </button>
+                            #{entry.sequence}
+                          </span>
                         )
                       })}
                     </div>
@@ -388,12 +631,18 @@ export default function BottomDrawers({
                   {selectedSnapshotSequence !== null ? (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.45)] px-3 py-2">
                       <div className="text-xs text-[var(--sea-ink)]">
-                        <span className="font-semibold">Target:</span> snapshot #{selectedSnapshotSequence}
-                        {timelinePreviewSequence === selectedSnapshotSequence ? ' (previewing)' : ''}
+                        <span className="font-semibold">Target:</span> snapshot
+                        #{selectedSnapshotSequence}
+                        {timelinePreviewSequence === selectedSnapshotSequence
+                          ? ' (previewing)'
+                          : ''}
                       </div>
                       <div className="text-[11px] text-[var(--sea-ink-soft)]">
                         {formatRelativeTime(
-                          snapshotEntries.find((entry) => entry.sequence === selectedSnapshotSequence)?.createdAt ?? new Date().toISOString()
+                          snapshotEntries.find(
+                            (entry) =>
+                              entry.sequence === selectedSnapshotSequence,
+                          )?.createdAt ?? new Date().toISOString(),
                         )}
                       </div>
                     </div>
@@ -409,10 +658,10 @@ export default function BottomDrawers({
                       }}
                       className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.4)] px-2 py-1 text-[11px] font-semibold text-[var(--sea-ink)] transition-colors hover:bg-[rgba(var(--chip-bg-rgb),0.65)] disabled:opacity-45"
                       disabled={
-                        timelineRewindPending
-                        || timelinePreviewPending
-                        || selectedSnapshotSequence === null
-                        || selectedSnapshotSequence === timelineHeadSequence
+                        timelineRewindPending ||
+                        timelinePreviewPending ||
+                        selectedSnapshotSequence === null ||
+                        selectedSnapshotSequence === timelineHeadSequence
                       }
                     >
                       <RotateCcw size={12} /> rewind to selected snapshot
@@ -430,19 +679,31 @@ export default function BottomDrawers({
                   <Play size={20} />
                 </div>
                 <div>
-                  <p className="font-bold text-[var(--sea-ink)]">Ready to Run</p>
-                  <p className="text-xs text-[var(--sea-ink-soft)]">Click run to execute your project in the Docker sandbox.</p>
+                  <p className="font-bold text-[var(--sea-ink)]">
+                    Ready to Run
+                  </p>
+                  <p className="text-xs text-[var(--sea-ink-soft)]">
+                    Click run to execute your project in the Docker sandbox.
+                  </p>
                 </div>
               </div>
 
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Default target</p>
-                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">Docker sandbox</p>
+                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    Default target
+                  </p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">
+                    Docker sandbox
+                  </p>
                 </div>
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Permission</p>
-                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">Read + execute</p>
+                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    Permission
+                  </p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">
+                    Read + execute
+                  </p>
                 </div>
               </div>
             </div>
@@ -450,7 +711,9 @@ export default function BottomDrawers({
 
           {activeTab === 'env' && (
             <div className="space-y-4">
-              <h3 className="text-sm font-bold text-[var(--sea-ink)]">Environment Variables</h3>
+              <h3 className="text-sm font-bold text-[var(--sea-ink)]">
+                Environment Variables
+              </h3>
               <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-3 text-[11px] text-[var(--sea-ink-soft)]">
                 Keys are scoped to this workspace session.
               </div>
@@ -478,12 +741,21 @@ export default function BottomDrawers({
           {activeTab === 'collab' && (
             <div className="space-y-4">
               <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-6 text-center">
-                <p className="text-sm font-medium text-[var(--sea-ink)]">Active Collaborators</p>
+                <p className="text-sm font-medium text-[var(--sea-ink)]">
+                  Active Collaborators
+                </p>
                 <div className="mt-4 flex justify-center -space-x-2">
-                  <div className="w-10 h-10 rounded-full border-2 border-white bg-blue-500 flex items-center justify-center text-white text-xs font-bold">JD</div>
-                  <div className="w-10 h-10 rounded-full border-2 border-white bg-teal-500 flex items-center justify-center text-white text-xs font-bold">AS</div>
+                  <div className="w-10 h-10 rounded-full border-2 border-white bg-blue-500 flex items-center justify-center text-white text-xs font-bold">
+                    JD
+                  </div>
+                  <div className="w-10 h-10 rounded-full border-2 border-white bg-teal-500 flex items-center justify-center text-white text-xs font-bold">
+                    AS
+                  </div>
                 </div>
-                <button type="button" className="mt-6 text-xs font-bold text-[var(--lagoon)] hover:underline">
+                <button
+                  type="button"
+                  className="mt-6 text-xs font-bold text-[var(--lagoon)] hover:underline"
+                >
                   Invite more people
                 </button>
               </div>
@@ -500,9 +772,12 @@ export default function BottomDrawers({
       {rewindConfirmSequence !== null ? (
         <div className="pointer-events-auto absolute inset-0 z-[60] grid place-items-center bg-[rgba(5,14,18,0.45)] p-4">
           <div className="w-full max-w-md rounded-xl border border-[var(--line)] bg-[color-mix(in_oklab,var(--surface-strong)_96%,var(--bg-base)_4%)] p-4 shadow-[0_20px_40px_rgba(7,20,26,0.26)]">
-            <p className="m-0 text-sm font-bold text-[var(--sea-ink)]">Confirm rewind</p>
+            <p className="m-0 text-sm font-bold text-[var(--sea-ink)]">
+              Confirm rewind
+            </p>
             <p className="m-0 mt-2 text-xs text-[var(--sea-ink-soft)]">
-              Rewind this file to sequence #{rewindConfirmSequence}. This is non-destructive and will append a new update.
+              Rewind this file to sequence #{rewindConfirmSequence}. This is
+              non-destructive and will append a new update.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -516,13 +791,13 @@ export default function BottomDrawers({
               <button
                 type="button"
                 onClick={() => {
-                  if (rewindConfirmSequence !== null) {
-                    const selected = snapshotEntries.find((entry) => entry.sequence === rewindConfirmSequence)
-                    if (!selected) {
-                      return
-                    }
-                    onTimelineRewind?.(rewindConfirmSequence)
+                  const selected = snapshotEntries.find(
+                    (entry) => entry.sequence === rewindConfirmSequence,
+                  )
+                  if (!selected) {
+                    return
                   }
+                  onTimelineRewind?.(rewindConfirmSequence)
                   setRewindConfirmSequence(null)
                 }}
                 className="rounded-md bg-[var(--lagoon)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
