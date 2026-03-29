@@ -1,8 +1,11 @@
 import type { ActorContext } from '../auth/actor-context.js'
 import type {
+  ActiveProjectInviteRecord,
   CreateProjectInviteResult,
   InvitePreviewRecord,
+  ProjectMemberRecord,
   ProjectInput,
+  ProjectMemberProfileInput,
   ProjectRecord,
   ProjectUpdateInput,
 } from './project.types.js'
@@ -33,6 +36,26 @@ export class ProjectsService {
 
   createInvite(actor: ActorContext, projectId: string): Promise<CreateProjectInviteResult> {
     return this.repository.createInvite(actor, projectId)
+  }
+
+  listMembers(actor: ActorContext, projectId: string): Promise<ProjectMemberRecord[]> {
+    return this.repository.listMembers(actor, projectId)
+  }
+
+  updateMemberProfile(
+    actor: ActorContext,
+    projectId: string,
+    input: ProjectMemberProfileInput,
+  ): Promise<boolean> {
+    return this.repository.updateMemberProfile(actor, projectId, input)
+  }
+
+  listActiveInvites(actor: ActorContext, projectId: string): Promise<ActiveProjectInviteRecord[]> {
+    return this.repository.listActiveInvites(actor, projectId)
+  }
+
+  revokeInvite(actor: ActorContext, projectId: string, inviteId: string): Promise<boolean> {
+    return this.repository.revokeInvite(actor, projectId, inviteId)
   }
 
   getInvitePreview(token: string): Promise<InvitePreviewRecord | null> {

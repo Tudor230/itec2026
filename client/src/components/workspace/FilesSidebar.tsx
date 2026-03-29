@@ -12,6 +12,7 @@ interface FilesSidebarProps {
   virtualFolders?: string[]
   activeFileId: string | null
   dirtyFileIds?: string[]
+  collabActivityOutlineByFileId?: Record<string, string>
   isLoading: boolean
   errorMessage: string | null
   onOpenFile: (fileId: string) => void
@@ -127,6 +128,7 @@ function NodeRow({
   depth,
   activeFileId,
   dirtyFileIds,
+  collabActivityOutlineByFileId,
   pendingCreatePath,
   pendingCreateType,
   selectedFolderPath,
@@ -149,6 +151,7 @@ function NodeRow({
   depth: number
   activeFileId: string | null
   dirtyFileIds: Set<string>
+  collabActivityOutlineByFileId: Record<string, string>
   pendingCreatePath: string | null
   pendingCreateType: 'file' | 'folder' | null
   selectedFolderPath: string | null
@@ -177,6 +180,7 @@ function NodeRow({
   const isActive = isFile && node.fileId === activeFileId
   const isSelectedFolder = !isFile && selectedFolderPath === node.path
   const isDirty = isFile && !!node.fileId && dirtyFileIds.has(node.fileId)
+  const collabOutlineColor = isFile && node.fileId ? collabActivityOutlineByFileId[node.fileId] : undefined
   const pendingParentPath = pendingCreatePath
     ? pendingCreatePath
         .split('/')
@@ -337,7 +341,12 @@ function NodeRow({
               ? 'bg-[rgba(var(--lagoon-rgb),0.16)] text-[var(--sea-ink)]'
             : 'text-[var(--sea-ink-soft)] hover:bg-[color-mix(in_oklab,var(--chip-bg)_66%,rgba(var(--lagoon-rgb),0.16)_34%)] hover:text-[var(--sea-ink)]'
         )}
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        style={{
+          paddingLeft: `${depth * 12 + 8}px`,
+          boxShadow: collabOutlineColor
+            ? `inset 0 0 0 1px color-mix(in oklab, ${collabOutlineColor} 70%, white 30%)`
+            : undefined,
+        }}
       >
         {isActive ? (
           <span
@@ -429,6 +438,7 @@ function NodeRow({
               depth={depth + 1}
               activeFileId={activeFileId}
               dirtyFileIds={dirtyFileIds}
+              collabActivityOutlineByFileId={collabActivityOutlineByFileId}
               pendingCreatePath={pendingCreatePath}
               pendingCreateType={pendingCreateType}
               selectedFolderPath={selectedFolderPath}
@@ -555,6 +565,7 @@ export default function FilesSidebar({
   virtualFolders,
   activeFileId,
   dirtyFileIds,
+  collabActivityOutlineByFileId,
   isLoading,
   errorMessage,
   onOpenFile,
@@ -826,6 +837,7 @@ export default function FilesSidebar({
                 depth={0}
                 activeFileId={activeFileId}
                 dirtyFileIds={dirtyIds}
+                collabActivityOutlineByFileId={collabActivityOutlineByFileId ?? {}}
                 pendingCreatePath={pendingCreatePath}
                 pendingCreateType={pendingCreateType}
                 selectedFolderPath={selectedFolderPath}
