@@ -17,3 +17,8 @@ export const createProjectInviteSchema = z.object({
 export const revokeProjectInviteSchema = z.object({
   inviteId: z.string().trim().min(1),
 })
+
+export const updateProjectMemberProfileSchema = z.object({
+  displayName: z.string().trim().min(1).max(120),
+  email: z.string().trim().email().max(320).optional(),
+})

@@ -7,6 +7,7 @@ import {
   createProjectInviteSchema,
   createProjectSchema,
   revokeProjectInviteSchema,
+  updateProjectMemberProfileSchema,
   updateProjectSchema,
 } from './project.schema.js'
 import { ProjectsRepository } from './projects.repository.js'
@@ -151,6 +152,33 @@ export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
     response.json({
       ok: true,
       data: members,
+    })
+  }))
+
+  router.patch('/:projectId/members/me', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = updateProjectMemberProfileSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_MEMBER_PROFILE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+    const updated = await service.updateMemberProfile(actor, request.params.projectId, parsed.data)
+
+    if (!updated) {
+      response.status(404).json({
+        ok: false,
+        error: { message: 'Project not found', code: 'PROJECT_NOT_FOUND' },
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      data: { updated: true },
     })
   }))
 

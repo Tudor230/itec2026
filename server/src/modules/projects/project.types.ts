@@ -56,3 +56,8 @@ export interface ActiveProjectInviteRecord {
   expiresAt: string
   createdAt: string
 }
+
+export interface ProjectMemberProfileInput {
+  displayName: string
+  email?: string
+}

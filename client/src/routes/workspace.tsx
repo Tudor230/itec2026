@@ -48,6 +48,7 @@ import {
   removeProjectMember,
   renameFolder,
   revokeProjectInvite,
+  updateMyProjectMemberProfile,
   updateFile,
   type ActiveProjectInviteDto,
   type FileDto,
@@ -231,6 +232,32 @@ function WorkspaceWithHostedAuth() {
       return listProjectMembers(activeProjectId, token)
     },
     enabled: isAuthenticated && activeProjectId !== null,
+  })
+
+  const profileSnapshotMutation = useMutation({
+    mutationFn: async () => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId || !token) {
+        return { updated: false }
+      }
+
+      const email = user?.email?.trim() || undefined
+      const fallbackFromEmail = email?.split('@')[0]?.trim() || undefined
+      const displayName = user?.name?.trim() || user?.nickname?.trim() || fallbackFromEmail
+      if (!displayName) {
+        return { updated: false }
+      }
+
+      return updateMyProjectMemberProfile(activeProjectId, { displayName, email }, token)
+    },
+    onSuccess: async (result) => {
+      if (!result.updated) {
+        return
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-members'] })
+    },
   })
 
   const activeInvitesQuery = useQuery({
@@ -687,16 +714,6 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const { collabState, onEditorMount, markSaved } = useCollabDoc({
-    projectId: activeProjectId,
-    fileId: activeFileId,
-    onFileCreated: onCollabFileCreated,
-    onFileUpdated: onCollabFileUpdated,
-    onFileDeleted: onCollabFileDeleted,
-    onDirtyStateChanged: onCollabDirtyStateChanged,
-    onProjectActivityChanged,
-  })
-
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
 
   const dirtyFileIds = files
@@ -721,40 +738,47 @@ function WorkspaceWithHostedAuth() {
   const collabMembers = useMemo(() => {
     const apiMembers = projectMembersQuery.data ?? []
     const currentSubject = user?.sub ?? null
-    const currentName = user?.name?.trim() || user?.nickname?.trim() || 'You'
-    const currentEmail = user?.email?.trim() || 'Not available'
 
     const mapped = apiMembers.map((member) => {
       const isYou = currentSubject !== null && member.subject === currentSubject
+      const email = member.email?.trim() || 'Not available'
+      const fallbackFromEmail = email !== 'Not available'
+        ? (email.split('@')[0]?.trim() || undefined)
+        : undefined
 
       return {
         id: member.subject,
-        name: isYou
-          ? currentName
-          : (member.displayName?.trim() || member.subject),
-        email: isYou
-          ? currentEmail
-          : (member.email?.trim() || 'Not available'),
+        name: member.displayName?.trim() || fallbackFromEmail || 'Unknown user',
+        email,
         role: member.role,
         isYou,
       }
     })
 
-    if (currentSubject && !mapped.some((member) => member.id === currentSubject)) {
-      return [
-        {
-          id: currentSubject,
-          name: currentName,
-          email: currentEmail,
-          role: 'owner',
-          isYou: true,
-        },
-        ...mapped,
-      ]
-    }
-
     return mapped
   }, [projectMembersQuery.data, user])
+
+  const collaboratorNameBySubject = useMemo(() => {
+    return collabMembers.reduce<Record<string, string>>((accumulator, member) => {
+      accumulator[member.id] = member.name
+      return accumulator
+    }, {})
+  }, [collabMembers])
+
+  const resolveCollaboratorName = useCallback((subject: string) => {
+    return collaboratorNameBySubject[subject] ?? 'Collaborator'
+  }, [collaboratorNameBySubject])
+
+  const { collabState, onEditorMount, markSaved } = useCollabDoc({
+    projectId: activeProjectId,
+    fileId: activeFileId,
+    onFileCreated: onCollabFileCreated,
+    onFileUpdated: onCollabFileUpdated,
+    onFileDeleted: onCollabFileDeleted,
+    onDirtyStateChanged: onCollabDirtyStateChanged,
+    onProjectActivityChanged,
+    resolveCollaboratorName,
+  })
 
   const collaboratorInitials = useMemo(() => {
     return collabMembers
@@ -803,6 +827,25 @@ function WorkspaceWithHostedAuth() {
   useEffect(() => {
     setInviteLinksByInviteId({})
   }, [activeProjectId])
+
+  useEffect(() => {
+    if (!activeProjectId || !isAuthenticated) {
+      return
+    }
+
+    if (profileSnapshotMutation.isPending) {
+      return
+    }
+
+    void profileSnapshotMutation.mutateAsync()
+  }, [
+    activeProjectId,
+    isAuthenticated,
+    profileSnapshotMutation,
+    user?.email,
+    user?.name,
+    user?.nickname,
+  ])
 
   useEffect(() => {
     setCollabActivityByFileId({})

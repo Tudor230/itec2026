@@ -5,6 +5,7 @@ import type {
   InvitePreviewRecord,
   ProjectMemberRecord,
   ProjectInput,
+  ProjectMemberProfileInput,
   ProjectRecord,
   ProjectUpdateInput,
 } from './project.types.js'
@@ -39,6 +40,14 @@ export class ProjectsService {
 
   listMembers(actor: ActorContext, projectId: string): Promise<ProjectMemberRecord[]> {
     return this.repository.listMembers(actor, projectId)
+  }
+
+  updateMemberProfile(
+    actor: ActorContext,
+    projectId: string,
+    input: ProjectMemberProfileInput,
+  ): Promise<boolean> {
+    return this.repository.updateMemberProfile(actor, projectId, input)
   }
 
   listActiveInvites(actor: ActorContext, projectId: string): Promise<ActiveProjectInviteRecord[]> {

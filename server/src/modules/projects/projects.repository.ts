@@ -6,6 +6,7 @@ import type {
   ActiveProjectInviteRecord,
   CreateProjectInviteResult,
   InvitePreviewRecord,
+  ProjectMemberProfileInput,
   ProjectMemberRecord,
   ProjectInput,
   ProjectInviteRecord,
@@ -120,6 +121,16 @@ type ProjectMemberModel = {
       addedBySubject: string | null
     }
   }) => Promise<unknown>
+  updateMany: (args: {
+    where: {
+      projectId: string
+      subject: string
+    }
+    data: {
+      displayName: string
+      email: string | null
+    }
+  }) => Promise<{ count: number }>
 }
 
 function getProjectInviteModel(prisma: PrismaClient): ProjectInviteModel | null {
@@ -297,8 +308,8 @@ export class ProjectsRepository {
     const ownerEntry: ProjectMemberRecord | null = project.ownerSubject
       ? {
           subject: project.ownerSubject,
-          displayName: actor.subject === project.ownerSubject ? actor.displayName ?? null : null,
-          email: actor.subject === project.ownerSubject ? actor.email ?? null : null,
+          displayName: null,
+          email: null,
           role: 'owner',
         }
       : null
@@ -325,21 +336,79 @@ export class ProjectsRepository {
 
     members.forEach((member) => {
       const existing = deduped.get(member.subject)
-      const isCurrentActor = actor.subject === member.subject
 
       deduped.set(member.subject, {
         subject: member.subject,
-        displayName: isCurrentActor
-          ? actor.displayName ?? member.displayName
-          : member.displayName,
-        email: isCurrentActor
-          ? actor.email ?? member.email
-          : member.email,
+        displayName: member.displayName,
+        email: member.email,
         role: existing?.role === 'owner' ? 'owner' : member.role,
       })
     })
 
     return [...deduped.values()]
+  }
+
+  async updateMemberProfile(
+    actor: ActorContext,
+    projectId: string,
+    input: ProjectMemberProfileInput,
+  ): Promise<boolean> {
+    if (!actor.subject) {
+      throw Object.assign(new Error('Authentication is required'), {
+        code: 'AUTH_REQUIRED',
+      })
+    }
+
+    const allowed = await canReadProject(this.prisma, actor, projectId)
+    if (!allowed) {
+      return false
+    }
+
+    const projectMemberModel = getProjectMemberModel(this.prisma)
+    if (!projectMemberModel) {
+      return false
+    }
+
+    const update = await projectMemberModel.updateMany({
+      where: {
+        projectId,
+        subject: actor.subject,
+      },
+      data: {
+        displayName: input.displayName,
+        email: input.email ?? null,
+      },
+    })
+
+    if (update.count > 0) {
+      return true
+    }
+
+    await projectMemberModel.upsert({
+      where: {
+        projectId_subject: {
+          projectId,
+          subject: actor.subject,
+        },
+      },
+      create: {
+        id: createId(),
+        projectId,
+        subject: actor.subject,
+        displayName: input.displayName,
+        email: input.email ?? null,
+        role: 'editor',
+        addedBySubject: actor.subject,
+      },
+      update: {
+        displayName: input.displayName,
+        email: input.email ?? null,
+        role: 'editor',
+        addedBySubject: actor.subject,
+      },
+    })
+
+    return true
   }
 
   async update(

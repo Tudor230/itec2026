@@ -27,6 +27,7 @@ interface CollabDocParams {
   onFileDeleted?: (payload: CollabFileDeletedPayload) => void
   onDirtyStateChanged?: (payload: CollabDocDirtyStatePayload) => void
   onProjectActivityChanged?: (payload: CollabProjectActivityPayload) => void
+  resolveCollaboratorName?: (subject: string) => string
 }
 
 interface CollabDocModelBinding {
@@ -41,6 +42,7 @@ interface MonacoBindingInstance {
 
 interface RemoteCursorWidget {
   update: (lineNumber: number, column: number) => void
+  setLabel: (label: string) => void
   dispose: () => void
 }
 
@@ -52,6 +54,7 @@ export function useCollabDoc({
   onFileDeleted,
   onDirtyStateChanged,
   onProjectActivityChanged,
+  resolveCollaboratorName,
 }: CollabDocParams) {
   const { getAccessTokenSilently } = useAuth0()
   const [bindingTargets, setBindingTargets] = useState<CollabDocModelBinding>({
@@ -116,7 +119,7 @@ export function useCollabDoc({
     cursorWidgetsBySocketIdRef.current.clear()
   }, [])
 
-  const ensureRemoteCursorWidget = useCallback((socketId: string, subject: string, color: string): RemoteCursorWidget => {
+  const ensureRemoteCursorWidget = useCallback((socketId: string, collaboratorName: string, color: string): RemoteCursorWidget => {
     const existing = cursorWidgetsBySocketIdRef.current.get(socketId)
     if (existing) {
       return existing
@@ -128,11 +131,12 @@ export function useCollabDoc({
     if (!editor || !monaco) {
       return {
         update: () => undefined,
+        setLabel: () => undefined,
         dispose: () => undefined,
       }
     }
 
-    const classSuffix = getCollaboratorClassSuffix(subject)
+    const classSuffix = getCollaboratorClassSuffix(socketId)
     const widgetId = `remote-cursor-widget-${socketId}`
     const node = document.createElement('div')
     node.className = `collab-remote-cursor-widget-${classSuffix}`
@@ -148,19 +152,19 @@ export function useCollabDoc({
     caret.style.borderRadius = '2px'
     node.appendChild(caret)
 
-    const label = document.createElement('span')
-    label.textContent = subject.split('|').pop() ?? subject
-    label.style.position = 'absolute'
-    label.style.left = '3px'
-    label.style.top = '-1.2em'
-    label.style.fontSize = '9px'
-    label.style.fontWeight = '700'
-    label.style.padding = '0 4px'
-    label.style.borderRadius = '6px'
-    label.style.background = color
-    label.style.color = '#ffffff'
-    label.style.whiteSpace = 'nowrap'
-    node.appendChild(label)
+    const labelNode = document.createElement('span')
+    labelNode.textContent = collaboratorName
+    labelNode.style.position = 'absolute'
+    labelNode.style.left = '3px'
+    labelNode.style.top = '-1.2em'
+    labelNode.style.fontSize = '9px'
+    labelNode.style.fontWeight = '700'
+    labelNode.style.padding = '0 4px'
+    labelNode.style.borderRadius = '6px'
+    labelNode.style.background = color
+    labelNode.style.color = '#ffffff'
+    labelNode.style.whiteSpace = 'nowrap'
+    node.appendChild(labelNode)
 
     const position = { lineNumber: 1, column: 1 }
 
@@ -180,6 +184,9 @@ export function useCollabDoc({
         position.lineNumber = Math.max(1, lineNumber)
         position.column = Math.max(1, column)
         editor.layoutContentWidget(widget)
+      },
+      setLabel: (label) => {
+        labelNode.textContent = label
       },
       dispose: () => {
         editor.removeContentWidget(widget)
@@ -264,7 +271,10 @@ export function useCollabDoc({
         cursorStylesByClassRef.current.set(styleKey, style)
       }
 
-      ensureRemoteCursorWidget(entry.socketId, entry.subject, color).update(entry.lineNumber, entry.column)
+      const displayLabel = resolveCollaboratorName?.(entry.subject) ?? 'Collaborator'
+      const widget = ensureRemoteCursorWidget(entry.socketId, displayLabel, color)
+      widget.setLabel(displayLabel)
+      widget.update(entry.lineNumber, entry.column)
 
       const hasSelection = Boolean(
         entry.selectionStartLineNumber
@@ -295,7 +305,7 @@ export function useCollabDoc({
       remoteCursorDecorationIdsRef.current,
       decorations,
     )
-  }, [collabClient, ensureRemoteCursorWidget])
+  }, [collabClient, ensureRemoteCursorWidget, resolveCollaboratorName])
 
   const watchCallbacks = useMemo<WatchProjectCallbacks>(() => {
     return {

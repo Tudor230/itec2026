@@ -156,6 +156,18 @@ export function listProjectMembers(projectId: string, accessToken?: string | nul
   })
 }
 
+export function updateMyProjectMemberProfile(
+  projectId: string,
+  input: { displayName: string; email?: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<{ updated: boolean }>(`/api/projects/${projectId}/members/me`, {
+    method: 'PATCH',
+    body: input,
+    accessToken,
+  })
+}
+
 export function listProjectInvites(projectId: string, accessToken?: string | null) {
   return apiRequest<ActiveProjectInviteDto[]>(`/api/projects/${projectId}/invites`, {
     accessToken,

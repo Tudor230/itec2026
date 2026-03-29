@@ -278,6 +278,35 @@ class InMemoryProjectMembersTable {
     this.rows = [...this.rows, row]
     return row
   }
+
+  async updateMany(args: {
+    where: {
+      projectId: string
+      subject: string
+    }
+    data: {
+      displayName: string
+      email: string | null
+    }
+  }): Promise<{ count: number }> {
+    let count = 0
+
+    this.rows = this.rows.map((row) => {
+      if (row.projectId !== args.where.projectId || row.subject !== args.where.subject) {
+        return row
+      }
+
+      count += 1
+
+      return {
+        ...row,
+        displayName: args.data.displayName,
+        email: args.data.email,
+      }
+    })
+
+    return { count }
+  }
 }
 
 class InMemoryProjectInvitesTable {
@@ -464,7 +493,7 @@ function authHeaders(token: string) {
   }
 }
 
-function createJwt(sub: string, jwtId: string) {
+function createJwt(sub: string, jwtId: string, profile?: { name?: string; email?: string }) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
   const payload = Buffer.from(
     JSON.stringify({
@@ -472,6 +501,8 @@ function createJwt(sub: string, jwtId: string) {
       jti: jwtId,
       iss: process.env.AUTH_JWT_ISSUER,
       aud: process.env.AUTH_JWT_AUDIENCE,
+      name: profile?.name,
+      email: profile?.email,
     }),
   ).toString('base64url')
   const signingInput = `${header}.${payload}`
@@ -654,7 +685,10 @@ describe('projects router', () => {
   })
 
   it('returns project members including owner snapshot', async () => {
-    const token = createJwt('auth0|member-owner', 'jwt-member-owner')
+    const token = createJwt('auth0|member-owner', 'jwt-member-owner', {
+      name: 'Member Owner',
+      email: 'member.owner@example.com',
+    })
 
     const created = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
@@ -673,6 +707,44 @@ describe('projects router', () => {
     assert.equal(Array.isArray(membersPayload.data), true)
     assert.equal(membersPayload.data.length >= 1, true)
     assert.equal(membersPayload.data[0].subject, 'auth0|member-owner')
+    assert.equal(membersPayload.data[0].displayName, 'Member Owner')
+    assert.equal(membersPayload.data[0].email, 'member.owner@example.com')
+  })
+
+  it('updates member profile snapshot for current actor', async () => {
+    const token = createJwt('auth0|snapshot-user', 'jwt-snapshot-user', {
+      name: 'Snapshot User',
+      email: 'snapshot.user@example.com',
+    })
+
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: 'Snapshot project' }),
+    })
+    const createdPayload = await created.json()
+    const projectId = createdPayload.data.id
+
+    const patch = await fetch(`${baseUrl}/api/projects/${projectId}/members/me`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        displayName: 'Snapshot User Updated',
+        email: 'snapshot.updated@example.com',
+      }),
+    })
+    const patchPayload = await patch.json()
+
+    const listed = await fetch(`${baseUrl}/api/projects/${projectId}/members`, {
+      headers: authHeaders(token),
+    })
+    const listedPayload = await listed.json()
+
+    assert.equal(patch.status, 200)
+    assert.equal(patchPayload.data.updated, true)
+    assert.equal(listed.status, 200)
+    assert.equal(listedPayload.data[0].displayName, 'Snapshot User Updated')
+    assert.equal(listedPayload.data[0].email, 'snapshot.updated@example.com')
   })
 
   it('lists and revokes active invite links', async () => {
