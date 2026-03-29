@@ -718,6 +718,11 @@ export function createCollabGateway(
 
         const room = docRoom(parsedUpdate.data.projectId, parsedUpdate.data.fileId)
         if (!joinedRooms.has(room)) {
+          socket.emit('collab:error', {
+            message: 'Join document first',
+            projectId: parsedUpdate.data.projectId,
+            fileId: parsedUpdate.data.fileId,
+          } satisfies ErrorEvent)
           return
         }
 
