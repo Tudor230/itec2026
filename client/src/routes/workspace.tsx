@@ -166,6 +166,7 @@ function WorkspaceWithHostedAuth() {
   const [collabActivityByFileId, setCollabActivityByFileId] = useState<Record<string, string[]>>({})
   const collabRefreshTimerRef = useRef<number | null>(null)
   const autosaveTimeoutRef = useRef<number | null>(null)
+  const queuedAutosaveRef = useRef<{ fileId: string; content: string } | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
 
@@ -721,9 +722,11 @@ function WorkspaceWithHostedAuth() {
       clearAutosaveTimeout()
 
       if (saveFileMutation.isPending) {
+        queuedAutosaveRef.current = { fileId, content }
         return
       }
 
+      queuedAutosaveRef.current = null
       void saveFileMutation.mutateAsync({
         fileId,
         content,
@@ -732,8 +735,21 @@ function WorkspaceWithHostedAuth() {
     [clearAutosaveTimeout, saveFileMutation],
   )
 
+  const scheduleAutosave = useCallback((fileId: string, content: string) => {
+    clearAutosaveTimeout()
+
+    if (!isAuthenticated || autosaveBlockedFileId === fileId) {
+      return
+    }
+
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      triggerSave(fileId, content)
+    }, AUTOSAVE_DELAY_MS)
+  }, [autosaveBlockedFileId, clearAutosaveTimeout, isAuthenticated, triggerSave])
+
   const queueSaveNow = useCallback(async (fileId: string, content: string) => {
     clearAutosaveTimeout()
+    queuedAutosaveRef.current = null
 
     try {
       await saveFileMutation.mutateAsync({
@@ -751,6 +767,20 @@ function WorkspaceWithHostedAuth() {
       }
     }
   }, [clearAutosaveTimeout, saveFileMutation])
+
+  useEffect(() => {
+    if (saveFileMutation.isPending) {
+      return
+    }
+
+    const queuedAutosave = queuedAutosaveRef.current
+    if (!queuedAutosave) {
+      return
+    }
+
+    queuedAutosaveRef.current = null
+    triggerSave(queuedAutosave.fileId, queuedAutosave.content)
+  }, [saveFileMutation.isPending, triggerSave])
 
   const files = filesQuery.data ?? []
   const activeFile = files.find((file) => file.id === activeFileId) ?? null
@@ -861,34 +891,6 @@ function WorkspaceWithHostedAuth() {
     onProjectActivityChanged,
     resolveCollaboratorName,
   })
-
-  useEffect(() => {
-    clearAutosaveTimeout()
-
-    if (!isAuthenticated || !activeFile || !localIsDirty || autosaveBlockedFileId === activeFile.id) {
-      return
-    }
-
-    autosaveTimeoutRef.current = window.setTimeout(() => {
-      if (saveFileMutation.isPending) {
-        return
-      }
-
-      triggerSave(activeFile.id, editorValue)
-    }, AUTOSAVE_DELAY_MS)
-
-    return clearAutosaveTimeout
-  }, [
-    activeFile,
-    clearAutosaveTimeout,
-    editorValue,
-    autosaveBlockedFileId,
-    isAuthenticated,
-    localIsDirty,
-    previewState.isActive,
-    saveFileMutation.isPending,
-    triggerSave,
-  ])
 
   const collaboratorInitials = useMemo(() => {
     return collabMembers
@@ -1848,14 +1850,29 @@ function WorkspaceWithHostedAuth() {
                           setAutosaveBlockedFileId(null)
                         }
 
-                      setDraftsByFileId((previous) => {
-                        return {
-                          ...previous,
-                          [activeFile.id]: nextValue,
+                        if (nextValue === activeFile.content) {
+                          clearAutosaveTimeout()
+                          setDraftsByFileId((previous) => {
+                            if (!(activeFile.id in previous)) {
+                              return previous
+                            }
+
+                            const next = { ...previous }
+                            delete next[activeFile.id]
+                            return next
+                          })
+                          return
                         }
-                      })
-                    }}
-                  />
+
+                        setDraftsByFileId((previous) => {
+                          return {
+                            ...previous,
+                            [activeFile.id]: nextValue,
+                          }
+                        })
+                        scheduleAutosave(activeFile.id, nextValue)
+                      }}
+                    />
                 ) : (
                   <TerminalPane
                     projectId={activeProjectId}
