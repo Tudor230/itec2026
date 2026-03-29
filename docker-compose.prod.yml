@@ -90,6 +90,7 @@ services:
       VITE_AUTH0_REDIRECT_URI: ${PUBLIC_APP_URL}
       VITE_AUTH0_LOGOUT_RETURN_TO: ${PUBLIC_APP_URL}
       VITE_AUTH0_ROLES_CLAIM: ${VITE_AUTH0_ROLES_CLAIM:-https://itec2026-api/roles}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS}
     depends_on:
       - server
     ports:

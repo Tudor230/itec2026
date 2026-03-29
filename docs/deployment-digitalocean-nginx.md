@@ -69,6 +69,7 @@ Edit `.env.production` and fill all real values:
 - `PUBLIC_APP_URL` (for example `https://app.yourdomain.com`)
 - `POSTGRES_PASSWORD`
 - Auth0 values (`AUTH0_*`, `VITE_AUTH0_*`)
+- `VITE_ALLOWED_HOSTS` (your public host, for example `app.yourdomain.com`)
 - Optional AI key (`DEEPSEEK_API_KEY`)
 
 ## 6) Start application stack
@@ -136,6 +137,16 @@ Test renewal:
 ```bash
 sudo certbot renew --dry-run
 ```
+
+If you get `403 Forbidden` from HTTPS right after switching to Vite preview, verify host allow-list:
+
+```bash
+grep '^VITE_ALLOWED_HOSTS=' .env.production
+sudo docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+sudo docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail=200 client
+```
+
+`VITE_ALLOWED_HOSTS` must include your exact domain.
 
 ## 10) Operations and useful commands
 
