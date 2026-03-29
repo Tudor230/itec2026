@@ -11,6 +11,7 @@ interface TerminalPaneProps {
   projectId: string | null
   queuedCommand: QueuedTerminalCommand | null
   onQueuedCommandSent?: (commandId: number) => void
+  collaboratorIdentityBySubject?: Record<string, { name: string; email: string }>
 }
 
 type ConnectionState = 'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
@@ -26,6 +27,28 @@ function formatSubject(subject: string | null) {
 
   const [, short] = subject.split('|')
   return short || subject
+}
+
+function resolveCollaboratorIdentity(
+  subject: string | null,
+  map: Record<string, { name: string; email: string }>,
+) {
+  if (!subject) {
+    return {
+      name: 'Unknown user',
+      email: 'Not available',
+    }
+  }
+
+  const mapped = map[subject]
+  if (mapped) {
+    return mapped
+  }
+
+  return {
+    name: formatSubject(subject),
+    email: 'Not available',
+  }
 }
 
 function resolveConnectionTone(state: ConnectionState) {
@@ -58,7 +81,12 @@ const BUTTON_CLASS =
 const DANGER_BUTTON_CLASS =
   'rounded-md border border-[var(--terminal-danger-border)] bg-[var(--terminal-danger-bg)] px-2 py-1 text-xs text-[var(--terminal-danger-fg)] transition-colors hover:bg-[color-mix(in_oklab,var(--terminal-danger)_22%,var(--terminal-button-bg-hover)_78%)]'
 
-export default function TerminalPane({ projectId, queuedCommand, onQueuedCommandSent }: TerminalPaneProps) {
+export default function TerminalPane({
+  projectId,
+  queuedCommand,
+  onQueuedCommandSent,
+  collaboratorIdentityBySubject = {},
+}: TerminalPaneProps) {
   const { preset } = useThemePreset()
   const terminalTheme = useMemo(() => resolveTerminalTheme(preset), [preset])
 
@@ -307,7 +335,12 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
                     : 'border-[var(--terminal-button-border)] bg-[var(--terminal-button-bg)] text-[var(--terminal-panel-muted)] hover:bg-[var(--terminal-button-bg-hover)]',
                 )}
               >
-                {mine ? 'You' : formatSubject(terminal.ownerSubject)}
+                {mine
+                  ? 'You'
+                  : resolveCollaboratorIdentity(
+                    terminal.ownerSubject,
+                    collaboratorIdentityBySubject,
+                  ).name}
                 {terminal.pendingRequestCount > 0 ? ` (${terminal.pendingRequestCount})` : ''}
               </button>
             )
@@ -318,7 +351,7 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
       <div className="flex items-center justify-between border-b border-[var(--terminal-border)] px-4 py-2 text-xs">
         <div className="text-[var(--terminal-panel-muted)]">
           {activeOwnerSubject
-            ? `Owner: ${formatSubject(activeOwnerSubject)} | Controller: ${formatSubject(activeTerminalState?.activeControllerSubject ?? null)} | Session: ${activeTerminalState?.isSessionOpen ? 'open' : 'closed'}`
+            ? `Owner: ${resolveCollaboratorIdentity(activeOwnerSubject, collaboratorIdentityBySubject).name} | Controller: ${resolveCollaboratorIdentity(activeTerminalState?.activeControllerSubject ?? null, collaboratorIdentityBySubject).name} | Session: ${activeTerminalState?.isSessionOpen ? 'open' : 'closed'}`
             : 'Select a terminal to start'}
         </div>
         <div className="flex items-center gap-2">
@@ -360,7 +393,10 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
               className="flex items-center justify-between rounded-md border border-[var(--terminal-button-border)] bg-[var(--terminal-request-bg)] px-3 py-2"
             >
               <span className="text-xs text-[var(--terminal-panel-fg)]">
-                {formatSubject(request.requesterSubject)} requests control
+                {resolveCollaboratorIdentity(
+                  request.requesterSubject,
+                  collaboratorIdentityBySubject,
+                ).name} requests control
               </span>
               <div className="flex items-center gap-2">
                 <button

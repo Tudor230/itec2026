@@ -685,6 +685,7 @@ async function startServer(
   prisma: PrismaClient,
   blobStore: InMemoryBlobStore,
   workspaceSync?: WorkspaceSyncDouble,
+  fetchImpl?: typeof fetch,
 ): Promise<{
   baseUrl: string
   close: () => Promise<void>
@@ -696,6 +697,7 @@ async function startServer(
     prisma,
     blobStore,
     workspaceSync: workspaceSync as never,
+    fetchImpl,
   }))
   app.use(errorHandler)
 
@@ -748,6 +750,15 @@ function createJwt(sub: string, jwtId: string) {
     .digest('base64url')
 
   return `${signingInput}.${signature}`
+}
+
+function jsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      'content-type': 'application/json',
+    },
+  })
 }
 
 describe('files router', () => {
@@ -1369,5 +1380,218 @@ describe('files router', () => {
     assert.equal(restored.status, 200)
     assert.equal(restoredPayload.data.file.id, fileId)
     assert.equal(restoredPayload.data.file.content, 'console.log("project-v1")')
+  })
+
+  it('imports local files and skips duplicates by path', async () => {
+    const ownerSubject = 'auth0|local-import-user'
+    const token = createJwt(ownerSubject, 'jwt-local-import-user')
+    const projectId = 'project-local-import-user'
+    seedProject?.(projectId, ownerSubject)
+
+    const existing = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'README.md',
+        content: 'existing',
+      }),
+    })
+    assert.equal(existing.status, 201)
+    createdEvents.length = 0
+
+    const imported = await fetch(`${baseUrl}/api/files/import/local`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        files: [
+          {
+            path: 'src/main.ts',
+            content: 'console.log("ok")',
+          },
+          {
+            path: 'src/main.ts',
+            content: 'console.log("duplicate payload")',
+          },
+          {
+            path: 'README.md',
+            content: 'duplicate existing',
+          },
+        ],
+      }),
+    })
+    const importedPayload = await imported.json()
+
+    const listed = await fetch(`${baseUrl}/api/files?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listedPayload = await listed.json()
+
+    assert.equal(imported.status, 201)
+    assert.equal(importedPayload.data.imported.length, 1)
+    assert.equal(importedPayload.data.imported[0].path, 'src/main.ts')
+    assert.equal(importedPayload.data.skipped.length, 2)
+    assert.equal(importedPayload.data.failed.length, 0)
+    assert.equal(listed.status, 200)
+    assert.equal(listedPayload.data.length, 2)
+    assert.equal(createdEvents.length, 1)
+    assert.equal(createdEvents[0]?.path, 'src/main.ts')
+  })
+
+  it('imports project files from GitHub and skips unsupported files', async () => {
+    const githubFetch: typeof fetch = async (input) => {
+      const requestUrl = typeof input === 'string' ? input : input.toString()
+
+      if (requestUrl.includes('/git/trees/main')) {
+        return jsonResponse({
+          truncated: false,
+          tree: [
+            { path: 'README.md', type: 'blob', sha: 'sha-readme' },
+            { path: 'src/app.ts', type: 'blob', sha: 'sha-app' },
+            { path: 'node_modules/skip.js', type: 'blob', sha: 'sha-skip' },
+          ],
+        })
+      }
+
+      if (requestUrl.endsWith('/git/blobs/sha-readme')) {
+        return jsonResponse({
+          encoding: 'base64',
+          content: Buffer.from('# Imported', 'utf8').toString('base64'),
+        })
+      }
+
+      if (requestUrl.endsWith('/git/blobs/sha-app')) {
+        return jsonResponse({
+          encoding: 'base64',
+          content: Buffer.from('console.log("github")', 'utf8').toString('base64'),
+        })
+      }
+
+      if (requestUrl.endsWith('/git/blobs/sha-skip')) {
+        return jsonResponse({
+          encoding: 'base64',
+          content: Buffer.from('ignored', 'utf8').toString('base64'),
+        })
+      }
+
+      return jsonResponse({ message: 'not found' }, 404)
+    }
+
+    const localDb = createPrismaDouble()
+    const localWorkspaceSync = new WorkspaceSyncDouble()
+    const localServer = await startServer(localDb.prisma, localDb.blobStore, localWorkspaceSync, githubFetch)
+
+    try {
+      const ownerSubject = 'auth0|github-import-user'
+      const token = createJwt(ownerSubject, 'jwt-github-import-user')
+      const projectId = 'project-github-import-user'
+      localDb.seedProject(projectId, ownerSubject)
+      createdEvents.length = 0
+
+      const imported = await fetch(`${localServer.baseUrl}/api/files/import/github`, {
+        method: 'POST',
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          projectId,
+          repositoryUrl: 'https://github.com/octocat/hello-world',
+          branch: 'main',
+        }),
+      })
+      const importedPayload = await imported.json()
+
+      const listed = await fetch(`${localServer.baseUrl}/api/files?projectId=${projectId}`, {
+        headers: authHeaders(token),
+      })
+      const listedPayload = await listed.json()
+
+      assert.equal(imported.status, 201)
+      assert.equal(importedPayload.data.imported.length, 2)
+      assert.equal(importedPayload.data.skipped.length, 1)
+      assert.equal(importedPayload.data.skipped[0].path, 'node_modules/skip.js')
+      assert.equal(importedPayload.data.failed.length, 0)
+      assert.equal(listed.status, 200)
+      assert.equal(listedPayload.data.length, 2)
+      assert.equal(createdEvents.length, 2)
+    } finally {
+      await localServer.close()
+    }
+  })
+
+  it('rejects non-GitHub URLs for github import endpoint', async () => {
+    const ownerSubject = 'auth0|github-url-validation-user'
+    const token = createJwt(ownerSubject, 'jwt-github-url-validation-user')
+    const projectId = 'project-github-url-validation-user'
+    seedProject?.(projectId, ownerSubject)
+
+    const response = await fetch(`${baseUrl}/api/files/import/github`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        repositoryUrl: 'https://example.com/not-github/repo',
+      }),
+    })
+    const payload = await response.json()
+
+    assert.equal(response.status, 400)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.error.code, 'INVALID_FILE_INPUT')
+  })
+
+  it('rolls back all local import files when workspace sync fails mid-import', async () => {
+    const ownerSubject = 'auth0|local-import-rollback-user'
+    const token = createJwt(ownerSubject, 'jwt-local-import-rollback-user')
+    const projectId = 'project-local-import-rollback-user'
+    seedProject?.(projectId, ownerSubject)
+
+    let createCalls = 0
+    const failingWorkspaceSync = {
+      runLocked<T>(_projectId: string, action: () => Promise<T>): Promise<T> {
+        return action()
+      },
+      async applyApiCreateAlreadyLocked() {
+        createCalls += 1
+        if (createCalls >= 2) {
+          throw new Error('workspace create failed at second file')
+        }
+      },
+      applyApiUpdateAlreadyLocked() {
+        return Promise.resolve()
+      },
+      applyApiDeleteAlreadyLocked() {
+        return Promise.resolve()
+      },
+    }
+
+    const localDb = createPrismaDouble()
+    localDb.seedProject(projectId, ownerSubject)
+    const localServer = await startServer(localDb.prisma, localDb.blobStore, failingWorkspaceSync as WorkspaceSyncDouble)
+
+    try {
+      const imported = await fetch(`${localServer.baseUrl}/api/files/import/local`, {
+        method: 'POST',
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          projectId,
+          files: [
+            { path: 'src/one.ts', content: 'one' },
+            { path: 'src/two.ts', content: 'two' },
+          ],
+        }),
+      })
+
+      assert.equal(imported.status, 500)
+
+      const listed = await fetch(`${localServer.baseUrl}/api/files?projectId=${projectId}`, {
+        headers: authHeaders(token),
+      })
+      const listedPayload = await listed.json()
+
+      assert.equal(listed.status, 200)
+      assert.equal(listedPayload.data.length, 0)
+    } finally {
+      await localServer.close()
+    }
   })
 })

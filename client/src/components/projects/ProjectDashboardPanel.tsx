@@ -1,27 +1,35 @@
 import { useAuth0 } from '@auth0/auth0-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, ArrowUpRight, Copy, LayoutPanelTop, Trash2, UserMinus, Users } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Copy,
+  Crown,
+  Mail,
+  Trash2,
+  UserMinus,
+  Users,
+} from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { auth0Config } from '../../lib/auth0-config'
-import { useToast } from '../ToastProvider'
 import {
   createProjectInvite,
   deleteProject,
   getProjectDashboard,
   removeProjectCollaborator,
   updateProject,
+  type ProjectCollaboratorDto,
 } from '../../services/projects-api'
+import { useToast } from '../ToastProvider'
 
 function formatRelativeTime(value: string) {
   const timestamp = Date.parse(value)
-
   if (Number.isNaN(timestamp)) {
     return 'recently'
   }
 
   const minutes = Math.round((Date.now() - timestamp) / 60000)
-
   if (minutes < 1) {
     return 'just now'
   }
@@ -39,17 +47,19 @@ function formatRelativeTime(value: string) {
   return `${days}d ago`
 }
 
-function formatSubject(subject: string | null) {
-  if (!subject) {
-    return 'Unknown user'
-  }
+function resolveCollaboratorIdentity(collaborator: ProjectCollaboratorDto) {
+  const normalizedEmail = collaborator.email?.trim() || null
+  const fallbackFromEmail = normalizedEmail?.split('@')[0]?.trim() || null
+  const fallbackFromSubject = collaborator.subject
+    ? (collaborator.subject.includes('|')
+      ? collaborator.subject.split('|')[1]?.trim() || collaborator.subject
+      : collaborator.subject)
+    : null
 
-  const [, rest] = subject.split('|')
-  if (!rest) {
-    return subject
+  return {
+    name: collaborator.displayName?.trim() || fallbackFromEmail || fallbackFromSubject || 'Unknown user',
+    email: normalizedEmail || 'Not available',
   }
-
-  return rest
 }
 
 type ProjectDashboardPanelProps = {
@@ -184,15 +194,15 @@ export default function ProjectDashboardPanel({
 
   return (
     <>
-      <section className="rounded-[1.9rem] border border-[var(--line)] bg-[linear-gradient(160deg,color-mix(in_oklab,var(--surface-strong)_90%,white)_0%,var(--surface)_100%)] px-6 py-7 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] sm:px-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Project dashboard</p>
-            <h1 className="m-0 font-[Fraunces,Georgia,serif] text-3xl font-bold text-[var(--sea-ink)] sm:text-4xl">
+      <section className="rounded-3xl border border-[var(--line)] bg-[linear-gradient(170deg,color-mix(in_oklab,var(--surface-strong)_82%,white)_0%,var(--surface)_100%)] p-6 shadow-[inset_0_1px_0_var(--inset-glint),0_20px_34px_rgba(10,28,34,0.1)] sm:p-7">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-2">
+            <p className="m-0 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Project dashboard</p>
+            <h1 className="m-0 text-3xl font-semibold tracking-tight text-[var(--sea-ink)] sm:text-4xl">
               {dashboard?.project.name ?? 'Loading project'}
             </h1>
-            <p className="mb-0 mt-2 text-sm text-[var(--sea-ink-soft)]">
-              Manage your collaborators, title, and access from one place.
+            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">
+              Team, invites, and project controls in one place.
             </p>
           </div>
 
@@ -204,10 +214,10 @@ export default function ProjectDashboardPanel({
                 onClick={() => {
                   void navigate({ to: '/projects' })
                 }}
-                className="inline-flex items-center gap-2 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 py-2 text-sm font-semibold text-[var(--sea-ink)]"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2 text-sm font-semibold text-[var(--sea-ink)]"
               >
                 <ArrowLeft size={14} />
-                Back to projects
+                Back
               </button>
             ) : null}
 
@@ -226,7 +236,7 @@ export default function ProjectDashboardPanel({
                   },
                 })
               }}
-              className="inline-flex items-center gap-2 rounded-full border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-4 py-2 text-sm font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-lg border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-3 py-2 text-sm font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               <ArrowUpRight size={14} />
               Open in editor
@@ -244,92 +254,104 @@ export default function ProjectDashboardPanel({
       ) : null}
 
       {dashboard ? (
-        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
           <section className="space-y-4">
-            <article className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(170deg,color-mix(in_oklab,var(--surface-strong)_88%,white)_0%,var(--surface)_100%)] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_12px_30px_rgba(23,58,64,0.08)]">
-              <div className="mb-4 flex items-center gap-2">
-                <LayoutPanelTop size={16} className="text-[var(--lagoon-deep)]" />
-                <h2 className="m-0 text-lg font-semibold text-[var(--sea-ink)]">Project overview</h2>
+            <article className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
+              <h2 className="m-0 text-sm font-semibold uppercase tracking-[0.12em] text-[var(--kicker)]">Overview</h2>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
+                  <p className="m-0 text-[11px] text-[var(--sea-ink-soft)]">Your role</p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">{dashboard.actorRole}</p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
+                  <p className="m-0 text-[11px] text-[var(--sea-ink-soft)]">Updated</p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">{formatRelativeTime(dashboard.project.updatedAt)}</p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
+                  <p className="m-0 text-[11px] text-[var(--sea-ink-soft)]">Collaborators</p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">{dashboard.collaborators.length}</p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
+                  <p className="m-0 text-[11px] text-[var(--sea-ink-soft)]">Active invites</p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">{dashboard.activeInvites.length}</p>
+                </div>
               </div>
-
-              <dl className="m-0 grid gap-3 text-sm sm:grid-cols-2">
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
-                  <dt className="text-[0.68rem] font-bold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)]">Role</dt>
-                  <dd className="m-0 mt-1 font-semibold text-[var(--sea-ink)]">{dashboard.actorRole}</dd>
-                </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
-                  <dt className="text-[0.68rem] font-bold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)]">Updated</dt>
-                  <dd className="m-0 mt-1 font-semibold text-[var(--sea-ink)]">{formatRelativeTime(dashboard.project.updatedAt)}</dd>
-                </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
-                  <dt className="text-[0.68rem] font-bold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)]">Collaborators</dt>
-                  <dd className="m-0 mt-1 font-semibold text-[var(--sea-ink)]">{dashboard.collaborators.length}</dd>
-                </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
-                  <dt className="text-[0.68rem] font-bold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)]">Active invites</dt>
-                  <dd className="m-0 mt-1 font-semibold text-[var(--sea-ink)]">{dashboard.activeInvites.length}</dd>
-                </div>
-              </dl>
             </article>
 
-            <article className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(170deg,color-mix(in_oklab,var(--surface-strong)_88%,white)_0%,var(--surface)_100%)] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_12px_30px_rgba(23,58,64,0.08)]">
-              <div className="mb-4 flex items-center gap-2">
+            <article className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
+              <div className="flex items-center gap-2">
                 <Users size={16} className="text-[var(--lagoon-deep)]" />
-                <h2 className="m-0 text-lg font-semibold text-[var(--sea-ink)]">Collaborators</h2>
+                <h2 className="m-0 text-sm font-semibold uppercase tracking-[0.12em] text-[var(--kicker)]">Collaborators</h2>
               </div>
 
               {ownerCollaborator ? (
-                <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2 text-sm">
-                  <p className="m-0 text-[0.68rem] font-bold uppercase tracking-[0.12em] text-[var(--sea-ink-soft)]">Owner</p>
-                  <p className="m-0 mt-1 font-semibold text-[var(--sea-ink)]">{formatSubject(ownerCollaborator.subject)}</p>
+                <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">
+                        {resolveCollaboratorIdentity(ownerCollaborator).name}
+                      </p>
+                      <p className="m-0 mt-1 text-xs text-[var(--sea-ink-soft)] inline-flex items-center gap-1">
+                        <Mail size={11} />
+                        {resolveCollaboratorIdentity(ownerCollaborator).email}
+                      </p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[rgba(var(--lagoon-rgb),0.12)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--lagoon-deep)]">
+                      <Crown size={11} />
+                      Owner
+                    </span>
+                  </div>
                 </div>
               ) : null}
 
-              <div className="space-y-2">
+              <div className="mt-3 space-y-2">
                 {editorCollaborators.length === 0 ? (
                   <p className="m-0 text-sm text-[var(--sea-ink-soft)]">No editors yet.</p>
                 ) : (
-                  editorCollaborators.map((collaborator) => (
-                    <div
-                      key={`${collaborator.subject ?? 'unknown'}-${collaborator.createdAt}`}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2 text-sm"
-                    >
-                      <div>
-                        <p className="m-0 font-semibold text-[var(--sea-ink)]">{formatSubject(collaborator.subject)}</p>
-                        <p className="m-0 text-xs text-[var(--sea-ink-soft)]">Added {formatRelativeTime(collaborator.createdAt)}</p>
-                      </div>
+                  editorCollaborators.map((collaborator) => {
+                    const identity = resolveCollaboratorIdentity(collaborator)
+                    return (
+                      <div
+                        key={`${collaborator.subject ?? 'unknown'}-${collaborator.createdAt}`}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2"
+                      >
+                        <div>
+                          <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">{identity.name}</p>
+                          <p className="m-0 mt-1 text-xs text-[var(--sea-ink-soft)]">{identity.email}</p>
+                          <p className="m-0 mt-1 text-[11px] text-[var(--sea-ink-soft)]">Added {formatRelativeTime(collaborator.createdAt)}</p>
+                        </div>
 
-                      {isOwner && collaborator.subject ? (
-                        <button
-                          type="button"
-                          disabled={removeCollaboratorMutation.isPending}
-                          onClick={() => {
-                            void removeCollaboratorMutation.mutateAsync(collaborator.subject as string)
-                          }}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(190,62,59,0.25)] bg-[rgba(190,62,59,0.08)] px-3 py-1.5 text-xs font-semibold text-[#9a312f] disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <UserMinus size={12} />
-                          Remove
-                        </button>
-                      ) : null}
-                    </div>
-                  ))
+                        {isOwner && collaborator.subject ? (
+                          <button
+                            type="button"
+                            disabled={removeCollaboratorMutation.isPending}
+                            onClick={() => {
+                              void removeCollaboratorMutation.mutateAsync(collaborator.subject as string)
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-[rgba(190,62,59,0.25)] bg-[rgba(190,62,59,0.08)] px-3 py-1.5 text-xs font-semibold text-[#9a312f] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <UserMinus size={12} />
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                    )
+                  })
                 )}
               </div>
             </article>
           </section>
 
           <section className="space-y-4">
-            <article className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(170deg,color-mix(in_oklab,var(--surface-strong)_88%,white)_0%,var(--surface)_100%)] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_12px_30px_rgba(23,58,64,0.08)]">
-              <h2 className="m-0 text-lg font-semibold text-[var(--sea-ink)]">Project settings</h2>
-              <p className="mb-0 mt-1 text-sm text-[var(--sea-ink-soft)]">Rename your project and keep naming clean for your team.</p>
+            <article className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
+              <h2 className="m-0 text-sm font-semibold uppercase tracking-[0.12em] text-[var(--kicker)]">Project settings</h2>
+              <p className="m-0 mt-2 text-sm text-[var(--sea-ink-soft)]">Rename your project.</p>
 
               <form
-                className="mt-4 flex flex-wrap items-center gap-2"
+                className="mt-4 flex flex-col gap-2"
                 onSubmit={(event) => {
                   event.preventDefault()
                   const normalizedName = nextTitle.trim()
-
                   if (!normalizedName || renameProjectMutation.isPending) {
                     return
                   }
@@ -341,22 +363,22 @@ export default function ProjectDashboardPanel({
                   value={nextTitle}
                   onChange={(event) => setNextTitle(event.target.value)}
                   placeholder={dashboard.project.name}
-                  className="min-w-[220px] flex-1 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-4 py-2 text-sm text-[var(--sea-ink)] outline-none"
+                  className="rounded-lg border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-2 text-sm text-[var(--sea-ink)] outline-none"
                   aria-label="Project title"
                 />
                 <button
                   type="submit"
                   disabled={renameProjectMutation.isPending || nextTitle.trim().length === 0}
-                  className="rounded-full border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-4 py-2 text-sm font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center justify-center rounded-lg border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-3 py-2 text-sm font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {renameProjectMutation.isPending ? 'Saving...' : 'Save title'}
                 </button>
               </form>
             </article>
 
-            <article className="rounded-2xl border border-[var(--line)] bg-[linear-gradient(170deg,color-mix(in_oklab,var(--surface-strong)_88%,white)_0%,var(--surface)_100%)] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_12px_30px_rgba(23,58,64,0.08)]">
-              <h2 className="m-0 text-lg font-semibold text-[var(--sea-ink)]">Invite collaborators</h2>
-              <p className="mb-0 mt-1 text-sm text-[var(--sea-ink-soft)]">Create an invite link and share it with your teammate.</p>
+            <article className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
+              <h2 className="m-0 text-sm font-semibold uppercase tracking-[0.12em] text-[var(--kicker)]">Invite collaborators</h2>
+              <p className="m-0 mt-2 text-sm text-[var(--sea-ink-soft)]">Create and copy an invite link.</p>
 
               <button
                 type="button"
@@ -364,7 +386,7 @@ export default function ProjectDashboardPanel({
                 onClick={() => {
                   void createInviteMutation.mutateAsync()
                 }}
-                className="mt-4 inline-flex items-center gap-2 rounded-full border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-4 py-2 text-sm font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[rgba(50,143,151,0.35)] bg-[rgba(79,184,178,0.16)] px-3 py-2 text-sm font-semibold text-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Copy size={14} />
                 {createInviteMutation.isPending ? 'Creating invite...' : 'Create invite link'}
@@ -389,9 +411,9 @@ export default function ProjectDashboardPanel({
             </article>
 
             {isOwner ? (
-              <article className="rounded-2xl border border-[rgba(190,62,59,0.24)] bg-[linear-gradient(160deg,rgba(255,244,242,0.78),rgba(255,249,248,0.62))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_10px_22px_rgba(70,18,16,0.08)]">
-                <h2 className="m-0 text-lg font-semibold text-[#7b2f2b]">Danger zone</h2>
-                <p className="mb-0 mt-1 text-sm text-[#8c4a46]">Delete this project permanently. Files and shared access will be removed.</p>
+              <article className="rounded-2xl border border-[rgba(190,62,59,0.24)] bg-[linear-gradient(160deg,rgba(255,244,242,0.82),rgba(255,249,248,0.72))] p-5">
+                <h2 className="m-0 text-sm font-semibold uppercase tracking-[0.12em] text-[#7b2f2b]">Danger zone</h2>
+                <p className="mb-0 mt-2 text-sm text-[#8c4a46]">Delete this project permanently.</p>
 
                 <button
                   type="button"
@@ -404,7 +426,7 @@ export default function ProjectDashboardPanel({
 
                     void deleteProjectMutation.mutateAsync()
                   }}
-                  className="mt-4 inline-flex items-center gap-2 rounded-full border border-[rgba(190,62,59,0.28)] bg-[rgba(190,62,59,0.1)] px-4 py-2 text-sm font-semibold text-[#8f302d] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[rgba(190,62,59,0.28)] bg-[rgba(190,62,59,0.1)] px-3 py-2 text-sm font-semibold text-[#8f302d] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Trash2 size={14} />
                   {deleteProjectMutation.isPending ? 'Deleting...' : 'Delete project'}
