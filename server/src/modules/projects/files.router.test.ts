@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { createHmac } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import express from 'express'
+import * as Y from 'yjs'
 import { errorHandler } from '../../http/error-handler.js'
 import { authBoundaryMiddleware } from '../auth/auth-boundary.middleware.js'
 import {
@@ -35,6 +36,32 @@ type FileRow = {
   ownerSubject: string | null
   createdAt: Date
   updatedAt: Date
+}
+
+type YjsSnapshotRow = {
+  id: string
+  fileId: string
+  sequence: number
+  updateBase64: string
+  createdAt: Date
+}
+
+type YjsUpdateRow = {
+  id: string
+  fileId: string
+  sequence: number
+  updateBase64: string
+  createdAt: Date
+}
+
+function encodeYjsSnapshot(content: string) {
+  const doc = new Y.Doc()
+  const text = doc.getText('content')
+  if (content.length > 0) {
+    text.insert(0, content)
+  }
+
+  return Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64')
 }
 
 class InMemoryBlobStore {
@@ -151,6 +178,11 @@ class InMemoryProjectsTable {
 
 class InMemoryFilesTable {
   private rows: FileRow[] = []
+
+  findByIdSync(id: string): FileRow | null {
+    const row = this.rows.find((candidate) => candidate.id === id)
+    return row ? this.cloneRow(row) : null
+  }
 
   async findMany(args: {
     where: {
@@ -292,9 +324,326 @@ class InMemoryFilesTable {
   }
 }
 
+class InMemoryYjsSnapshotsTable {
+  private rows: YjsSnapshotRow[] = []
+
+  constructor(private readonly filesTable: InMemoryFilesTable) {}
+
+  seed(row: YjsSnapshotRow) {
+    this.rows = [...this.rows, {
+      ...row,
+      createdAt: new Date(row.createdAt),
+    }]
+  }
+
+  async findMany(args: {
+    where: {
+      fileId?: string
+      file?: {
+        projectId: string
+      }
+      sequence?: {
+        lte?: number
+        gt?: number
+      }
+    }
+    orderBy: Array<{
+      createdAt?: 'desc' | 'asc'
+      sequence?: 'desc' | 'asc'
+    }> | {
+      createdAt?: 'desc' | 'asc'
+      sequence?: 'desc' | 'asc'
+    }
+    take?: number
+    select: {
+      fileId?: true
+      sequence?: true
+      updateBase64?: true
+      createdAt?: true
+      file?: {
+        select: {
+          path: true
+        }
+      }
+    }
+  }) {
+    const orderByArray = Array.isArray(args.orderBy) ? args.orderBy : [args.orderBy]
+
+    const filtered = this.rows
+      .filter((row) => {
+        if (args.where.fileId && row.fileId !== args.where.fileId) {
+          return false
+        }
+
+        if (args.where.sequence?.lte !== undefined && row.sequence > args.where.sequence.lte) {
+          return false
+        }
+
+        if (args.where.sequence?.gt !== undefined && row.sequence <= args.where.sequence.gt) {
+          return false
+        }
+
+        if (args.where.file?.projectId) {
+          const file = this.filesTable.findByIdSync(row.fileId)
+          return Boolean(file && file.projectId === args.where.file.projectId)
+        }
+
+        return true
+      })
+      .sort((left, right) => {
+        for (const order of orderByArray) {
+          if (order.createdAt) {
+            const diff = left.createdAt.getTime() - right.createdAt.getTime()
+            if (diff !== 0) {
+              return order.createdAt === 'desc' ? -diff : diff
+            }
+          }
+
+          if (order.sequence) {
+            const diff = left.sequence - right.sequence
+            if (diff !== 0) {
+              return order.sequence === 'desc' ? -diff : diff
+            }
+          }
+        }
+
+        return 0
+      })
+
+    const selected = filtered.map((row) => {
+      const file = this.filesTable.findByIdSync(row.fileId)
+      return {
+        fileId: args.select.fileId ? row.fileId : undefined,
+        sequence: args.select.sequence ? row.sequence : undefined,
+        updateBase64: args.select.updateBase64 ? row.updateBase64 : undefined,
+        createdAt: args.select.createdAt ? new Date(row.createdAt) : undefined,
+        file: args.select.file
+          ? {
+              path: file?.path ?? '',
+            }
+          : undefined,
+      }
+    })
+
+    if (args.take === undefined) {
+      return selected
+    }
+
+    return selected.slice(0, args.take)
+  }
+
+  async findFirst(args: {
+    where: {
+      fileId: string
+      sequence?: number | {
+        lte?: number
+      }
+    }
+    orderBy?: Array<{
+      sequence?: 'desc' | 'asc'
+      createdAt?: 'desc' | 'asc'
+    }>
+    select: {
+      id?: true
+      sequence?: true
+      updateBase64?: true
+    }
+  }) {
+    const orderByArray = args.orderBy ?? []
+
+    const filtered = this.rows
+      .filter((row) => {
+        if (row.fileId !== args.where.fileId) {
+          return false
+        }
+
+        if (typeof args.where.sequence === 'number') {
+          return row.sequence === args.where.sequence
+        }
+
+        if (args.where.sequence?.lte !== undefined) {
+          return row.sequence <= args.where.sequence.lte
+        }
+
+        return true
+      })
+      .sort((left, right) => {
+        for (const order of orderByArray) {
+          if (order.sequence) {
+            const diff = left.sequence - right.sequence
+            if (diff !== 0) {
+              return order.sequence === 'desc' ? -diff : diff
+            }
+          }
+
+          if (order.createdAt) {
+            const diff = left.createdAt.getTime() - right.createdAt.getTime()
+            if (diff !== 0) {
+              return order.createdAt === 'desc' ? -diff : diff
+            }
+          }
+        }
+
+        return 0
+      })
+
+    const first = filtered[0]
+    if (!first) {
+      return null
+    }
+
+    return {
+      id: args.select.id ? first.id : undefined,
+      sequence: args.select.sequence ? first.sequence : undefined,
+      updateBase64: args.select.updateBase64 ? first.updateBase64 : undefined,
+    }
+  }
+}
+
+class InMemoryYjsUpdatesTable {
+  private rows: YjsUpdateRow[] = []
+
+  constructor(private readonly filesTable: InMemoryFilesTable) {}
+
+  seed(row: YjsUpdateRow) {
+    this.rows = [...this.rows, {
+      ...row,
+      createdAt: new Date(row.createdAt),
+    }]
+  }
+
+  async findMany(args: {
+    where: {
+      fileId?: string
+      file?: {
+        projectId: string
+      }
+      sequence?: {
+        lte?: number
+        gt?: number
+      }
+    }
+    orderBy: Array<{
+      createdAt?: 'desc' | 'asc'
+      sequence?: 'desc' | 'asc'
+    }> | {
+      createdAt?: 'desc' | 'asc'
+      sequence?: 'desc' | 'asc'
+    }
+    take?: number
+    select: {
+      fileId?: true
+      sequence?: true
+      updateBase64?: true
+      createdAt?: true
+      file?: {
+        select: {
+          path: true
+        }
+      }
+    }
+  }) {
+    const orderByArray = Array.isArray(args.orderBy) ? args.orderBy : [args.orderBy]
+
+    const filtered = this.rows
+      .filter((row) => {
+        if (args.where.fileId && row.fileId !== args.where.fileId) {
+          return false
+        }
+
+        if (args.where.sequence?.lte !== undefined && row.sequence > args.where.sequence.lte) {
+          return false
+        }
+
+        if (args.where.sequence?.gt !== undefined && row.sequence <= args.where.sequence.gt) {
+          return false
+        }
+
+        if (args.where.file?.projectId) {
+          const file = this.filesTable.findByIdSync(row.fileId)
+          return Boolean(file && file.projectId === args.where.file.projectId)
+        }
+
+        return true
+      })
+      .sort((left, right) => {
+        for (const order of orderByArray) {
+          if (order.createdAt) {
+            const diff = left.createdAt.getTime() - right.createdAt.getTime()
+            if (diff !== 0) {
+              return order.createdAt === 'desc' ? -diff : diff
+            }
+          }
+
+          if (order.sequence) {
+            const diff = left.sequence - right.sequence
+            if (diff !== 0) {
+              return order.sequence === 'desc' ? -diff : diff
+            }
+          }
+        }
+
+        return 0
+      })
+
+    const selected = filtered.map((row) => {
+      const file = this.filesTable.findByIdSync(row.fileId)
+      return {
+        fileId: args.select.fileId ? row.fileId : undefined,
+        sequence: args.select.sequence ? row.sequence : undefined,
+        updateBase64: args.select.updateBase64 ? row.updateBase64 : undefined,
+        createdAt: args.select.createdAt ? new Date(row.createdAt) : undefined,
+        file: args.select.file
+          ? {
+              path: file?.path ?? '',
+            }
+          : undefined,
+      }
+    })
+
+    if (args.take === undefined) {
+      return selected
+    }
+
+    return selected.slice(0, args.take)
+  }
+
+  async findFirst(args: {
+    where: {
+      fileId: string
+      sequence?: number
+    }
+    select: {
+      id?: true
+    }
+  }) {
+    const first = this.rows.find((row) => {
+      if (row.fileId !== args.where.fileId) {
+        return false
+      }
+
+      if (args.where.sequence !== undefined) {
+        return row.sequence === args.where.sequence
+      }
+
+      return true
+    })
+
+    if (!first) {
+      return null
+    }
+
+    return {
+      id: args.select.id ? first.id : undefined,
+    }
+  }
+}
+
 function createPrismaDouble() {
   const projects = new InMemoryProjectsTable()
   const files = new InMemoryFilesTable()
+  const yjsSnapshots = new InMemoryYjsSnapshotsTable(files)
+  const yjsUpdates = new InMemoryYjsUpdatesTable(files)
   const blobStore = new InMemoryBlobStore()
 
   return {
@@ -310,10 +659,24 @@ function createPrismaDouble() {
         updateMany: files.updateMany.bind(files),
         deleteMany: files.deleteMany.bind(files),
       },
+      yjsSnapshot: {
+        findMany: yjsSnapshots.findMany.bind(yjsSnapshots),
+        findFirst: yjsSnapshots.findFirst.bind(yjsSnapshots),
+      },
+      yjsUpdate: {
+        findMany: yjsUpdates.findMany.bind(yjsUpdates),
+        findFirst: yjsUpdates.findFirst.bind(yjsUpdates),
+      },
     } as unknown as PrismaClient,
     blobStore,
     seedProject: (projectId: string, ownerSubject: string) => {
       projects.seed({ id: projectId, ownerSubject })
+    },
+    seedYjsSnapshot: (row: YjsSnapshotRow) => {
+      yjsSnapshots.seed(row)
+    },
+    seedYjsUpdate: (row: YjsUpdateRow) => {
+      yjsUpdates.seed(row)
     },
   }
 }
@@ -391,6 +754,8 @@ describe('files router', () => {
   let baseUrl = ''
   let closeServer: (() => Promise<void>) | undefined
   let seedProject: ((projectId: string, ownerSubject: string) => void) | undefined
+  let seedYjsSnapshot: ((row: YjsSnapshotRow) => void) | undefined
+  let seedYjsUpdate: ((row: YjsUpdateRow) => void) | undefined
   const createdEvents: Array<{ projectId: string; path: string }> = []
   const updatedEvents: Array<{ projectId: string; path: string; id: string }> = []
   const deletedEvents: Array<{ projectId: string; path: string; id: string }> = []
@@ -420,6 +785,8 @@ describe('files router', () => {
     baseUrl = started.baseUrl
     closeServer = started.close
     seedProject = testDb.seedProject
+    seedYjsSnapshot = testDb.seedYjsSnapshot
+    seedYjsUpdate = testDb.seedYjsUpdate
     blobStore = testDb.blobStore
   })
 
@@ -893,5 +1260,114 @@ describe('files router', () => {
     assert.equal(deleteFolderPayload.data.deleted, true)
     assert.equal(getDeletedFile.status, 404)
     assert.equal(getDeletedFilePayload.error.code, 'FILE_NOT_FOUND')
+  })
+
+  it('lists file history and restores selected version', async () => {
+    const ownerSubject = 'auth0|history-file-user'
+    const token = createJwt(ownerSubject, 'jwt-history-file-user')
+    const projectId = 'project-history-file-user'
+    seedProject?.(projectId, ownerSubject)
+
+    const created = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/history.ts',
+        content: 'console.log("head")',
+      }),
+    })
+
+    const createdPayload = await created.json()
+    const fileId = createdPayload.data.id as string
+
+    seedYjsSnapshot?.({
+      id: 'snapshot-1',
+      fileId,
+      sequence: 1,
+      updateBase64: encodeYjsSnapshot('console.log("v1")'),
+      createdAt: new Date('2026-03-29T09:00:00.000Z'),
+    })
+    seedYjsUpdate?.({
+      id: 'update-2',
+      fileId,
+      sequence: 2,
+      updateBase64: encodeYjsSnapshot('console.log("v2")'),
+      createdAt: new Date('2026-03-29T10:00:00.000Z'),
+    })
+
+    const listedHistory = await fetch(`${baseUrl}/api/files/history/file/${fileId}?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listedHistoryPayload = await listedHistory.json()
+
+    const loadedVersion = await fetch(`${baseUrl}/api/files/history/file/${fileId}/snapshot:1?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const loadedVersionPayload = await loadedVersion.json()
+
+    const restored = await fetch(`${baseUrl}/api/files/history/file/${fileId}/snapshot:1/restore`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ projectId }),
+    })
+    const restoredPayload = await restored.json()
+
+    assert.equal(listedHistory.status, 200)
+    assert.equal(Array.isArray(listedHistoryPayload.data), true)
+    assert.equal(listedHistoryPayload.data.length >= 2, true)
+    assert.equal(loadedVersion.status, 200)
+    assert.equal(loadedVersionPayload.data.content, 'console.log("v1")')
+    assert.equal(restored.status, 200)
+    assert.equal(restoredPayload.data.file.id, fileId)
+    assert.equal(restoredPayload.data.file.content, 'console.log("v1")')
+  })
+
+  it('lists project history and restores using project event id', async () => {
+    const ownerSubject = 'auth0|history-project-user'
+    const token = createJwt(ownerSubject, 'jwt-history-project-user')
+    const projectId = 'project-history-project-user'
+    seedProject?.(projectId, ownerSubject)
+
+    const created = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/project-history.ts',
+        content: 'console.log("project-head")',
+      }),
+    })
+
+    const createdPayload = await created.json()
+    const fileId = createdPayload.data.id as string
+
+    seedYjsSnapshot?.({
+      id: 'project-snapshot-1',
+      fileId,
+      sequence: 1,
+      updateBase64: encodeYjsSnapshot('console.log("project-v1")'),
+      createdAt: new Date('2026-03-29T11:00:00.000Z'),
+    })
+
+    const listedProjectHistory = await fetch(`${baseUrl}/api/files/history/project?projectId=${projectId}`, {
+      headers: authHeaders(token),
+    })
+    const listedProjectHistoryPayload = await listedProjectHistory.json()
+    const firstEvent = listedProjectHistoryPayload.data[0]
+
+    const restored = await fetch(`${baseUrl}/api/files/history/project/${encodeURIComponent(firstEvent.id)}/restore`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ projectId }),
+    })
+    const restoredPayload = await restored.json()
+
+    assert.equal(listedProjectHistory.status, 200)
+    assert.equal(Array.isArray(listedProjectHistoryPayload.data), true)
+    assert.equal(listedProjectHistoryPayload.data.length >= 1, true)
+    assert.equal(restored.status, 200)
+    assert.equal(restoredPayload.data.file.id, fileId)
+    assert.equal(restoredPayload.data.file.content, 'console.log("project-v1")')
   })
 })
