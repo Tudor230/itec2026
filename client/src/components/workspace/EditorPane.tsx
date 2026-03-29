@@ -16,7 +16,7 @@ interface EditorPaneProps {
     connectionState: 'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
     message: string | null
   }
-  onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor) => void
+  onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor, monaco: typeof import('monaco-editor')) => void
   onChange: (nextValue: string) => void
 }
 
@@ -91,8 +91,8 @@ export default function EditorPane({
                 key={file.id}
                 defaultValue={initialValue}
                 onChange={(nextValue) => onChange(nextValue ?? '')}
-                onMount={(editor) => {
-                  onEditorMount?.(editor)
+                onMount={(editor, monaco) => {
+                  onEditorMount?.(editor, monaco)
                 }}
                 beforeMount={(monaco) => {
                   defineMonacoThemes(monaco)

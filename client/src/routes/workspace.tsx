@@ -42,17 +42,26 @@ import {
   deleteFolder,
   listFiles,
   listFolders,
+  listProjectInvites,
+  listProjectMembers,
   listProjects,
+  removeProjectMember,
   renameFolder,
+  revokeProjectInvite,
+  updateMyProjectMemberProfile,
   updateFile,
+  type ActiveProjectInviteDto,
   type FileDto,
+  type ProjectMemberDto,
 } from '../services/projects-api'
 import {
+  type CollabProjectActivityPayload,
   type CollabDocDirtyStatePayload,
   type CollabFileCreatedPayload,
   type CollabFileDeletedPayload,
   type CollabFileUpdatedPayload,
 } from '../lib/collab-client'
+import { getCollaboratorColor } from '../components/workspace/collab-colors'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 import { useRunCurrentFile } from '../hooks/use-run-current-file'
 import { cn } from '../lib/utils'
@@ -102,6 +111,7 @@ function WorkspaceWithHostedAuth() {
     isLoading,
     loginWithRedirect,
     logout,
+    user,
     error,
   } = useAuth0()
   const queryClient = useQueryClient()
@@ -134,6 +144,9 @@ function WorkspaceWithHostedAuth() {
   const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
   const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
+  const [inviteLinksByInviteId, setInviteLinksByInviteId] = useState<Record<string, string>>({})
+  const [collabActivityByFileId, setCollabActivityByFileId] = useState<Record<string, string[]>>({})
+  const collabRefreshTimerRef = useRef<number | null>(null)
   const autosaveTimeoutRef = useRef<number | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
@@ -203,6 +216,60 @@ function WorkspaceWithHostedAuth() {
       }
 
       return listFolders(activeProjectId, token)
+    },
+    enabled: isAuthenticated && activeProjectId !== null,
+  })
+
+  const projectMembersQuery = useQuery({
+    queryKey: ['workspace', 'project-members', isAuthenticated, activeProjectId],
+    queryFn: async () => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId || !token) {
+        return [] as ProjectMemberDto[]
+      }
+
+      return listProjectMembers(activeProjectId, token)
+    },
+    enabled: isAuthenticated && activeProjectId !== null,
+  })
+
+  const profileSnapshotMutation = useMutation({
+    mutationFn: async () => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId || !token) {
+        return { updated: false }
+      }
+
+      const email = user?.email?.trim() || undefined
+      const fallbackFromEmail = email?.split('@')[0]?.trim() || undefined
+      const displayName = user?.name?.trim() || user?.nickname?.trim() || fallbackFromEmail
+      if (!displayName) {
+        return { updated: false }
+      }
+
+      return updateMyProjectMemberProfile(activeProjectId, { displayName, email }, token)
+    },
+    onSuccess: async (result) => {
+      if (!result.updated) {
+        return
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-members'] })
+    },
+  })
+
+  const activeInvitesQuery = useQuery({
+    queryKey: ['workspace', 'project-invites', isAuthenticated, activeProjectId],
+    queryFn: async () => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId || !token) {
+        return [] as ActiveProjectInviteDto[]
+      }
+
+      return listProjectInvites(activeProjectId, token)
     },
     enabled: isAuthenticated && activeProjectId !== null,
   })
@@ -299,6 +366,31 @@ function WorkspaceWithHostedAuth() {
       })
     }
   }, [queryClient])
+
+  const onProjectActivityChanged = useCallback((payload: CollabProjectActivityPayload) => {
+    setCollabActivityByFileId((previous) => {
+      const next = { ...previous }
+
+      Object.keys(next).forEach((fileId) => {
+        const filtered = next[fileId].filter((subject) => subject !== payload.subject)
+        if (filtered.length === 0) {
+          delete next[fileId]
+          return
+        }
+
+        next[fileId] = filtered
+      })
+
+      if (!payload.cleared && payload.fileId) {
+        const existing = next[payload.fileId] ?? []
+        if (!existing.includes(payload.subject)) {
+          next[payload.fileId] = [...existing, payload.subject]
+        }
+      }
+
+      return next
+    })
+  }, [])
 
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
@@ -622,15 +714,6 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const { collabState, onEditorMount, markSaved } = useCollabDoc({
-    projectId: activeProjectId,
-    fileId: activeFileId,
-    onFileCreated: onCollabFileCreated,
-    onFileUpdated: onCollabFileUpdated,
-    onFileDeleted: onCollabFileDeleted,
-    onDirtyStateChanged: onCollabDirtyStateChanged,
-  })
-
   const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
 
   const dirtyFileIds = files
@@ -652,13 +735,143 @@ function WorkspaceWithHostedAuth() {
     return [...new Set([...backendFolders, ...localFolders])]
   }, [activeProjectId, foldersQuery.data, virtualFoldersByProjectId])
 
-  useMutation({
+  const collabMembers = useMemo(() => {
+    const apiMembers = projectMembersQuery.data ?? []
+    const currentSubject = user?.sub ?? null
+
+    const mapped = apiMembers.map((member) => {
+      const isYou = currentSubject !== null && member.subject === currentSubject
+      const email = member.email?.trim() || 'Not available'
+      const fallbackFromEmail = email !== 'Not available'
+        ? (email.split('@')[0]?.trim() || undefined)
+        : undefined
+
+      return {
+        id: member.subject,
+        name: member.displayName?.trim() || fallbackFromEmail || 'Unknown user',
+        email,
+        role: member.role,
+        isYou,
+      }
+    })
+
+    return mapped
+  }, [projectMembersQuery.data, user])
+
+  const collaboratorNameBySubject = useMemo(() => {
+    return collabMembers.reduce<Record<string, string>>((accumulator, member) => {
+      accumulator[member.id] = member.name
+      return accumulator
+    }, {})
+  }, [collabMembers])
+
+  const resolveCollaboratorName = useCallback((subject: string) => {
+    return collaboratorNameBySubject[subject] ?? 'Collaborator'
+  }, [collaboratorNameBySubject])
+
+  const { collabState, onEditorMount, markSaved } = useCollabDoc({
+    projectId: activeProjectId,
+    fileId: activeFileId,
+    onFileCreated: onCollabFileCreated,
+    onFileUpdated: onCollabFileUpdated,
+    onFileDeleted: onCollabFileDeleted,
+    onDirtyStateChanged: onCollabDirtyStateChanged,
+    onProjectActivityChanged,
+    resolveCollaboratorName,
+  })
+
+  const collaboratorInitials = useMemo(() => {
+    return collabMembers
+      .slice(0, 3)
+      .map((member) => {
+        const words = member.name.split(/\s+/).filter((word) => word.length > 0)
+        if (words.length === 0) {
+          return member.name.slice(0, 2).toUpperCase()
+        }
+
+        if (words.length === 1) {
+          return words[0].slice(0, 2).toUpperCase()
+        }
+
+        return `${words[0][0] ?? ''}${words[1][0] ?? ''}`.toUpperCase()
+      })
+  }, [collabMembers])
+
+  const collabActivityOutlineByFileId = useMemo(() => {
+    const entries = Object.entries(collabActivityByFileId)
+    const mapped: Record<string, string> = {}
+
+    entries.forEach(([fileId, subjects]) => {
+      const firstSubject = subjects[0]
+      if (!firstSubject) {
+        return
+      }
+
+      mapped[fileId] = getCollaboratorColor(firstSubject)
+    })
+
+    return mapped
+  }, [collabActivityByFileId])
+
+  const activeInviteLinks = useMemo(() => {
+    return (activeInvitesQuery.data ?? []).map((invite) => {
+      return {
+        id: invite.id,
+        url: inviteLinksByInviteId[invite.id] ?? `Invite ${invite.id}`,
+        hasLink: Boolean(inviteLinksByInviteId[invite.id]),
+        expiresAt: invite.expiresAt,
+      }
+    })
+  }, [activeInvitesQuery.data, inviteLinksByInviteId])
+
+  useEffect(() => {
+    setInviteLinksByInviteId({})
+  }, [activeProjectId])
+
+  useEffect(() => {
+    if (!activeProjectId || !isAuthenticated) {
+      return
+    }
+
+    if (profileSnapshotMutation.isPending) {
+      return
+    }
+
+    void profileSnapshotMutation.mutateAsync()
+  }, [
+    activeProjectId,
+    isAuthenticated,
+    profileSnapshotMutation,
+    user?.email,
+    user?.name,
+    user?.nickname,
+  ])
+
+  useEffect(() => {
+    setCollabActivityByFileId({})
+  }, [activeProjectId])
+
+  const createInviteMutation = useMutation({
     mutationFn: async (projectId: string) => {
       const token = await getApiAccessToken()
+
+      if (!token) {
+        throw new Error('Authentication token is required to create invites.')
+      }
+
       return createProjectInvite(projectId, token)
     },
     onSuccess: async (invite) => {
       const inviteLink = `${window.location.origin}/invite/${invite.inviteToken}`
+
+      setInviteLinksByInviteId((previous) => {
+        return {
+          ...previous,
+          [invite.id]: inviteLink,
+        }
+      })
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-invites'] })
 
       try {
         await navigator.clipboard.writeText(inviteLink)
@@ -669,6 +882,39 @@ function WorkspaceWithHostedAuth() {
     },
     onError: (error) => {
       toastError(`Could not create invite: ${error.message}`)
+    },
+  })
+
+  const revokeInviteMutation = useMutation({
+    mutationFn: async (inviteId: string) => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId) {
+        throw new Error('Select a project before revoking invites.')
+      }
+
+      if (!token) {
+        throw new Error('Authentication token is required to revoke invites.')
+      }
+
+      return revokeProjectInvite(activeProjectId, { inviteId }, token)
+    },
+    onSuccess: async (_result, inviteId) => {
+      setInviteLinksByInviteId((previous) => {
+        if (!(inviteId in previous)) {
+          return previous
+        }
+
+        const next = { ...previous }
+        delete next[inviteId]
+        return next
+      })
+
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-invites'] })
+      success('Invite link invalidated')
+    },
+    onError: (error) => {
+      toastError(`Could not invalidate invite: ${error.message}`)
     },
   })
 
@@ -1113,7 +1359,7 @@ function WorkspaceWithHostedAuth() {
             onCloseTab={closeTabById}
             onCloseOthers={closeOthers}
   onCloseAll={closeAll}
-  collaborators={['JD', 'AS']}
+  collaborators={collaboratorInitials}
   onOpenCollaboration={() => setBottomDrawerTab('collab')}
 />
 
@@ -1161,6 +1407,7 @@ function WorkspaceWithHostedAuth() {
                 virtualFolders={virtualFolders}
                 activeFileId={activeFileId}
                 dirtyFileIds={dirtyFileIds}
+                collabActivityOutlineByFileId={collabActivityOutlineByFileId}
                 isLoading={filesQuery.isLoading || projectsQuery.isLoading}
                 errorMessage={
                   projectsQuery.isError
@@ -1297,6 +1544,20 @@ function WorkspaceWithHostedAuth() {
           <BottomDrawers
             activeTab={bottomDrawerTab}
             onActiveTabChange={setBottomDrawerTab}
+            collabMembers={collabMembers}
+            activeInviteLinks={activeInviteLinks}
+            isInvitePending={createInviteMutation.isPending}
+            onCreateInviteLink={() => {
+              if (!activeProjectId) {
+                toastError('Select a project before creating invite links.')
+                return
+              }
+
+              void createInviteMutation.mutateAsync(activeProjectId)
+            }}
+            onInvalidateInviteLink={(inviteId) => {
+              void revokeInviteMutation.mutateAsync(inviteId)
+            }}
           />
         </div>
 

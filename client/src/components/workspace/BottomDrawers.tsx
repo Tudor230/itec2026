@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   History,
+  Link2,
   Play,
+  ShieldAlert,
   Settings,
   Users,
   X,
@@ -21,6 +23,22 @@ interface BottomDrawersProps {
   activeTab?: DrawerTab | null
   onActiveTabChange?: (tab: DrawerTab | null) => void
   onClose?: () => void
+  collabMembers?: Array<{
+    id: string
+    name: string
+    email: string
+    role?: string
+    isYou?: boolean
+  }>
+  activeInviteLinks?: Array<{
+    id: string
+    url: string
+    hasLink?: boolean
+    expiresAt: string
+  }>
+  isInvitePending?: boolean
+  onCreateInviteLink?: () => void
+  onInvalidateInviteLink?: (inviteId: string) => void
 }
 
 const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: LucideIcon }[] = [
@@ -30,7 +48,16 @@ const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: Luci
   { id: 'collab', label: 'Collaboration', subtitle: 'team presence', icon: Users },
 ]
 
-export default function BottomDrawers({ activeTab: controlledActiveTab, onActiveTabChange, onClose }: BottomDrawersProps) {
+export default function BottomDrawers({
+  activeTab: controlledActiveTab,
+  onActiveTabChange,
+  onClose,
+  collabMembers = [],
+  activeInviteLinks = [],
+  isInvitePending = false,
+  onCreateInviteLink,
+  onInvalidateInviteLink,
+}: BottomDrawersProps) {
   const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
@@ -298,16 +325,76 @@ export default function BottomDrawers({ activeTab: controlledActiveTab, onActive
 
           {activeTab === 'collab' && (
             <div className="space-y-4">
-              <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-6 text-center">
-                <p className="text-sm font-medium text-[var(--sea-ink)]">Active Collaborators</p>
-                <div className="mt-4 flex justify-center -space-x-2">
-                  <div className="w-10 h-10 rounded-full border-2 border-white bg-blue-500 flex items-center justify-center text-white text-xs font-bold">JD</div>
-                  <div className="w-10 h-10 rounded-full border-2 border-white bg-teal-500 flex items-center justify-center text-white text-xs font-bold">AS</div>
-                </div>
-                <button type="button" className="mt-6 text-xs font-bold text-[var(--lagoon)] hover:underline">
-                  Invite more people
+              <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-4">
+                <button
+                  type="button"
+                  disabled={isInvitePending}
+                  onClick={() => onCreateInviteLink?.()}
+                  className="w-full rounded-lg border border-[color-mix(in_oklab,var(--lagoon-deep)_34%,var(--line)_66%)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--lagoon)_22%,white_78%),color-mix(in_oklab,var(--lagoon-deep)_18%,white_82%))] px-4 py-2.5 text-xs font-extrabold uppercase tracking-[0.08em] text-[var(--lagoon-deep)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isInvitePending ? 'Generating invite...' : 'Invite people'}
                 </button>
               </div>
+
+              <section className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-4">
+                <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Participants</p>
+                <div className="mt-3 overflow-hidden rounded-lg border border-[var(--line)]">
+                  <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] px-3 py-2 text-[10px] font-black uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
+                    <span>Name</span>
+                    <span>Email</span>
+                    <span>Role</span>
+                  </div>
+                  {collabMembers.length === 0 ? (
+                    <div className="px-3 py-3 text-xs text-[var(--sea-ink-soft)]">No participants available.</div>
+                  ) : collabMembers.map((member) => (
+                    <div key={member.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[color-mix(in_oklab,var(--line)_70%,transparent)] px-3 py-2 text-xs last:border-b-0">
+                      <span className="truncate font-semibold text-[var(--sea-ink)]">
+                        {member.name}
+                        {member.isYou ? (
+                          <span className="ml-2 rounded-full bg-[rgba(var(--lagoon-rgb),0.16)] px-2 py-[2px] text-[10px] font-black uppercase tracking-[0.08em] text-[var(--lagoon-deep)]">You</span>
+                        ) : null}
+                      </span>
+                      <span className="truncate text-[var(--sea-ink-soft)]">{member.email}</span>
+                      <span className="text-[var(--sea-ink-soft)]">{member.role ?? 'editor'}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Active invite links</p>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(var(--lagoon-rgb),0.14)] px-2 py-1 text-[10px] font-bold text-[var(--lagoon-deep)]">
+                    <Link2 size={12} /> {activeInviteLinks.length}
+                  </span>
+                </div>
+
+                {activeInviteLinks.length === 0 ? (
+                  <div className="mt-3 rounded-lg border border-dashed border-[var(--line)] px-3 py-3 text-xs text-[var(--sea-ink-soft)]">
+                    No active links yet. Generate one to invite collaborators.
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {activeInviteLinks.map((invite) => (
+                      <article key={invite.id} className="rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] px-3 py-2">
+                        <p className="m-0 truncate text-[11px] font-semibold text-[var(--sea-ink)]">
+                          {invite.hasLink ? invite.url : 'Invite link available only at creation time'}
+                        </p>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-[var(--sea-ink-soft)]">Expires {new Date(invite.expiresAt).toLocaleString()}</span>
+                          <button
+                            type="button"
+                            onClick={() => onInvalidateInviteLink?.(invite.id)}
+                            className="inline-flex items-center gap-1 rounded-md border border-[rgba(180,62,53,0.3)] bg-[rgba(180,62,53,0.08)] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.06em] text-[#9b2f27] hover:bg-[rgba(180,62,53,0.14)]"
+                          >
+                            <ShieldAlert size={12} /> Invalidate
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
 
               <div className="flex items-center gap-2 rounded-xl border border-[rgba(47,106,74,0.26)] bg-[rgba(47,106,74,0.12)] px-3 py-2 text-[11px] font-medium text-[var(--sea-ink)]">
                 <ShieldCheck size={14} className="text-[var(--kicker)]" />
