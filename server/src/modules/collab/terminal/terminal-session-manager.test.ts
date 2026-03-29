@@ -22,10 +22,31 @@ function createDeferred() {
 }
 
 class RuntimeDouble implements TerminalRuntime {
+  private sessionOpen = false
+
+  private readonly failMode: {
+    open?: boolean
+    write?: boolean
+    resize?: boolean
+    close?: boolean
+  }
+
   constructor(
     private readonly events: string[],
     private readonly prewarmDeferred: ReturnType<typeof createDeferred>,
-  ) {}
+    failMode?: {
+      open?: boolean
+      write?: boolean
+      resize?: boolean
+      close?: boolean
+    },
+  ) {
+    this.failMode = failMode ?? {}
+  }
+
+  isSessionOpen() {
+    return this.sessionOpen
+  }
 
   async prewarm(): Promise<void> {
     this.events.push('prewarm:start')
@@ -38,22 +59,44 @@ class RuntimeDouble implements TerminalRuntime {
     _onOutput: (chunk: RuntimeOutputChunk) => void,
     _initialSize?: RuntimeTerminalSize,
   ): Promise<void> {
+    if (this.failMode.open) {
+      throw new Error('open failed')
+    }
+
     this.events.push('openSession')
+    this.sessionOpen = true
   }
 
   async writeInput(): Promise<void> {
+    if (this.failMode.write) {
+      this.sessionOpen = false
+      throw new Error('write failed')
+    }
+
     this.events.push('writeInput')
   }
 
   async resizeSession(): Promise<void> {
+    if (this.failMode.resize) {
+      this.sessionOpen = false
+      throw new Error('resize failed')
+    }
+
     this.events.push('resizeSession')
   }
 
   async closeSession(): Promise<void> {
+    if (this.failMode.close) {
+      this.sessionOpen = false
+      throw new Error('close failed')
+    }
+
     this.events.push('closeSession')
+    this.sessionOpen = false
   }
 
   dispose(): void {
+    this.sessionOpen = false
     this.events.push('dispose')
   }
 }
@@ -205,5 +248,71 @@ describe('terminal session manager', () => {
 
     const ownerInput = await manager.processInput(projectId, ownerSubject, ownerSubject, 'echo owner\n')
     assert.equal(ownerInput.accepted, true)
+  })
+
+  it('rejects input after runtime drops session unexpectedly', async () => {
+    const events: string[] = []
+    const manager = new TerminalSessionManager(
+      () => new RuntimeDouble(events, createDeferred(), { write: true }),
+      undefined,
+      {
+        resolveDefaultCwd: () => '/workspace/project',
+      },
+    )
+
+    const projectId = 'project-1'
+    const ownerSubject = 'owner-1'
+
+    manager.markProjectJoined(projectId, ownerSubject)
+
+    const opened = await manager.openSession(projectId, ownerSubject, ownerSubject, () => undefined, {
+      cols: 120,
+      rows: 40,
+    })
+    assert.equal(opened.accepted, true)
+
+    const firstInput = await manager.processInput(projectId, ownerSubject, ownerSubject, 'echo test\n')
+    assert.equal(firstInput.accepted, false)
+    assert.equal(firstInput.reason, 'write failed')
+
+    const secondInput = await manager.processInput(projectId, ownerSubject, ownerSubject, 'echo test\n')
+    assert.equal(secondInput.accepted, false)
+    assert.equal(secondInput.reason, 'Terminal session is not open')
+  })
+
+  it('rejects resize when runtime session is already closed', async () => {
+    const events: string[] = []
+    const manager = new TerminalSessionManager(
+      () => new RuntimeDouble(events, createDeferred(), { resize: true }),
+      undefined,
+      {
+        resolveDefaultCwd: () => '/workspace/project',
+      },
+    )
+
+    const projectId = 'project-1'
+    const ownerSubject = 'owner-1'
+
+    manager.markProjectJoined(projectId, ownerSubject)
+
+    const opened = await manager.openSession(projectId, ownerSubject, ownerSubject, () => undefined, {
+      cols: 120,
+      rows: 40,
+    })
+    assert.equal(opened.accepted, true)
+
+    const firstResize = await manager.resizeSession(projectId, ownerSubject, ownerSubject, {
+      cols: 100,
+      rows: 30,
+    })
+    assert.equal(firstResize.accepted, false)
+    assert.equal(firstResize.reason, 'resize failed')
+
+    const secondResize = await manager.resizeSession(projectId, ownerSubject, ownerSubject, {
+      cols: 90,
+      rows: 28,
+    })
+    assert.equal(secondResize.accepted, false)
+    assert.equal(secondResize.reason, 'Terminal session is not open')
   })
 })

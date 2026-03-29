@@ -4,27 +4,22 @@ import {
   History,
   Send,
   Plus,
-  Zap,
-  Code2,
-  Bug,
-  TestTube,
   X,
-  MessageSquareText,
-  Clock3,
-  Bot,
-  ChevronRight,
+  MessagesSquare,
+  CircleDashed,
+  Pencil,
+  Trash2,
+  FileCode2,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import {
-  requestAiEditCurrentFile,
-  type AiEditResponse,
-  type StructuredDiffLine,
-} from '../../services/ai-api'
-import { workspaceHudChipClass } from './ui-classes'
+import { requestAiEditCurrentFile } from '../../services/ai-api'
+import type { StructuredDiffLine } from '../../services/ai-api'
+import type { WorkspaceAiResponseCard } from './ai-response-types'
 
 export type SidebarTab = 'ai' | 'history'
 
 interface ActiveFileContext {
+  fileId: string
   path: string
   content: string
   language?: string
@@ -37,14 +32,95 @@ interface RightSidebarProps {
   setActiveTab: (tab: SidebarTab) => void
   activeFileContext: ActiveFileContext | null
   getAccessToken: () => Promise<string | null>
+  onAiResponseReady: (card: WorkspaceAiResponseCard) => void
+  onJumpToSuggestionFile: (fileId: string) => void
 }
 
 interface ChatMessage {
   id: string
   role: 'assistant' | 'user' | 'system'
   text?: string
-  aiResponse?: AiEditResponse
+  aiResponse?: {
+    summary: string
+    warnings: string[]
+    diffLines: StructuredDiffLine[]
+  }
+  fileId?: string | null
+  filePath?: string
   createdAt: string
+}
+
+interface ChatThread {
+  id: string
+  title: string
+  messages: ChatMessage[]
+  createdAt: string
+  updatedAt: string
+}
+
+interface ChatState {
+  threads: ChatThread[]
+  activeThreadId: string
+}
+
+function createChatThread(): ChatThread {
+  const now = new Date().toISOString()
+
+  return {
+    id: crypto.randomUUID(),
+    title: 'New chat',
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+  }
+}
+
+function createThreadTitle(prompt: string) {
+  const normalized = prompt.trim().replace(/\s+/g, ' ')
+  if (!normalized) {
+    return 'New chat'
+  }
+
+  if (normalized.length <= 40) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, 40)}...`
+}
+
+function createRenamedThreadTitle(nextTitle: string) {
+  const normalized = nextTitle.trim().replace(/\s+/g, ' ')
+  if (!normalized) {
+    return 'New chat'
+  }
+
+  if (normalized.length <= 40) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, 40)}...`
+}
+
+function toRelativeTime(timestamp: string) {
+  const deltaMs = Date.now() - new Date(timestamp).getTime()
+  const deltaSeconds = Math.max(0, Math.floor(deltaMs / 1000))
+
+  if (deltaSeconds < 60) {
+    return 'just now'
+  }
+
+  const minutes = Math.floor(deltaSeconds / 60)
+  if (minutes < 60) {
+    return `${minutes}m ago`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    return `${hours}h ago`
+  }
+
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
 }
 
 function toLanguageFromPath(path: string) {
@@ -62,16 +138,36 @@ function toLanguageFromPath(path: string) {
   return 'plaintext'
 }
 
-function DiffLine({ line }: { line: StructuredDiffLine }) {
-  if (line.type === 'add') {
-    return <div className="font-mono text-[10px] text-emerald-700">+ {line.content}</div>
+function hasUserMessages(thread: ChatThread | null) {
+  if (!thread) {
+    return false
   }
 
-  if (line.type === 'remove') {
-    return <div className="font-mono text-[10px] text-rose-700">- {line.content}</div>
-  }
+  return thread.messages.some((message) => message.role === 'user')
+}
 
-  return <div className="font-mono text-[10px] text-[var(--sea-ink-soft)]">  {line.content}</div>
+function uniqueModifiedFiles(messages: ChatMessage[]) {
+  const seen = new Set<string>()
+  const rows: Array<{ fileId: string; filePath: string; responseId: string }> = []
+
+  messages.forEach((message) => {
+    if (!message.aiResponse || !message.fileId || !message.filePath) {
+      return
+    }
+
+    if (seen.has(message.fileId)) {
+      return
+    }
+
+    seen.add(message.fileId)
+    rows.push({
+      fileId: message.fileId,
+      filePath: message.filePath,
+      responseId: message.id,
+    })
+  })
+
+  return rows
 }
 
 export default function RightSidebar({
@@ -81,74 +177,132 @@ export default function RightSidebar({
   setActiveTab,
   activeFileContext,
   getAccessToken,
+  onAiResponseReady,
+  onJumpToSuggestionFile,
 }: RightSidebarProps) {
   const [chatInput, setChatInput] = useState('')
   const [isSending, setIsSending] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'assistant-welcome',
-      role: 'assistant',
-      text: "Hello! I'm your iTECify assistant. Ask for a file-aware edit and I'll return structured hunks.",
-      createdAt: new Date().toISOString(),
-    },
-  ])
+  const [threadRenameId, setThreadRenameId] = useState<string | null>(null)
+  const [threadRenameDraft, setThreadRenameDraft] = useState('')
+  const [chatState, setChatState] = useState<ChatState>(() => {
+    const initialThread = createChatThread()
 
-  const quickActions = [
-    { label: 'Refactor', icon: Zap, prompt: 'Refactor this file for readability while preserving behavior.' },
-    { label: 'Explain', icon: Code2, prompt: 'Explain this file and suggest safe improvements.' },
-    { label: 'Fix Bug', icon: Bug, prompt: 'Find and fix likely bugs in this file.' },
-    { label: 'Tests', icon: TestTube, prompt: 'Suggest tests for this file and any missing edge cases.' },
-  ]
+    return {
+      threads: [initialThread],
+      activeThreadId: initialThread.id,
+    }
+  })
 
-  const historyRows = [
-    { time: '2m ago', user: 'You', action: 'Refactored auth logic', type: 'commit' as const },
-    { time: '1h ago', user: 'Sarah', action: 'Fixed CSS grid issue', type: 'merge' as const },
-    { time: '3h ago', user: 'You', action: 'Initial project setup', type: 'commit' as const },
-  ]
+  const activeThread = useMemo(() => {
+    return chatState.threads.find((thread) => thread.id === chatState.activeThreadId) ?? null
+  }, [chatState.activeThreadId, chatState.threads])
+
+  const chatHistoryRows = useMemo(() => {
+    return chatState.threads.map((thread) => {
+      const messageCount = thread.messages.filter((message) => message.role !== 'system').length
+
+      return {
+        id: thread.id,
+        title: thread.title,
+        messageCount,
+        updatedAt: thread.updatedAt,
+      }
+    })
+  }, [chatState.threads])
+
+  const messages = activeThread?.messages ?? []
+  const modifiedFiles = useMemo(() => uniqueModifiedFiles(messages), [messages])
 
   const canSend = useMemo(() => {
-    return chatInput.trim().length > 0 && activeFileContext !== null && !isSending
-  }, [activeFileContext, chatInput, isSending])
+    return chatInput.trim().length > 0 && activeFileContext !== null && !isSending && activeThread !== null
+  }, [activeFileContext, activeThread, chatInput, isSending])
 
-  async function onSend() {
-    const trimmedPrompt = chatInput.trim()
-    if (!trimmedPrompt || !activeFileContext || isSending) {
+  function updateThread(threadId: string, transform: (thread: ChatThread) => ChatThread) {
+    setChatState((previous) => {
+      const threadIndex = previous.threads.findIndex((thread) => thread.id === threadId)
+      if (threadIndex < 0) {
+        return previous
+      }
+
+      const currentThread = previous.threads[threadIndex]
+      const nextThread = transform(currentThread)
+      const remainingThreads = previous.threads.filter((thread) => thread.id !== threadId)
+
+      return {
+        ...previous,
+        threads: [nextThread, ...remainingThreads],
+      }
+    })
+  }
+
+  function appendMessageToThread(threadId: string, message: ChatMessage) {
+    updateThread(threadId, (thread) => {
+      const shouldPromoteTitle = thread.title === 'New chat' && message.role === 'user' && message.text
+
+      return {
+        ...thread,
+        title: shouldPromoteTitle ? createThreadTitle(message.text ?? '') : thread.title,
+        updatedAt: message.createdAt,
+        messages: [...thread.messages, message],
+      }
+    })
+  }
+
+  function deleteThread(threadId: string) {
+    setChatState((previous) => {
+      const nextThreads = previous.threads.filter((thread) => thread.id !== threadId)
+      const fallbackThreads = nextThreads.length > 0 ? nextThreads : [createChatThread()]
+
+      const nextActiveId = previous.activeThreadId === threadId
+        ? fallbackThreads[0]?.id ?? previous.activeThreadId
+        : previous.activeThreadId
+
+      return {
+        activeThreadId: nextActiveId,
+        threads: fallbackThreads,
+      }
+    })
+  }
+
+  function createNewThread() {
+    if (hasUserMessages(activeThread) === false) {
       return
     }
 
-    const requestId = crypto.randomUUID()
-    const nextLanguage = activeFileContext.language ?? toLanguageFromPath(activeFileContext.path)
+    const nextThread = createChatThread()
 
-    console.log('[ai][sidebar] interaction:start', {
-      requestId,
-      filePath: activeFileContext.path,
-      promptLength: trimmedPrompt.length,
-      fileContentLength: activeFileContext.content.length,
-      language: nextLanguage,
+    setChatState((previous) => {
+      return {
+        activeThreadId: nextThread.id,
+        threads: [nextThread, ...previous.threads],
+      }
     })
 
     setChatInput('')
-    setMessages((previous) => {
-      return [
-        ...previous,
-        {
-          id: `${requestId}-user`,
-          role: 'user',
-          text: trimmedPrompt,
-          createdAt: new Date().toISOString(),
-        },
-      ]
+  }
+
+  async function onSend() {
+    const trimmedPrompt = chatInput.trim()
+    if (!trimmedPrompt || !activeFileContext || isSending || !activeThread) {
+      return
+    }
+
+    const targetThreadId = activeThread.id
+    const requestId = crypto.randomUUID()
+    const nextLanguage = activeFileContext.language ?? toLanguageFromPath(activeFileContext.path)
+
+    setChatInput('')
+    appendMessageToThread(targetThreadId, {
+      id: `${requestId}-user`,
+      role: 'user',
+      text: trimmedPrompt,
+      createdAt: new Date().toISOString(),
     })
 
     setIsSending(true)
 
     try {
       const accessToken = await getAccessToken()
-      console.log('[ai][sidebar] interaction:request', {
-        requestId,
-        hasAccessToken: Boolean(accessToken),
-      })
-
       const aiResponse = await requestAiEditCurrentFile({
         prompt: trimmedPrompt,
         filePath: activeFileContext.path,
@@ -156,47 +310,75 @@ export default function RightSidebar({
         language: nextLanguage,
       }, accessToken)
 
-      console.log('[ai][sidebar] interaction:success', {
-        requestId,
-        hunkCount: aiResponse.diff.hunks.length,
-        warningCount: aiResponse.warnings.length,
-      })
+      const responseMessage: ChatMessage = {
+        id: `${requestId}-assistant`,
+        role: 'assistant',
+        aiResponse: {
+          summary: aiResponse.summary,
+          warnings: aiResponse.warnings,
+          diffLines: aiResponse.diff.hunks.flatMap((hunk) => hunk.lines),
+        },
+        fileId: activeFileContext.fileId,
+        filePath: activeFileContext.path,
+        createdAt: new Date().toISOString(),
+      }
 
-      setMessages((previous) => {
-        return [
-          ...previous,
-          {
-            id: `${requestId}-assistant`,
-            role: 'assistant',
-            aiResponse,
-            createdAt: new Date().toISOString(),
-          },
-        ]
+      appendMessageToThread(targetThreadId, responseMessage)
+
+      onAiResponseReady({
+        responseId: responseMessage.id,
+        threadId: targetThreadId,
+        fileId: activeFileContext.fileId,
+        filePath: activeFileContext.path,
+        summary: aiResponse.summary,
+        updatedContent: aiResponse.updatedContent,
+        diff: aiResponse.diff,
+        warnings: aiResponse.warnings,
       })
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown AI request error'
-      console.error('[ai][sidebar] interaction:error', {
-        requestId,
-        reason,
-      })
 
-      setMessages((previous) => {
-        return [
-          ...previous,
-          {
-            id: `${requestId}-system-error`,
-            role: 'system',
-            text: `AI request failed: ${reason}`,
-            createdAt: new Date().toISOString(),
-          },
-        ]
+      appendMessageToThread(targetThreadId, {
+        id: `${requestId}-system-error`,
+        role: 'system',
+        text: `AI request failed: ${reason}`,
+        createdAt: new Date().toISOString(),
       })
     } finally {
       setIsSending(false)
     }
   }
 
-  if (!isOpen) return null
+  function beginRenameThread(threadId: string, currentTitle: string) {
+    setThreadRenameId(threadId)
+    setThreadRenameDraft(currentTitle)
+  }
+
+  function commitRenameThread() {
+    if (!threadRenameId) {
+      return
+    }
+
+    const nextTitle = createRenamedThreadTitle(threadRenameDraft)
+    updateThread(threadRenameId, (thread) => {
+      return {
+        ...thread,
+        title: nextTitle,
+      }
+    })
+
+    setThreadRenameId(null)
+    setThreadRenameDraft('')
+  }
+
+  function cancelRenameThread() {
+    setThreadRenameId(null)
+    setThreadRenameDraft('')
+  }
+
+  if (!isOpen) {
+    return null
+  }
 
   return (
     <div className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))]">
@@ -238,10 +420,7 @@ export default function RightSidebar({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => {
-              setMessages((previous) => previous.slice(0, 1))
-              console.log('[ai][sidebar] interaction:new-thread')
-            }}
+            onClick={createNewThread}
             aria-label="Start new assistant thread"
             className="rounded-lg p-1.5 text-[var(--sea-ink-soft)] transition-colors hover:bg-[rgba(0,0,0,0.05)]"
             title="New thread"
@@ -262,167 +441,220 @@ export default function RightSidebar({
 
       <div className="relative w-full flex-1 overflow-y-auto p-4">
         {activeTab === 'ai' ? (
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] p-4 shadow-[0_16px_30px_rgba(9,24,30,0.16)]">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-[rgba(var(--lagoon-rgb),0.12)] text-[var(--lagoon)]">
-                    <Bot size={18} />
-                  </div>
-                  <div>
-                    <h3 className="m-0 text-sm font-extrabold text-[var(--sea-ink)]">Pair AI</h3>
-                    <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
-                      contextual assistant
-                    </p>
-                  </div>
-                </div>
-
-                    <span className={workspaceHudChipClass}>
-                      <Clock3 size={11} /> online
-                    </span>
-                  </div>
-
-              <p className="m-0 text-xs text-[var(--sea-ink-soft)]">
-                {activeFileContext
-                  ? `Working against ${activeFileContext.path}`
-                  : 'Open a file to send file-aware prompts.'}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              {quickActions.map((action) => (
-                <button
-                  type="button"
-                  key={action.label}
-                  onClick={() => {
-                    setChatInput(action.prompt)
-                    console.log('[ai][sidebar] interaction:quick-action', {
-                      label: action.label,
-                    })
-                  }}
-                  className="group flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.36)] p-2 transition-all hover:border-[var(--lagoon)] hover:bg-[rgba(var(--lagoon-rgb),0.08)]"
-                >
-                  <action.icon size={12} className="text-[var(--sea-ink-soft)] group-hover:text-[var(--lagoon)]" />
-                  <span className="text-[10px] font-bold text-[var(--sea-ink-soft)] group-hover:text-[var(--sea-ink)]">
-                    {action.label}
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <div className="space-y-4">
-              {messages.map((message) => (
+          <div className="space-y-4">
+            {messages.length === 0 ? (
+              <div className="relative overflow-hidden rounded-2xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.22)] px-4 py-8 text-center">
                 <div
-                  key={message.id}
-                  className={cn('flex flex-col gap-1', message.role === 'user' ? 'items-end' : 'items-start')}
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(var(--lagoon-rgb),0.12),transparent_38%),radial-gradient(circle_at_82%_78%,rgba(47,106,74,0.12),transparent_40%)]"
+                />
+                <div className="relative space-y-2">
+                  <div className="mx-auto grid h-8 w-8 place-items-center rounded-full border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.4)] text-[var(--lagoon)]">
+                    <CircleDashed size={14} />
+                  </div>
+                  <p className="m-0 text-xs font-semibold text-[var(--sea-ink)]">
+                    Describe the change you want for the open file.
+                  </p>
+                  <p className="m-0 text-[11px] text-[var(--sea-ink-soft)]">
+                    I will propose code changes directly in your editor.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={cn('flex flex-col gap-1', message.role === 'user' ? 'items-end' : 'items-start')}
+              >
+                <div
+                  className={cn(
+                    'max-w-[95%] rounded-2xl border p-3 text-xs',
+                    message.role === 'user' &&
+                      'rounded-tr-none border-[var(--lagoon)] bg-[rgba(var(--lagoon-rgb),0.12)] text-[var(--sea-ink)]',
+                    message.role === 'assistant' &&
+                      'rounded-tl-none border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.56)] text-[var(--sea-ink)]',
+                    message.role === 'system' &&
+                      'rounded-tl-none border-rose-300 bg-rose-50 text-rose-800',
+                  )}
                 >
-                  <div
-                    className={cn(
-                      'max-w-[95%] rounded-2xl border p-3 text-xs',
-                      message.role === 'user' &&
-                        'rounded-tr-none border-[var(--lagoon)] bg-[rgba(var(--lagoon-rgb),0.12)] text-[var(--sea-ink)]',
-                      message.role === 'assistant' &&
-                        'rounded-tl-none border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.56)] text-[var(--sea-ink)]',
-                      message.role === 'system' &&
-                        'rounded-tl-none border-rose-300 bg-rose-50 text-rose-800',
-                    )}
-                  >
-                    {message.text ? <div>{message.text}</div> : null}
+                  {message.text ? <div>{message.text}</div> : null}
 
-                    {message.aiResponse ? (
-                      <div className="space-y-3">
-                        <div className="text-xs font-semibold text-[var(--sea-ink)]">{message.aiResponse.summary}</div>
+                  {message.aiResponse ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold text-[var(--sea-ink)]">
+                        {message.aiResponse.summary}
+                      </div>
 
-                        <div className="space-y-2 rounded-lg border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.35)] p-2">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
-                            {message.aiResponse.diff.oldPath} {'->'} {message.aiResponse.diff.newPath}
+                      {message.aiResponse.diffLines.length > 0 ? (
+                        <div className="overflow-hidden rounded-lg border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.26)]">
+                          <div className="border-b border-[var(--line)] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
+                            Proposed diff
                           </div>
-                          {message.aiResponse.diff.hunks.map((hunk, index) => (
-                            <div key={`${message.id}-hunk-${index}`} className="rounded-md border border-[var(--line)] bg-white/30 p-2">
-                              <div className="mb-1 font-mono text-[10px] text-[var(--sea-ink-soft)]">
-                                @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
-                              </div>
-                              <div className="space-y-[2px]">
-                                {hunk.lines.map((line, lineIndex) => (
-                                  <DiffLine key={`${message.id}-hunk-${index}-line-${lineIndex}`} line={line} />
-                                ))}
-                              </div>
+                          <code className="m-0 block max-h-56 overflow-auto px-2 py-1.5 text-[10px] leading-5 text-[var(--sea-ink)]">
+                            {message.aiResponse.diffLines.map((line, lineIndex) => {
+                              const prefix = line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '
+                              const tone = line.type === 'add'
+                                ? 'text-emerald-700'
+                                : line.type === 'remove'
+                                  ? 'text-rose-700'
+                                  : 'text-[var(--sea-ink-soft)]'
+
+                              return (
+                                <div key={`${message.id}-diff-${lineIndex}`} className={cn('font-mono whitespace-pre', tone)}>
+                                  {prefix} {line.content}
+                                </div>
+                              )
+                            })}
+                          </code>
+                        </div>
+                      ) : null}
+
+                      {message.aiResponse.warnings.length > 0 ? (
+                        <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-2">
+                          {message.aiResponse.warnings.map((warning, warningIndex) => (
+                            <div key={`${message.id}-warning-${warningIndex}`} className="text-[10px] text-amber-800">
+                              {warning}
                             </div>
                           ))}
                         </div>
-
-                        <details className="rounded-lg border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.25)] p-2">
-                          <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
-                            Updated content preview
-                          </summary>
-                          <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded bg-[rgba(var(--bg-rgb),0.42)] p-2 font-mono text-[10px] text-[var(--sea-ink)]">
-                            {message.aiResponse.updatedContent}
-                          </pre>
-                        </details>
-
-                        {message.aiResponse.warnings.length > 0 ? (
-                          <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-2">
-                            {message.aiResponse.warnings.map((warning, warningIndex) => (
-                              <div key={`${message.id}-warning-${warningIndex}`} className="text-[10px] text-amber-800">
-                                {warning}
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                  <span className="ml-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
-                    {new Date(message.createdAt).toLocaleTimeString()}
-                  </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
-              ))}
+                <span className="ml-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
+                  {new Date(message.createdAt).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
 
-              {isSending ? (
-                <div className="flex max-w-[92%] items-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.2)] px-3 py-2 text-[10px] font-semibold text-[var(--sea-ink-soft)]">
-                  <MessageSquareText size={12} />
-                  Processing AI request...
-                </div>
-              ) : (
-                <div className="flex max-w-[92%] items-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.2)] px-3 py-2 text-[10px] font-semibold text-[var(--sea-ink-soft)]">
-                  <MessageSquareText size={12} />
-                  Ask for file-aware edits, tests, or architecture checks.
-                </div>
-              )}
-            </div>
+            {modifiedFiles.length > 0 ? (
+              <div className="space-y-2">
+                {modifiedFiles.map((row) => (
+                  <button
+                    key={row.responseId}
+                    type="button"
+                    onClick={() => {
+                      onJumpToSuggestionFile(row.fileId)
+                    }}
+                    className="flex w-full items-center justify-between rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.36)] px-3 py-2 text-left transition-colors hover:border-[var(--lagoon)] hover:bg-[rgba(var(--lagoon-rgb),0.08)]"
+                  >
+                    <span className="flex min-w-0 items-center gap-2 text-xs font-semibold text-[var(--sea-ink)]">
+                      <FileCode2 size={12} className="shrink-0" />
+                      <span className="truncate">{row.filePath}</span>
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
+                      View changes
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {isSending ? (
+              <div className="flex max-w-[92%] items-center gap-2 rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.2)] px-3 py-2 text-[10px] font-semibold text-[var(--sea-ink-soft)]">
+                Processing AI request...
+              </div>
+            ) : null}
           </div>
         ) : (
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] p-3">
-              <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-[var(--kicker)]">
-                Session Chronicle
-              </p>
-              <p className="m-0 mt-1 text-xs text-[var(--sea-ink-soft)]">Recent activity in this workspace.</p>
-            </div>
+          <div className="space-y-2">
+            {chatHistoryRows.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
+                No chats yet. Start a prompt to build your history.
+              </div>
+            ) : (
+              chatHistoryRows.map((thread) => {
+                const isActive = thread.id === chatState.activeThreadId
+                const isRenameActive = threadRenameId === thread.id
 
-            <div className="relative space-y-8 pl-6 before:absolute before:bottom-2 before:left-2 before:top-2 before:w-[2px] before:bg-[var(--line)]">
-              {historyRows.map((item, i) => (
-                <div key={i} className="relative group">
+                return (
                   <div
+                    key={thread.id}
                     className={cn(
-                      'absolute -left-6 top-1 h-4 w-4 rounded-full border-2 border-[var(--surface-strong)] transition-transform group-hover:scale-125',
-                      item.type === 'commit'
-                        ? 'bg-[var(--lagoon)]'
-                        : 'bg-[color-mix(in_oklab,var(--palm)_62%,var(--lagoon)_38%)]',
+                      'w-full rounded-lg border px-2 py-1.5 transition-colors',
+                      isActive
+                        ? 'border-[var(--lagoon)] bg-[rgba(var(--lagoon-rgb),0.08)]'
+                        : 'border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] hover:bg-[rgba(var(--chip-bg-rgb),0.4)]',
                     )}
-                  />
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-[var(--sea-ink)]">{item.user}</span>
-                      <span className="text-[9px] text-[var(--sea-ink-soft)]">{item.time}</span>
+                  >
+                    <div className="flex items-center gap-1">
+                      {isRenameActive ? (
+                        <input
+                          value={threadRenameDraft}
+                          onChange={(event) => {
+                            setThreadRenameDraft(event.target.value)
+                          }}
+                          autoFocus
+                          onBlur={commitRenameThread}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              commitRenameThread()
+                            }
+
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              cancelRenameThread()
+                            }
+                          }}
+                          className="min-w-0 flex-1 rounded border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.32)] px-2 py-1 text-xs font-semibold text-[var(--sea-ink)] outline-none focus:border-[var(--lagoon)]"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setChatState((previous) => {
+                              return {
+                                ...previous,
+                                activeThreadId: thread.id,
+                              }
+                            })
+                            setActiveTab('ai')
+                          }}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <p className="m-0 flex min-w-0 items-center gap-1 text-xs font-bold text-[var(--sea-ink)]">
+                            <MessagesSquare size={12} className="shrink-0" />
+                            <span className="truncate">{thread.title}</span>
+                          </p>
+                        </button>
+                      )}
+
+                      <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
+                        {toRelativeTime(thread.updatedAt)}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          beginRenameThread(thread.id, thread.title)
+                        }}
+                        className="rounded p-1 text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
+                        title="Rename chat"
+                      >
+                        <Pencil size={11} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deleteThread(thread.id)
+                        }}
+                        className="rounded p-1 text-[var(--sea-ink-soft)] transition-colors hover:text-rose-700"
+                        title="Delete chat"
+                      >
+                        <Trash2 size={11} />
+                      </button>
                     </div>
-                    <p className="cursor-pointer text-xs text-[var(--sea-ink-soft)] transition-colors group-hover:text-[var(--sea-ink)]">
-                      {item.action} <ChevronRight size={12} className="mb-[1px] inline" />
+
+                    <p className="m-0 mt-0.5 pl-5 text-[10px] font-semibold text-[var(--sea-ink-soft)]">
+                      {thread.messageCount} messages
                     </p>
                   </div>
-                </div>
-              ))}
-            </div>
+                )
+              })
+            )}
           </div>
         )}
       </div>
@@ -440,15 +672,7 @@ export default function RightSidebar({
                   return
                 }
 
-                if (event.nativeEvent.isComposing) {
-                  return
-                }
-
-                if (event.shiftKey) {
-                  return
-                }
-
-                if (event.altKey) {
+                if (event.nativeEvent.isComposing || event.shiftKey || event.altKey) {
                   return
                 }
 
