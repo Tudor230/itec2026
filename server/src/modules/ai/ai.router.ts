@@ -119,6 +119,12 @@ export function createAiRouter() {
         language: input.language,
       })
 
+      console.log('[ai] interaction:raw-response', {
+        requestId,
+        rawLength: rawResponse.length,
+        rawResponse,
+      })
+
       const rawJson = parseJsonPayload(rawResponse)
       const parsedOutput = aiResponseSchema.safeParse(rawJson)
 
@@ -137,6 +143,13 @@ export function createAiRouter() {
         })
         return
       }
+
+      console.log('[ai] interaction:parsed-response', {
+        requestId,
+        parsedWarningCount: parsedOutput.data.warnings.length,
+        parsedHunkCount: parsedOutput.data.diff.hunks.length,
+        parsedResponse: parsedOutput.data,
+      })
 
       console.log('[ai] interaction:success', {
         requestId,

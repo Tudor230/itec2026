@@ -12,6 +12,7 @@ export interface RuntimeTerminalSize {
 }
 
 export interface TerminalRuntime {
+  isSessionOpen(): boolean
   prewarm?(context: { cwd: string; projectId: string; ownerSubject: string }): Promise<void>
   openSession(
     context: { cwd: string; projectId: string; ownerSubject: string },

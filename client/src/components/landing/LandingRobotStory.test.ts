@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clampIntroProgress,
   resolveLandingActionVariant,
+  resolveSection,
   resolveVisualProgress,
   shouldRelockIntro,
   shouldUnlockIntro,
@@ -78,5 +79,25 @@ describe('LandingRobotStory intro progress gating', () => {
     expect(shouldUnlockIntro(1)).toBe(false)
     expect(shouldUnlockIntro(1.17)).toBe(false)
     expect(shouldUnlockIntro(1.18)).toBe(true)
+  })
+})
+
+describe('LandingRobotStory section resolver', () => {
+  it('faces info sections at the right times', () => {
+    expect(resolveSection(0.4)).toBe('split')
+    expect(resolveSection(0.95)).toBe('auth')
+  })
+
+  it('faces forward between info cards and during end hold lookback', () => {
+    expect(resolveSection(0.8)).toBe('hero')
+    expect(resolveSection(1.08)).toBe('auth')
+    expect(resolveSection(1.09)).toBe('hero')
+    expect(resolveSection(1.18)).toBe('hero')
+  })
+
+  it('honors exact section boundaries', () => {
+    expect(resolveSection(0.72)).toBe('hero')
+    expect(resolveSection(0.9)).toBe('auth')
+    expect(resolveSection(1.09)).toBe('hero')
   })
 })

@@ -120,6 +120,31 @@ export class TerminalSessionManager {
     return next
   }
 
+  private async runAfterSessionCloseHook(session: TerminalSession) {
+    try {
+      await this.sessionHooks.afterSessionClose?.({
+        projectId: session.projectId,
+        ownerSubject: session.ownerSubject,
+      })
+    } catch {
+      // Keep terminal actions stable even if optional close hook fails.
+    }
+  }
+
+  private async reconcileSessionOpenState(session: TerminalSession) {
+    if (!session.isSessionOpen) {
+      return
+    }
+
+    if (session.runtime.isSessionOpen()) {
+      return
+    }
+
+    session.isSessionOpen = false
+    session.emitOutput = null
+    await this.runAfterSessionCloseHook(session)
+  }
+
   private emitRuntimeError(session: TerminalSession, error: unknown) {
     if (!session.emitOutput) {
       return
@@ -436,6 +461,8 @@ export class TerminalSessionManager {
 
     try {
       await this.queueSessionOperation(session, async () => {
+        await this.reconcileSessionOpenState(session)
+
         if (session.isSessionOpen) {
           return
         }
@@ -462,7 +489,11 @@ export class TerminalSessionManager {
           initialSize,
         )
 
-        session.isSessionOpen = true
+        session.isSessionOpen = session.runtime.isSessionOpen()
+
+        if (!session.isSessionOpen) {
+          throw new Error('Terminal session is not open')
+        }
 
         await this.sessionHooks.afterSessionOpen?.({
           projectId,
@@ -474,6 +505,7 @@ export class TerminalSessionManager {
         accepted: true,
       }
     } catch (error) {
+      await this.reconcileSessionOpenState(session)
       this.emitRuntimeError(session, error)
       return {
         accepted: false,
@@ -517,6 +549,8 @@ export class TerminalSessionManager {
       }
     }
 
+    await this.reconcileSessionOpenState(session)
+
     if (!session.isSessionOpen) {
       return {
         accepted: false,
@@ -537,6 +571,7 @@ export class TerminalSessionManager {
         accepted: true,
       }
     } catch (error) {
+      await this.reconcileSessionOpenState(session)
       this.emitRuntimeError(session, error)
       return {
         accepted: false,
@@ -573,6 +608,8 @@ export class TerminalSessionManager {
       }
     }
 
+    await this.reconcileSessionOpenState(session)
+
     if (!session.isSessionOpen) {
       return {
         accepted: false,
@@ -593,6 +630,7 @@ export class TerminalSessionManager {
         accepted: true,
       }
     } catch (error) {
+      await this.reconcileSessionOpenState(session)
       this.emitRuntimeError(session, error)
       return {
         accepted: false,
@@ -623,7 +661,10 @@ export class TerminalSessionManager {
 
     try {
       await this.queueSessionOperation(session, async () => {
+        await this.reconcileSessionOpenState(session)
+
         if (!session.isSessionOpen) {
+          session.emitOutput = null
           return
         }
 
@@ -636,16 +677,14 @@ export class TerminalSessionManager {
         session.isSessionOpen = false
         session.emitOutput = null
 
-        await this.sessionHooks.afterSessionClose?.({
-          projectId: session.projectId,
-          ownerSubject: session.ownerSubject,
-        })
+        await this.runAfterSessionCloseHook(session)
       })
 
       return {
         accepted: true,
       }
     } catch (error) {
+      await this.reconcileSessionOpenState(session)
       this.emitRuntimeError(session, error)
       return {
         accepted: false,

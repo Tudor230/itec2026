@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { getRobotEyeTarget, getRobotHeadPose, mapZoomToBobAmplitude, resolveRobotEyeTarget, resolveRobotReactionPose } from './useRobotHeadMotion'
+import {
+  EYE_FOCUS_LOCK_MS,
+  getRobotEyeTarget,
+  getRobotHeadPose,
+  mapZoomToBobAmplitude,
+  resolveRobotEyeTarget,
+  resolveRobotReactionPose,
+} from './useRobotHeadMotion'
 
 describe('robot head motion helpers', () => {
   it('maps section to deterministic pose values', () => {
@@ -38,5 +45,9 @@ describe('robot head motion helpers', () => {
     expect(Number.parseFloat(focusedPose.yaw)).toBeLessThan(Number.parseFloat(relaxedPose.yaw))
     expect(Math.abs(focusedEyeTarget.x)).toBeGreaterThan(Math.abs(relaxedEyeTarget.x) * 2)
     expect(Math.abs(focusedEyeTarget.y)).toBeGreaterThan(Math.abs(relaxedEyeTarget.y) * 2)
+  })
+
+  it('keeps eye focus lock long enough for info dwell', () => {
+    expect(EYE_FOCUS_LOCK_MS).toBe(1500)
   })
 })

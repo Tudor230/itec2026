@@ -1,4 +1,5 @@
-import { io, type Socket } from 'socket.io-client'
+import { io  } from 'socket.io-client'
+import type {Socket} from 'socket.io-client';
 import * as Y from 'yjs'
 import { apiConfig } from './api-config'
 
@@ -15,6 +16,82 @@ interface DocSyncPayload extends DocKey {
 
 interface DocUpdatePayload extends DocKey {
   update: string
+}
+
+export interface CollabDocTimelineEntry {
+  sequence: number
+  kind: 'snapshot' | 'update'
+  createdAt: string
+}
+
+export interface CollabDocRewindEdge {
+  appliedSequence: number
+  targetSequence: number
+  previousHeadSequence: number
+  createdAt: string
+}
+
+interface DocTimelinePayload extends DocKey {
+  requestId?: string
+  headSequence: number
+  entries: CollabDocTimelineEntry[]
+  rewindEdges: CollabDocRewindEdge[]
+}
+
+export interface CollabDocTimelineResponse {
+  projectId: string
+  fileId: string
+  headSequence: number
+  entries: CollabDocTimelineEntry[]
+  rewindEdges: CollabDocRewindEdge[]
+}
+
+interface DocRewindResultPayload extends DocKey {
+  requestId?: string
+  previousHeadSequence: number
+  targetSequence: number
+  appliedSequence: number
+}
+
+interface DocSnapshotPreviewDataPayload extends DocKey {
+  requestId?: string
+  sequence: number
+  content: string
+  headSequence: number
+}
+
+interface ErrorPayload {
+  message?: string
+  projectId?: string
+  fileId?: string
+  requestId?: string
+}
+
+function createRequestId() {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+export interface CollabDocRewindResult {
+  projectId: string
+  fileId: string
+  previousHeadSequence: number
+  targetSequence: number
+  appliedSequence: number
+}
+
+export interface CollabDocSnapshotPreview {
+  projectId: string
+  fileId: string
+  sequence: number
+  content: string
+  headSequence: number
 }
 
 interface ConnectedPayload {
@@ -130,8 +207,12 @@ export type WatchTerminalCallbacks = {
   onTerminalList?: (payload: CollabTerminalListPayload) => void
   onTerminalState?: (payload: CollabTerminalStatePayload) => void
   onTerminalOutput?: (payload: CollabTerminalOutputPayload) => void
-  onTerminalAccessRequested?: (payload: CollabTerminalAccessRequestedPayload) => void
-  onTerminalAccessDecision?: (payload: CollabTerminalAccessDecisionPayload) => void
+  onTerminalAccessRequested?: (
+    payload: CollabTerminalAccessRequestedPayload,
+  ) => void
+  onTerminalAccessDecision?: (
+    payload: CollabTerminalAccessDecisionPayload,
+  ) => void
   onError?: (message: string) => void
 }
 
@@ -250,7 +331,10 @@ export class CollabClient {
 
       const onError = (error: unknown) => {
         cleanup()
-        this.onStatus?.({ state: 'error', message: 'Could not connect to collaboration server' })
+        this.onStatus?.({
+          state: 'error',
+          message: 'Could not connect to collaboration server',
+        })
         reject(error instanceof Error ? error : new Error(String(error)))
       }
 
@@ -267,7 +351,10 @@ export class CollabClient {
 
     socket.on('disconnect', () => {
       this.currentSubject = null
-      this.onStatus?.({ state: 'disconnected', message: 'Collaboration disconnected' })
+      this.onStatus?.({
+        state: 'disconnected',
+        message: 'Collaboration disconnected',
+      })
     })
 
     socket.on('connect', () => {
@@ -278,7 +365,10 @@ export class CollabClient {
     return socket
   }
 
-  async joinDocument(projectId: string, fileId: string): Promise<CollabDocSession> {
+  async joinDocument(
+    projectId: string,
+    fileId: string,
+  ): Promise<CollabDocSession> {
     const socket = await this.connect()
 
     const doc = new Y.Doc()
@@ -292,7 +382,10 @@ export class CollabClient {
 
       const update = fromBase64(payload.update)
       if (!update) {
-        this.onStatus?.({ state: 'error', message: 'Invalid initial document state from server' })
+        this.onStatus?.({
+          state: 'error',
+          message: 'Invalid initial document state from server',
+        })
         return
       }
 
@@ -318,7 +411,7 @@ export class CollabClient {
     }
 
     const onDocChange = (update: Uint8Array, origin: unknown) => {
-      if (origin === 'remote' || isApplyingRemote) {
+      if (origin === 'remote' || origin === 'preview' || isApplyingRemote) {
         return
       }
 
@@ -394,7 +487,10 @@ export class CollabClient {
     }
   }
 
-  async watchProject(projectId: string, callbacks: WatchProjectCallbacks): Promise<() => void> {
+  async watchProject(
+    projectId: string,
+    callbacks: WatchProjectCallbacks,
+  ): Promise<() => void> {
     const socket = await this.connect()
 
     const onFileCreated = (payload: CollabFileCreatedPayload) => {
@@ -492,7 +588,10 @@ export class CollabClient {
     })
   }
 
-  async watchTerminals(projectId: string, callbacks: WatchTerminalCallbacks): Promise<() => void> {
+  async watchTerminals(
+    projectId: string,
+    callbacks: WatchTerminalCallbacks,
+  ): Promise<() => void> {
     const socket = await this.connect()
 
     const onTerminalList = (payload: CollabTerminalListPayload) => {
@@ -519,7 +618,9 @@ export class CollabClient {
       callbacks.onTerminalOutput?.(payload)
     }
 
-    const onTerminalAccessRequested = (payload: CollabTerminalAccessRequestedPayload) => {
+    const onTerminalAccessRequested = (
+      payload: CollabTerminalAccessRequestedPayload,
+    ) => {
       if (payload.projectId !== projectId) {
         return
       }
@@ -527,7 +628,9 @@ export class CollabClient {
       callbacks.onTerminalAccessRequested?.(payload)
     }
 
-    const onTerminalAccessDecision = (payload: CollabTerminalAccessDecisionPayload) => {
+    const onTerminalAccessDecision = (
+      payload: CollabTerminalAccessDecisionPayload,
+    ) => {
       if (payload.projectId !== projectId) {
         return
       }
@@ -576,7 +679,11 @@ export class CollabClient {
     })
   }
 
-  async sendTerminalInput(projectId: string, ownerSubject: string, input: string) {
+  async sendTerminalInput(
+    projectId: string,
+    ownerSubject: string,
+    input: string,
+  ) {
     const socket = await this.connect()
     socket.emit('collab:terminal:input', {
       projectId,
@@ -585,7 +692,11 @@ export class CollabClient {
     })
   }
 
-  async openTerminal(projectId: string, ownerSubject: string, size?: { cols: number; rows: number }) {
+  async openTerminal(
+    projectId: string,
+    ownerSubject: string,
+    size?: { cols: number; rows: number },
+  ) {
     const socket = await this.connect()
     socket.emit('collab:terminal:open', {
       projectId,
@@ -595,7 +706,11 @@ export class CollabClient {
     })
   }
 
-  async resizeTerminal(projectId: string, ownerSubject: string, size: { cols: number; rows: number }) {
+  async resizeTerminal(
+    projectId: string,
+    ownerSubject: string,
+    size: { cols: number; rows: number },
+  ) {
     const socket = await this.connect()
     socket.emit('collab:terminal:resize', {
       projectId,
@@ -657,6 +772,168 @@ export class CollabClient {
     socket.emit('collab:doc:saved', {
       projectId,
       fileId,
+    })
+  }
+
+  async getDocumentTimeline(
+    projectId: string,
+    fileId: string,
+    options?: { limit?: number; beforeSequence?: number },
+  ): Promise<CollabDocTimelineResponse> {
+    const socket = await this.connect()
+    const requestId = createRequestId()
+
+    return new Promise<CollabDocTimelineResponse>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error('Timed out waiting for document timeline'))
+      }, 6000)
+
+      const onTimeline = (payload: DocTimelinePayload) => {
+        if (payload.projectId !== projectId || payload.fileId !== fileId) {
+          return
+        }
+
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        resolve(payload)
+      }
+
+      const onError = (payload: ErrorPayload) => {
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        reject(new Error(payload.message ?? 'Could not load document timeline'))
+      }
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        socket.off('collab:doc:timeline', onTimeline)
+        socket.off('collab:error', onError)
+      }
+
+      socket.on('collab:doc:timeline', onTimeline)
+      socket.on('collab:error', onError)
+      socket.emit('collab:doc:timeline:list', {
+        projectId,
+        fileId,
+        requestId,
+        limit: options?.limit,
+        beforeSequence: options?.beforeSequence,
+      })
+    })
+  }
+
+  async rewindDocument(
+    projectId: string,
+    fileId: string,
+    targetSequence: number,
+    expectedHeadSequence?: number,
+  ): Promise<CollabDocRewindResult> {
+    const socket = await this.connect()
+    const requestId = createRequestId()
+
+    return new Promise<CollabDocRewindResult>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error('Timed out waiting for rewind result'))
+      }, 6000)
+
+      const onResult = (payload: DocRewindResultPayload) => {
+        if (payload.projectId !== projectId || payload.fileId !== fileId) {
+          return
+        }
+
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        resolve(payload)
+      }
+
+      const onError = (payload: ErrorPayload) => {
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        reject(new Error(payload.message ?? 'Could not rewind document'))
+      }
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        socket.off('collab:doc:rewind:result', onResult)
+        socket.off('collab:error', onError)
+      }
+
+      socket.on('collab:doc:rewind:result', onResult)
+      socket.on('collab:error', onError)
+      socket.emit('collab:doc:rewind', {
+        projectId,
+        fileId,
+        requestId,
+        targetSequence,
+        expectedHeadSequence,
+      })
+    })
+  }
+
+  async getSnapshotPreview(
+    projectId: string,
+    fileId: string,
+    sequence: number,
+  ): Promise<CollabDocSnapshotPreview> {
+    const socket = await this.connect()
+    const requestId = createRequestId()
+
+    return new Promise<CollabDocSnapshotPreview>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error('Timed out waiting for snapshot preview'))
+      }, 6000)
+
+      const onPreview = (payload: DocSnapshotPreviewDataPayload) => {
+        if (payload.projectId !== projectId || payload.fileId !== fileId) {
+          return
+        }
+
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        resolve(payload)
+      }
+
+      const onError = (payload: ErrorPayload) => {
+        if ((payload.requestId ?? '') !== requestId) {
+          return
+        }
+
+        cleanup()
+        reject(new Error(payload.message ?? 'Could not load snapshot preview'))
+      }
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        socket.off('collab:doc:snapshot:preview:data', onPreview)
+        socket.off('collab:error', onError)
+      }
+
+      socket.on('collab:doc:snapshot:preview:data', onPreview)
+      socket.on('collab:error', onError)
+      socket.emit('collab:doc:snapshot:preview', {
+        projectId,
+        fileId,
+        sequence,
+        requestId,
+      })
     })
   }
 
