@@ -1,8 +1,22 @@
-import { FileText, Folder, FolderOpen, FolderPlus, Plus, Search, X } from 'lucide-react'
+import {
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Plus,
+  Search,
+  X,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { FileDto } from '../../services/projects-api'
-import { buildFileTree, filterFileTree, type FileTreeNode } from './files-tree'
+import {
+  collectEntriesFromDrop
+  
+} from '../../lib/file-import'
+import type {ImportFileEntry} from '../../lib/file-import';
+import { buildFileTree, filterFileTree  } from './files-tree'
+import type {FileTreeNode} from './files-tree';
 import { cn } from '../../lib/utils'
 import { getFileIconComponent } from './file-icon-components'
 import { getFileIconMeta } from './file-icon-map'
@@ -21,6 +35,10 @@ interface FilesSidebarProps {
   onDeleteFile?: (fileId: string) => Promise<void> | void
   onRenameFolder?: (fromPath: string, toPath: string) => Promise<void> | void
   onDeleteFolder?: (path: string) => Promise<void> | void
+  onDropExternalFiles?: (
+    entries: ImportFileEntry[],
+    targetFolderPath: string | null,
+  ) => Promise<void> | void
   onClose?: () => void
 }
 
@@ -104,7 +122,13 @@ function getLeafName(path: string) {
   return parts[parts.length - 1] ?? ''
 }
 
-function FileNodeIcon({ fileName, className }: { fileName: string; className: string }) {
+function FileNodeIcon({
+  fileName,
+  className,
+}: {
+  fileName: string
+  className: string
+}) {
   const iconMeta = getFileIconMeta(fileName)
   const Icon = getFileIconComponent(iconMeta.iconKey)
 
@@ -117,8 +141,15 @@ function FileNodeIcon({ fileName, className }: { fileName: string; className: st
   }
 
   return (
-    <span data-file-icon-key={iconMeta.iconKey} className="inline-flex items-center">
-      <Icon size={14} className={className} style={iconMeta.color ? { color: iconMeta.color } : undefined} />
+    <span
+      data-file-icon-key={iconMeta.iconKey}
+      className="inline-flex items-center"
+    >
+      <Icon
+        size={14}
+        className={className}
+        style={iconMeta.color ? { color: iconMeta.color } : undefined}
+      />
     </span>
   )
 }
@@ -143,6 +174,7 @@ function NodeRow({
   renameTargetPath,
   renameValue,
   isRenamePending,
+  dropTargetFolderPath,
   onRenameValueChange,
   onConfirmRename,
   onCancelRename,
@@ -166,13 +198,17 @@ function NodeRow({
   renameTargetPath: string | null
   renameValue: string
   isRenamePending: boolean
+  dropTargetFolderPath: string | null
   onRenameValueChange: (nextValue: string) => void
   onConfirmRename: () => void
   onCancelRename: () => void
 }) {
   const [isOpen, setIsOpen] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null)
+  const [menuPosition, setMenuPosition] = useState<{
+    left: number
+    top: number
+  } | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const holdTimerRef = useRef<number | null>(null)
   const holdTriggeredRef = useRef(false)
@@ -180,12 +216,12 @@ function NodeRow({
   const isActive = isFile && node.fileId === activeFileId
   const isSelectedFolder = !isFile && selectedFolderPath === node.path
   const isDirty = isFile && !!node.fileId && dirtyFileIds.has(node.fileId)
-  const collabOutlineColor = isFile && node.fileId ? collabActivityOutlineByFileId[node.fileId] : undefined
+  const collabOutlineColor =
+    isFile && node.fileId
+      ? collabActivityOutlineByFileId[node.fileId]
+      : undefined
   const pendingParentPath = pendingCreatePath
-    ? pendingCreatePath
-        .split('/')
-        .slice(0, -1)
-        .join('/')
+    ? pendingCreatePath.split('/').slice(0, -1).join('/')
     : null
   const iconColor = isFile
     ? isActive
@@ -193,8 +229,11 @@ function NodeRow({
       : 'text-[var(--sea-ink-soft)]'
     : 'text-[color-mix(in_oklab,var(--palm)_62%,var(--sea-ink)_38%)]'
 
-  const renderInlineCreate = !isFile && isOpen && pendingParentPath === node.path
+  const renderInlineCreate =
+    !isFile && isOpen && pendingParentPath === node.path
   const isRenaming = renameTargetPath === node.path
+  const isDropTargetFolder = !isFile && dropTargetFolderPath === node.path
+  const rowDropFolderPath = isFile ? getParentPath(node.path) : node.path
 
   const clearHoldTimer = () => {
     if (holdTimerRef.current === null) {
@@ -262,6 +301,7 @@ function NodeRow({
       <div
         role="button"
         tabIndex={0}
+        data-folder-path={rowDropFolderPath || undefined}
         onClick={() => {
           if (isRenaming) {
             return
@@ -313,7 +353,10 @@ function NodeRow({
           }
 
           if (event.key !== 'Enter' && event.key !== ' ') {
-            if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+            if (
+              (event.shiftKey && event.key === 'F10') ||
+              event.key === 'ContextMenu'
+            ) {
               event.preventDefault()
               const rect = event.currentTarget.getBoundingClientRect()
               openMenu(rect.left + 6, rect.bottom + 6)
@@ -339,7 +382,9 @@ function NodeRow({
             ? 'bg-[color-mix(in_oklab,var(--chip-bg)_62%,rgba(var(--lagoon-rgb),0.28)_38%)] text-[var(--sea-ink)] shadow-[0_6px_16px_rgba(8,22,28,0.14)]'
             : isSelectedFolder
               ? 'bg-[rgba(var(--lagoon-rgb),0.16)] text-[var(--sea-ink)]'
-            : 'text-[var(--sea-ink-soft)] hover:bg-[color-mix(in_oklab,var(--chip-bg)_66%,rgba(var(--lagoon-rgb),0.16)_34%)] hover:text-[var(--sea-ink)]'
+              : 'text-[var(--sea-ink-soft)] hover:bg-[color-mix(in_oklab,var(--chip-bg)_66%,rgba(var(--lagoon-rgb),0.16)_34%)] hover:text-[var(--sea-ink)]',
+          isDropTargetFolder &&
+            'ring-1 ring-[var(--lagoon)] bg-[rgba(var(--lagoon-rgb),0.2)] text-[var(--sea-ink)]',
         )}
         style={{
           paddingLeft: `${depth * 12 + 8}px`,
@@ -453,6 +498,7 @@ function NodeRow({
               renameTargetPath={renameTargetPath}
               renameValue={renameValue}
               isRenamePending={isRenamePending}
+              dropTargetFolderPath={dropTargetFolderPath}
               onRenameValueChange={onRenameValueChange}
               onConfirmRename={onConfirmRename}
               onCancelRename={onCancelRename}
@@ -461,19 +507,34 @@ function NodeRow({
         : null}
 
       {renderInlineCreate ? (
-        <div style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }} className="mt-1">
+        <div
+          style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
+          className="mt-1"
+        >
           <label className="flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
-            {pendingCreateType === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
+            {pendingCreateType === 'folder' ? (
+              <Folder size={13} />
+            ) : (
+              <FileText size={13} />
+            )}
             <input
               autoFocus
               value={pendingCreatePath.split('/').pop() ?? ''}
               onChange={(event) => {
                 const currentName = pendingCreatePath.split('/').pop() ?? ''
                 const parentPath = pendingCreatePath.endsWith(`/${currentName}`)
-                  ? pendingCreatePath.slice(0, Math.max(0, pendingCreatePath.length - currentName.length - 1))
+                  ? pendingCreatePath.slice(
+                      0,
+                      Math.max(
+                        0,
+                        pendingCreatePath.length - currentName.length - 1,
+                      ),
+                    )
                   : ''
                 const nextName = event.target.value
-                onPendingPathChange(parentPath ? `${parentPath}/${nextName}` : nextName)
+                onPendingPathChange(
+                  parentPath ? `${parentPath}/${nextName}` : nextName,
+                )
               }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
@@ -498,7 +559,10 @@ function NodeRow({
               ref={menuRef}
               role="menu"
               aria-label={`${isFile ? 'File' : 'Folder'} actions`}
-              style={{ left: `${menuPosition.left}px`, top: `${menuPosition.top}px` }}
+              style={{
+                left: `${menuPosition.left}px`,
+                top: `${menuPosition.top}px`,
+              }}
               className="fixed z-[120] min-w-[180px] rounded-xl border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.92)] p-1 backdrop-blur-xl shadow-2xl"
             >
               {!isFile ? (
@@ -574,20 +638,36 @@ export default function FilesSidebar({
   onDeleteFile,
   onRenameFolder,
   onDeleteFolder,
+  onDropExternalFiles,
   onClose,
 }: FilesSidebarProps) {
   const [query, setQuery] = useState('')
   const dirtyIds = useMemo(() => new Set(dirtyFileIds ?? []), [dirtyFileIds])
-  const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null)
-  const [pendingCreatePath, setPendingCreatePath] = useState<string | null>(null)
-  const [pendingCreateType, setPendingCreateType] = useState<'file' | 'folder' | null>(null)
+  const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(
+    null,
+  )
+  const [pendingCreatePath, setPendingCreatePath] = useState<string | null>(
+    null,
+  )
+  const [pendingCreateType, setPendingCreateType] = useState<
+    'file' | 'folder' | null
+  >(null)
   const [inlineError, setInlineError] = useState<string | null>(null)
   const [isCreatePending, setIsCreatePending] = useState(false)
   const [renameTarget, setRenameTarget] = useState<FileTreeNode | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [isRenamePending, setIsRenamePending] = useState(false)
+  const [isDragActive, setIsDragActive] = useState(false)
+  const [dropTargetFolderPath, setDropTargetFolderPath] = useState<
+    string | null
+  >(null)
+  const [isDropPending, setIsDropPending] = useState(false)
+  const dragDepthRef = useRef(0)
 
-  const tree = useMemo(() => buildFileTree(files, virtualFolders), [files, virtualFolders])
+  const tree = useMemo(
+    () => buildFileTree(files, virtualFolders),
+    [files, virtualFolders],
+  )
 
   const filteredTree = useMemo(() => {
     return filterFileTree(tree, query)
@@ -609,7 +689,8 @@ export default function FilesSidebar({
     setInlineError(null)
   }
 
-  const shouldShowRootInlineCreate = pendingCreatePath !== null && !pendingCreatePath.includes('/')
+  const shouldShowRootInlineCreate =
+    pendingCreatePath !== null && !pendingCreatePath.includes('/')
 
   const handleConfirmCreate = async () => {
     if (pendingCreatePath === null || !pendingCreateType || isCreatePending) {
@@ -686,7 +767,8 @@ export default function FilesSidebar({
         await onRenameFile(renameTarget.fileId, nextPath)
         handleCancelRename()
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Could not rename file.'
+        const message =
+          error instanceof Error ? error.message : 'Could not rename file.'
         setInlineError(message)
       } finally {
         setIsRenamePending(false)
@@ -700,7 +782,8 @@ export default function FilesSidebar({
         await onRenameFolder(renameTarget.path, nextPath)
         handleCancelRename()
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Could not rename folder.'
+        const message =
+          error instanceof Error ? error.message : 'Could not rename folder.'
         setInlineError(message)
       } finally {
         setIsRenamePending(false)
@@ -720,15 +803,113 @@ export default function FilesSidebar({
         await onDeleteFolder(node.path)
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not delete item.'
+      const message =
+        error instanceof Error ? error.message : 'Could not delete item.'
       setInlineError(message)
     }
   }
 
   const isBusy = isCreatePending || isRenamePending
 
+  const resolveDropTargetFolderPath = (target: EventTarget | null) => {
+    if (!(target instanceof Element)) {
+      return null
+    }
+
+    const folderTarget = target.closest<HTMLElement>('[data-folder-path]')
+    return folderTarget?.dataset.folderPath ?? null
+  }
+
+  const resetDropState = () => {
+    dragDepthRef.current = 0
+    setIsDragActive(false)
+    setDropTargetFolderPath(null)
+  }
+
+  const isFileDrag = (event: { dataTransfer?: DataTransfer | null }) => {
+    const transfer = event.dataTransfer
+    if (!transfer) {
+      return false
+    }
+
+    return Array.from(transfer.types).includes('Files')
+  }
+
   return (
-    <aside className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))]">
+    <aside
+      className={cn(
+        'relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_78%,transparent),color-mix(in_oklab,var(--surface)_68%,transparent))]',
+        isDragActive && 'ring-1 ring-[var(--lagoon)]',
+      )}
+      onDragEnter={(event) => {
+        if (!onDropExternalFiles || !isFileDrag(event)) {
+          return
+        }
+
+        event.preventDefault()
+        dragDepthRef.current += 1
+        setIsDragActive(true)
+        setDropTargetFolderPath(resolveDropTargetFolderPath(event.target))
+      }}
+      onDragOver={(event) => {
+        if (!onDropExternalFiles || !isFileDrag(event)) {
+          return
+        }
+
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+        setDropTargetFolderPath(resolveDropTargetFolderPath(event.target))
+      }}
+      onDragLeave={(event) => {
+        if (!onDropExternalFiles || !isFileDrag(event)) {
+          return
+        }
+
+        event.preventDefault()
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+
+        if (dragDepthRef.current === 0) {
+          setIsDragActive(false)
+          setDropTargetFolderPath(null)
+        }
+      }}
+      onDrop={(event) => {
+        if (!onDropExternalFiles || !isFileDrag(event)) {
+          return
+        }
+
+        event.preventDefault()
+
+        if (isDropPending) {
+          return
+        }
+
+        const targetFolderPath = resolveDropTargetFolderPath(event.target)
+        resetDropState()
+        setIsDropPending(true)
+
+        void collectEntriesFromDrop(event.dataTransfer)
+          .then(async (entries) => {
+            if (entries.length === 0) {
+              setInlineError('No dropped files found.')
+              return
+            }
+
+            await onDropExternalFiles(entries, targetFolderPath)
+            setInlineError(null)
+          })
+          .catch((error) => {
+            const message =
+              error instanceof Error
+                ? error.message
+                : 'Could not import dropped files.'
+            setInlineError(message)
+          })
+          .finally(() => {
+            setIsDropPending(false)
+          })
+      }}
+    >
       <div
         aria-hidden
         className="pointer-events-none absolute left-0 right-0 top-0 h-16 bg-[radial-gradient(ellipse_at_top,rgba(var(--lagoon-rgb),0.18),transparent_72%)]"
@@ -786,13 +967,30 @@ export default function FilesSidebar({
       </div>
 
       <div className="relative flex-1 overflow-y-auto px-2 py-2">
+        {isDragActive ? (
+          <div className="pointer-events-none absolute inset-2 z-20 rounded-xl border border-dashed border-[var(--lagoon)] bg-[rgba(var(--lagoon-rgb),0.12)] p-3 text-xs font-semibold text-[var(--sea-ink)]">
+            Drop files to upload{' '}
+            {dropTargetFolderPath
+              ? `into ${dropTargetFolderPath}`
+              : 'into project root'}
+          </div>
+        ) : null}
+
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-2 top-1 h-[1px] bg-[linear-gradient(90deg,transparent,var(--line),transparent)]"
         />
-        {isLoading ? <p className="px-2 text-sm text-[var(--sea-ink-soft)]">Loading files...</p> : null}
+        {isLoading ? (
+          <p className="px-2 text-sm text-[var(--sea-ink-soft)]">
+            Loading files...
+          </p>
+        ) : null}
 
-        {errorMessage ? <p className="px-2 text-sm text-[var(--sea-ink-soft)]">{errorMessage}</p> : null}
+        {errorMessage ? (
+          <p className="px-2 text-sm text-[var(--sea-ink-soft)]">
+            {errorMessage}
+          </p>
+        ) : null}
 
         {!isLoading && !errorMessage && files.length === 0 ? (
           <p className="px-2 text-sm text-[var(--sea-ink-soft)]">
@@ -803,10 +1001,14 @@ export default function FilesSidebar({
         {shouldShowRootInlineCreate ? (
           <div className="mb-2 px-2">
             <label className="mt-2 flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
-              {pendingCreateType === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
+              {pendingCreateType === 'folder' ? (
+                <Folder size={13} />
+              ) : (
+                <FileText size={13} />
+              )}
               <input
                 autoFocus
-                value={pendingCreatePath?.split('/').pop() ?? ''}
+                value={pendingCreatePath.split('/').pop() ?? ''}
                 disabled={isCreatePending}
                 onChange={(event) => setPendingCreatePath(event.target.value)}
                 onKeyDown={(event) => {
@@ -837,7 +1039,9 @@ export default function FilesSidebar({
                 depth={0}
                 activeFileId={activeFileId}
                 dirtyFileIds={dirtyIds}
-                collabActivityOutlineByFileId={collabActivityOutlineByFileId ?? {}}
+                collabActivityOutlineByFileId={
+                  collabActivityOutlineByFileId ?? {}
+                }
                 pendingCreatePath={pendingCreatePath}
                 pendingCreateType={pendingCreateType}
                 selectedFolderPath={selectedFolderPath}
@@ -863,6 +1067,7 @@ export default function FilesSidebar({
                 renameTargetPath={renameTarget?.path ?? null}
                 renameValue={renameValue}
                 isRenamePending={isRenamePending}
+                dropTargetFolderPath={dropTargetFolderPath}
                 onRenameValueChange={setRenameValue}
                 onConfirmRename={handleConfirmRename}
                 onCancelRename={handleCancelRename}
@@ -870,14 +1075,25 @@ export default function FilesSidebar({
             ))
           : null}
 
-        {!isLoading && !errorMessage && filteredTree && filteredTree.children.length === 0 ? (
-          <p className="px-2 text-sm text-[var(--sea-ink-soft)]">No files match your filter.</p>
+        {!isLoading &&
+        !errorMessage &&
+        filteredTree &&
+        filteredTree.children.length === 0 ? (
+          <p className="px-2 text-sm text-[var(--sea-ink-soft)]">
+            No files match your filter.
+          </p>
         ) : null}
 
-        {pendingCreatePath && filteredTree?.children.length === 0 && !shouldShowRootInlineCreate ? (
+        {pendingCreatePath &&
+        filteredTree?.children.length === 0 &&
+        !shouldShowRootInlineCreate ? (
           <div className="px-2">
             <label className="mt-2 flex items-center gap-2 rounded-md border border-[var(--chip-line)] bg-[var(--chip-bg)] px-2 py-1">
-              {pendingCreateType === 'folder' ? <Folder size={13} /> : <FileText size={13} />}
+              {pendingCreateType === 'folder' ? (
+                <Folder size={13} />
+              ) : (
+                <FileText size={13} />
+              )}
               <input
                 autoFocus
                 value={pendingCreatePath}

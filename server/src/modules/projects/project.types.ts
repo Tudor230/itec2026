@@ -61,3 +61,19 @@ export interface ProjectMemberProfileInput {
   displayName: string
   email?: string
 }
+
+export interface ImportGithubProjectInput {
+  githubUrl: string
+  name?: string
+}
+
+export interface ImportGithubProjectResult {
+  project: ProjectRecord
+  importedFileCount: number
+  skippedFileCount: number
+  source: {
+    owner: string
+    repo: string
+    ref: string
+  }
+}

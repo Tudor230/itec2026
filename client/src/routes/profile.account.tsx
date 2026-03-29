@@ -13,7 +13,8 @@ export const Route = createFileRoute('/profile/account')({
 function ProfileAccountRoute() {
   const { user, logout } = useAuth0()
 
-  const displayName = user?.name || user?.nickname || user?.email || 'Authenticated user'
+  const displayName =
+    user?.name || user?.nickname || user?.email || 'Authenticated user'
   const displayEmail = user?.email || user?.sub || 'No email available'
   const roles = getUserRoles(user)
 
@@ -39,8 +40,12 @@ function ProfileAccountRoute() {
             )}
 
             <div>
-              <p className="m-0 text-xl font-semibold text-[var(--sea-ink)]">{displayName}</p>
-              <p className="m-0 mt-1 text-sm text-[var(--sea-ink-soft)]">{displayEmail}</p>
+              <p className="m-0 text-xl font-semibold text-[var(--sea-ink)]">
+                {displayName}
+              </p>
+              <p className="m-0 mt-1 text-sm text-[var(--sea-ink-soft)]">
+                {displayEmail}
+              </p>
               {roles.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {roles.map((role) => (

@@ -1,6 +1,12 @@
-import { Auth0Provider, type AppState } from '@auth0/auth0-react'
-import { createContext, useContext, type ReactNode } from 'react'
-import { auth0Config, isAuth0Configured, sanitizeReturnToPath } from '../lib/auth0-config'
+import { Auth0Provider  } from '@auth0/auth0-react'
+import type {AppState} from '@auth0/auth0-react';
+import { createContext, useContext  } from 'react'
+import type {ReactNode} from 'react';
+import {
+  auth0Config,
+  isAuth0Configured,
+  sanitizeReturnToPath,
+} from '../lib/auth0-config'
 
 interface AuthRuntimeContextValue {
   isConfigured: boolean

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { getFileExtension, getFileIconMeta, resolveExtension } from './file-icon-map'
+import {
+  getFileExtension,
+  getFileIconMeta,
+  resolveExtension,
+} from './file-icon-map'
 
 describe('file icon map', () => {
   it('extracts extension from filenames and paths', () => {

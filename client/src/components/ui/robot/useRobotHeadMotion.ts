@@ -103,7 +103,10 @@ export function getRobotEyeTarget(section: RobotSection): RobotEyeTarget {
   return EYE_TARGET_BY_SECTION[section]
 }
 
-export function resolveRobotReactionPose(section: RobotSection, focusLocked: boolean): PoseVars {
+export function resolveRobotReactionPose(
+  section: RobotSection,
+  focusLocked: boolean,
+): PoseVars {
   const pose = getRobotHeadPose(section)
 
   if (!focusLocked) {
@@ -120,7 +123,10 @@ export function resolveRobotReactionPose(section: RobotSection, focusLocked: boo
   }
 }
 
-export function resolveRobotEyeTarget(section: RobotSection, focusLocked: boolean): RobotEyeTarget {
+export function resolveRobotEyeTarget(
+  section: RobotSection,
+  focusLocked: boolean,
+): RobotEyeTarget {
   const baseEyeTarget = getRobotEyeTarget(section)
 
   if (!focusLocked) {
@@ -133,7 +139,11 @@ export function resolveRobotEyeTarget(section: RobotSection, focusLocked: boolea
   }
 }
 
-export function useRobotHeadMotion(section: RobotSection, zoom: number, shouldAnimate = true): RobotHeadMotion {
+export function useRobotHeadMotion(
+  section: RobotSection,
+  zoom: number,
+  shouldAnimate = true,
+): RobotHeadMotion {
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [isEyeFocusLocked, setIsEyeFocusLocked] = useState(false)
   const previousSectionRef = useRef<RobotSection>(section)
@@ -181,7 +191,13 @@ export function useRobotHeadMotion(section: RobotSection, zoom: number, shouldAn
       '--robot-head-shift-y': effectivePose.shiftY,
       '--robot-head-bob': mapZoomToBobAmplitude(zoom),
     }),
-    [effectivePose.shiftX, effectivePose.shiftY, effectivePose.tilt, effectivePose.yaw, zoom],
+    [
+      effectivePose.shiftX,
+      effectivePose.shiftY,
+      effectivePose.tilt,
+      effectivePose.yaw,
+      zoom,
+    ],
   )
 
   return {

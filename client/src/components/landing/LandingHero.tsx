@@ -7,7 +7,9 @@ export default function LandingHero() {
       <div className="pointer-events-none absolute bottom-[-4.5rem] right-[-4rem] h-60 w-60 rounded-full bg-[radial-gradient(circle,rgba(47,106,74,0.24),transparent_66%)] blur-[2px]" />
       <div className="relative z-10 grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
         <div>
-          <p className="mb-3 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">iTECify Collaborative IDE</p>
+          <p className="mb-3 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">
+            iTECify Collaborative IDE
+          </p>
           <h1 className="mb-5 max-w-4xl font-[Fraunces,Georgia,serif] text-4xl font-bold leading-[1.02] tracking-tight text-[var(--sea-ink)] sm:text-6xl">
             One shared coding surface for your whole team.
           </h1>
@@ -54,12 +56,22 @@ export default function LandingHero() {
           </div>
           <div className="min-h-[230px] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-strong)_88%,white_12%),color-mix(in_oklab,var(--surface)_88%,white_12%))] px-[0.9rem] pb-[1rem] pt-[0.9rem] font-mono text-xs leading-6 text-[var(--sea-ink)] sm:text-sm">
             <p className="m-0">$ itecify join --project atlas-ui</p>
-            <p className="m-0 text-[var(--sea-ink-soft)]">Connecting collaborators...</p>
-            <p className="m-0 text-[var(--sea-ink-soft)]">Presence sync established (3 online)</p>
-            <p className="m-0">$ git timeline create feature/auth-lock-overlay</p>
-            <p className="m-0 text-[var(--sea-ink-soft)]">Timeline created at 13:42:18</p>
+            <p className="m-0 text-[var(--sea-ink-soft)]">
+              Connecting collaborators...
+            </p>
+            <p className="m-0 text-[var(--sea-ink-soft)]">
+              Presence sync established (3 online)
+            </p>
+            <p className="m-0">
+              $ git timeline create feature/auth-lock-overlay
+            </p>
+            <p className="m-0 text-[var(--sea-ink-soft)]">
+              Timeline created at 13:42:18
+            </p>
             <p className="m-0">$ run workspace</p>
-            <p className="m-0 text-[var(--sea-ink-soft)]">Run panel connected. Waiting for execution.</p>
+            <p className="m-0 text-[var(--sea-ink-soft)]">
+              Run panel connected. Waiting for execution.
+            </p>
           </div>
         </div>
       </div>

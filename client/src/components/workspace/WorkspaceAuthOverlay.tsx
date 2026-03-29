@@ -42,13 +42,16 @@ export default function WorkspaceAuthOverlay({
             >
               <X size={16} />
             </button>
-            <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Session Context</p>
+            <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">
+              Session Context
+            </p>
             <h2 className="mb-3 text-2xl font-semibold text-[var(--sea-ink)]">
               Sign in to continue to your projects.
             </h2>
             <p className="mb-3 text-sm leading-7 text-[var(--sea-ink-soft)]">
-              iTECify keeps your project data and editor state protected. Once authenticated,
-              you land in Projects and can open any project directly in the editor.
+              iTECify keeps your project data and editor state protected. Once
+              authenticated, you land in Projects and can open any project
+              directly in the editor.
             </p>
             <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--sea-ink-soft)]">
               <li>See your projects immediately after login.</li>

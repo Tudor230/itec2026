@@ -4,7 +4,10 @@ import type { FileDto } from '../../services/projects-api'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import { Sparkles, FileCode2 } from 'lucide-react'
 import { useThemePreset } from '../../theme/ThemeProvider'
-import { defineMonacoThemes, getMonacoThemeForPreset } from '../../lib/workspace-monaco-theme'
+import {
+  defineMonacoThemes,
+  getMonacoThemeForPreset,
+} from '../../lib/workspace-monaco-theme'
 import { workspaceHudChipClass } from './ui-classes'
 
 interface EditorPaneProps {
@@ -16,7 +19,10 @@ interface EditorPaneProps {
     connectionState: 'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
     message: string | null
   }
-  onEditorMount?: (editor: MonacoEditorTypes.IStandaloneCodeEditor, monaco: typeof import('monaco-editor')) => void
+  onEditorMount?: (
+    editor: MonacoEditorTypes.IStandaloneCodeEditor,
+    monaco: typeof import('monaco-editor'),
+  ) => void
   onChange: (nextValue: string) => void
 }
 
@@ -31,16 +37,23 @@ export default function EditorPane({
 }: EditorPaneProps) {
   const { preset } = useThemePreset()
   const monacoTheme = getMonacoThemeForPreset(preset)
-  
+
   const language = useMemo(() => {
     if (!file) return 'plaintext'
     const extension = file.path.split('.').pop()?.toLowerCase() ?? ''
     const mapping: Record<string, string> = {
-      ts: 'typescript', tsx: 'typescriptreact',
-      js: 'javascript', jsx: 'javascriptreact',
-      json: 'json', css: 'css', html: 'html',
-      md: 'markdown', py: 'python', rs: 'rust',
-      go: 'go', java: 'java'
+      ts: 'typescript',
+      tsx: 'typescriptreact',
+      js: 'javascript',
+      jsx: 'javascriptreact',
+      json: 'json',
+      css: 'css',
+      html: 'html',
+      md: 'markdown',
+      py: 'python',
+      rs: 'rust',
+      go: 'go',
+      java: 'java',
     }
     return mapping[extension] ?? 'plaintext'
   }, [file])
@@ -56,19 +69,23 @@ export default function EditorPane({
         />
 
         <div className="flex items-center justify-between gap-3">
-        {file ? (
+          {file ? (
             <div className="min-w-0 flex flex-wrap items-center gap-1.5">
-            <span className={workspaceHudChipClass}>
-              {isDirty ? 'Unsaved changes' : 'Saved'}
-            </span>
-            {collabState && collabState.connectionState !== 'idle' ? (
-              <span className={workspaceHudChipClass}>Live: {collabState.connectionState}</span>
-            ) : null}
-          </div>
-        ) : (
-          <p className="m-0 text-xs font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">No file opened</p>
-        )}
-      </div>
+              <span className={workspaceHudChipClass}>
+                {isDirty ? 'Unsaved changes' : 'Saved'}
+              </span>
+              {collabState && collabState.connectionState !== 'idle' ? (
+                <span className={workspaceHudChipClass}>
+                  Live: {collabState.connectionState}
+                </span>
+              ) : null}
+            </div>
+          ) : (
+            <p className="m-0 text-xs font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">
+              No file opened
+            </p>
+          )}
+        </div>
       </div>
 
       {saveError ? (
@@ -104,7 +121,8 @@ export default function EditorPane({
                   lineNumbers: 'on',
                   wordWrap: 'on',
                   fontSize: 14,
-                  fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
+                  fontFamily:
+                    'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
                   fontLigatures: true,
                   scrollBeyondLastLine: false,
                   renderLineHighlight: 'all',
@@ -130,10 +148,16 @@ export default function EditorPane({
                 <Sparkles size={32} />
               </div>
               <div>
-                <h2 className="text-lg font-extrabold text-[var(--sea-ink)]">No open files</h2>
+                <h2 className="text-lg font-extrabold text-[var(--sea-ink)]">
+                  No open files
+                </h2>
                 <p className="mt-2 text-sm text-[var(--sea-ink-soft)] font-medium">
                   Open a file from the explorer or Quick Open to start editing.
-                  Press <kbd className="px-1.5 py-0.5 bg-[var(--line)] rounded text-xs font-mono font-bold italic">Ctrl+P</kbd> for quick search.
+                  Press{' '}
+                  <kbd className="px-1.5 py-0.5 bg-[var(--line)] rounded text-xs font-mono font-bold italic">
+                    Ctrl+P
+                  </kbd>{' '}
+                  for quick search.
                 </p>
               </div>
             </div>

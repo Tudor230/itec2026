@@ -31,7 +31,9 @@ function getExtension(path: string) {
   return leaf.slice(dotIndex + 1).toLowerCase()
 }
 
-export function buildRunCurrentFileCommand(path: string): RunCurrentFileCommandResult {
+export function buildRunCurrentFileCommand(
+  path: string,
+): RunCurrentFileCommandResult {
   const normalizedPath = normalizeWorkspacePath(path)
   if (!normalizedPath) {
     return {

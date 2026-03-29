@@ -77,7 +77,9 @@ function isThemePresetId(value: string): value is ThemePresetId {
   return THEME_PRESET_IDS.includes(value as ThemePresetId)
 }
 
-export function resolveThemePreset(value: string | null | undefined): ThemePresetId {
+export function resolveThemePreset(
+  value: string | null | undefined,
+): ThemePresetId {
   if (!value) {
     return DEFAULT_THEME_PRESET
   }

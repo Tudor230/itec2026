@@ -1,8 +1,9 @@
 import { useCallback, useRef, useState } from 'react'
 import {
-  buildRunCurrentFileCommand,
-  type QueuedTerminalCommand,
+  buildRunCurrentFileCommand
+  
 } from '../components/workspace/run-current-file-command'
+import type {QueuedTerminalCommand} from '../components/workspace/run-current-file-command';
 
 interface UseRunCurrentFileOptions {
   activeFilePath: string | null
@@ -15,7 +16,8 @@ export function useRunCurrentFile({
   onRunStart,
   onRunError,
 }: UseRunCurrentFileOptions) {
-  const [queuedTerminalCommand, setQueuedTerminalCommand] = useState<QueuedTerminalCommand | null>(null)
+  const [queuedTerminalCommand, setQueuedTerminalCommand] =
+    useState<QueuedTerminalCommand | null>(null)
   const queuedTerminalCommandIdRef = useRef(1)
 
   const runCurrentFile = useCallback(() => {

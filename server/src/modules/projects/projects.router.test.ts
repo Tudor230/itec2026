@@ -540,6 +540,22 @@ describe('projects router', () => {
     assert.equal(payload.error.code, 'AUTH_REQUIRED')
   })
 
+  it('returns 400 for invalid github import payload', async () => {
+    const token = createJwt('auth0|github-import-user', 'jwt-github-import-user')
+
+    const response = await fetch(`${baseUrl}/api/projects/import/github`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ githubUrl: 'not-a-url' }),
+    })
+
+    const payload = await response.json()
+
+    assert.equal(response.status, 400)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.error.code, 'INVALID_PROJECT_INPUT')
+  })
+
   it('creates and lists projects scoped by actor subject', async () => {
     const subjectA = 'auth0|user-alpha'
     const subjectB = 'auth0|user-beta'

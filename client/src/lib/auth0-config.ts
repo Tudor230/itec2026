@@ -25,7 +25,10 @@ export const missingAuth0EnvVars = [
 
 export const isAuth0Configured = missingAuth0EnvVars.length === 0
 
-export function sanitizeReturnToPath(returnTo: string | undefined, fallback = '/') {
+export function sanitizeReturnToPath(
+  returnTo: string | undefined,
+  fallback = '/',
+) {
   if (!returnTo) {
     return fallback
   }

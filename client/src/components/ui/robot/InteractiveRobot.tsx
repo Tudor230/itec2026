@@ -14,8 +14,14 @@ interface InteractiveRobotProps {
   shouldAnimate?: boolean
 }
 
-export function InteractiveRobot({ className, section, zoom = 1, shouldAnimate = true }: InteractiveRobotProps) {
-  const { isTransitioning, isFocusLocked, eyeTarget, style } = useRobotHeadMotion(section, zoom, shouldAnimate)
+export function InteractiveRobot({
+  className,
+  section,
+  zoom = 1,
+  shouldAnimate = true,
+}: InteractiveRobotProps) {
+  const { isTransitioning, isFocusLocked, eyeTarget, style } =
+    useRobotHeadMotion(section, zoom, shouldAnimate)
   const [eyeAim, setEyeAim] = useState({ x: '0px', y: '0px' })
   const [phase, setPhase] = useState(0)
 
@@ -93,22 +99,35 @@ export function InteractiveRobot({ className, section, zoom = 1, shouldAnimate =
     transition: 'transform 620ms cubic-bezier(0.2, 0.9, 0.24, 1)',
   } as CSSProperties
 
-  const neckTopStyle = { transform: `translateY(${(bobOffset * 0.34).toFixed(2)}px)` } as CSSProperties
-  const neckMidStyle = { transform: `translateY(${(bobOffset * 0.52).toFixed(2)}px)` } as CSSProperties
-  const neckBaseStyle = { transform: `translateY(${(bobOffset * 0.7).toFixed(2)}px)` } as CSSProperties
+  const neckTopStyle = {
+    transform: `translateY(${(bobOffset * 0.34).toFixed(2)}px)`,
+  } as CSSProperties
+  const neckMidStyle = {
+    transform: `translateY(${(bobOffset * 0.52).toFixed(2)}px)`,
+  } as CSSProperties
+  const neckBaseStyle = {
+    transform: `translateY(${(bobOffset * 0.7).toFixed(2)}px)`,
+  } as CSSProperties
 
   const shellStyle = {
     ...style,
   } as CSSProperties
 
   return (
-    <div className={`${className ?? ''} relative grid h-full w-full place-items-center [perspective:1100px]`.trim()} style={shellStyle}>
+    <div
+      className={`${className ?? ''} relative grid h-full w-full place-items-center [perspective:1100px]`.trim()}
+      style={shellStyle}
+    >
       <div
         className="grid h-full [height:min(620px,100%)] [width:min(540px,92%)] [grid-template-rows:auto_auto] content-center justify-items-center [transform-style:preserve-3d] [filter:drop-shadow(0_22px_42px_var(--robot-shadow))]"
         role="presentation"
         aria-hidden="true"
       >
-        <RobotHead transitioning={isTransitioning} headStyle={headStyle} eyeStyle={eyeStyle} />
+        <RobotHead
+          transitioning={isTransitioning}
+          headStyle={headStyle}
+          eyeStyle={eyeStyle}
+        />
         <RobotBody
           neckStackStyle={neckStackStyle}
           neckTopStyle={neckTopStyle}

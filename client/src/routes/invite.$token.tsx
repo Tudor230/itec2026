@@ -40,7 +40,9 @@ function InviteRoute() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['projects'] })
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'projects'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'projects'],
+      })
 
       await navigate({
         to: '/workspace',
@@ -53,11 +55,17 @@ function InviteRoute() {
     <ProtectedRoute>
       <main className="mx-auto w-full max-w-[1080px] px-4 py-10">
         <section className="mx-auto w-full max-w-2xl rounded-[1.5rem] border border-[var(--line)] bg-[linear-gradient(165deg,var(--surface-strong),var(--surface))] p-8 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_44px_rgba(30,90,72,0.1),0_6px_18px_rgba(23,58,64,0.08)] backdrop-blur-[4px]">
-          <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Project invite</p>
-          <h1 className="m-0 text-2xl font-bold text-[var(--sea-ink)]">Join shared project</h1>
+          <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">
+            Project invite
+          </p>
+          <h1 className="m-0 text-2xl font-bold text-[var(--sea-ink)]">
+            Join shared project
+          </h1>
 
           {inviteQuery.isLoading ? (
-            <p className="mt-4 text-sm text-[var(--sea-ink-soft)]">Loading invite...</p>
+            <p className="mt-4 text-sm text-[var(--sea-ink-soft)]">
+              Loading invite...
+            </p>
           ) : null}
 
           {inviteQuery.isError ? (
@@ -69,10 +77,15 @@ function InviteRoute() {
           {inviteQuery.data ? (
             <div className="mt-6 space-y-3 text-sm text-[var(--sea-ink-soft)]">
               <p className="m-0">
-                Project: <span className="font-semibold text-[var(--sea-ink)]">{inviteQuery.data.projectName}</span>
+                Project:{' '}
+                <span className="font-semibold text-[var(--sea-ink)]">
+                  {inviteQuery.data.projectName}
+                </span>
               </p>
               <p className="m-0">Access: {inviteQuery.data.role}</p>
-              <p className="m-0">Expires: {new Date(inviteQuery.data.expiresAt).toLocaleString()}</p>
+              <p className="m-0">
+                Expires: {new Date(inviteQuery.data.expiresAt).toLocaleString()}
+              </p>
 
               {inviteQuery.data.isExpired ? (
                 <p className="m-0">This invite has expired.</p>
@@ -89,10 +102,10 @@ function InviteRoute() {
               <button
                 type="button"
                 disabled={
-                  acceptMutation.isPending
-                  || inviteQuery.data.isExpired
-                  || inviteQuery.data.isConsumed
-                  || inviteQuery.data.isRevoked
+                  acceptMutation.isPending ||
+                  inviteQuery.data.isExpired ||
+                  inviteQuery.data.isConsumed ||
+                  inviteQuery.data.isRevoked
                 }
                 onClick={() => {
                   void acceptMutation.mutateAsync()
@@ -103,7 +116,9 @@ function InviteRoute() {
               </button>
 
               {acceptMutation.isError ? (
-                <p className="m-0">Could not accept invite: {acceptMutation.error.message}</p>
+                <p className="m-0">
+                  Could not accept invite: {acceptMutation.error.message}
+                </p>
               ) : null}
             </div>
           ) : null}

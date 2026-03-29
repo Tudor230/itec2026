@@ -6,7 +6,10 @@ interface ProfileButtonProps {
   onLogout?: () => void
 }
 
-export default function ProfileButton({ compact, onLogout }: ProfileButtonProps) {
+export default function ProfileButton({
+  compact,
+  onLogout,
+}: ProfileButtonProps) {
   const { isConfigured } = useAuthRuntime()
 
   if (!isConfigured) {

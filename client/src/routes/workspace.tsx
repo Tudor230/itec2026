@@ -24,15 +24,16 @@ import EditorPane from '../components/workspace/EditorPane'
 import QuickOpenModal from '../components/workspace/QuickOpenModal'
 import TerminalPane from '../components/workspace/TerminalPane'
 import RunButton from '../components/workspace/RunButton'
-import RightSidebar, { type SidebarTab } from '../components/workspace/RightSidebar'
-import BottomDrawers, { type DrawerTab } from '../components/workspace/BottomDrawers'
+import RightSidebar from '../components/workspace/RightSidebar'
+import type {SidebarTab} from '../components/workspace/RightSidebar';
+import BottomDrawers from '../components/workspace/BottomDrawers'
+import type {DrawerTab} from '../components/workspace/BottomDrawers';
 import WorkspaceSkeleton from '../components/workspace/WorkspaceSkeleton'
 import ProfileButton from '../components/profile/ProfileButton'
 import { useToast } from '../components/ToastProvider'
 import { getWorkspaceShortcut } from '../components/workspace/workspace-shortcuts'
-import WorkspaceAuthOverlay, {
-  type AuthTab,
-} from '../components/workspace/WorkspaceAuthOverlay'
+import WorkspaceAuthOverlay from '../components/workspace/WorkspaceAuthOverlay'
+import type {AuthTab} from '../components/workspace/WorkspaceAuthOverlay';
 import { auth0Config } from '../lib/auth0-config'
 import {
   createFolder,
@@ -40,6 +41,7 @@ import {
   createFile,
   deleteFile,
   deleteFolder,
+  importFiles,
   listFiles,
   listFolders,
   listProjectInvites,
@@ -49,18 +51,19 @@ import {
   renameFolder,
   revokeProjectInvite,
   updateMyProjectMemberProfile,
-  updateFile,
-  type ActiveProjectInviteDto,
-  type FileDto,
-  type ProjectMemberDto,
+  updateFile
+  
+  
+  
 } from '../services/projects-api'
+import type {ActiveProjectInviteDto, FileDto, ProjectMemberDto} from '../services/projects-api';
 import {
-  type CollabProjectActivityPayload,
-  type CollabDocDirtyStatePayload,
-  type CollabFileCreatedPayload,
-  type CollabFileDeletedPayload,
-  type CollabFileUpdatedPayload,
-} from '../lib/collab-client'
+  buildImportPayload,
+  chunkImportFiles
+  
+} from '../lib/file-import'
+import type {ImportFileEntry} from '../lib/file-import';
+import type {CollabProjectActivityPayload, CollabDocDirtyStatePayload, CollabFileCreatedPayload, CollabFileDeletedPayload, CollabFileUpdatedPayload} from '../lib/collab-client';
 import { getCollaboratorColor } from '../components/workspace/collab-colors'
 import { useCollabDoc } from '../hooks/use-collab-doc'
 import { useRunCurrentFile } from '../hooks/use-run-current-file'
@@ -74,7 +77,8 @@ export const Route = createFileRoute('/workspace')({
     const normalizedProjectId =
       typeof search.projectId === 'string' ? search.projectId.trim() : ''
 
-    const projectId = normalizedProjectId.length > 0 ? normalizedProjectId : undefined
+    const projectId =
+      normalizedProjectId.length > 0 ? normalizedProjectId : undefined
 
     return {
       projectId,
@@ -128,8 +132,12 @@ function WorkspaceWithHostedAuth() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [openFileIds, setOpenFileIds] = useState<string[]>([])
-  const [draftsByFileId, setDraftsByFileId] = useState<Record<string, string>>({})
-  const [collabDirtyByFileId, setCollabDirtyByFileId] = useState<Record<string, boolean>>({})
+  const [draftsByFileId, setDraftsByFileId] = useState<Record<string, string>>(
+    {},
+  )
+  const [collabDirtyByFileId, setCollabDirtyByFileId] = useState<
+    Record<string, boolean>
+  >({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
@@ -143,15 +151,23 @@ function WorkspaceWithHostedAuth() {
   const [authError, setAuthError] = useState<string | null>(null)
   const [bottomDrawerTab, setBottomDrawerTab] = useState<DrawerTab | null>(null)
   const [hasClosedAllTabs, setHasClosedAllTabs] = useState(false)
-  const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<Record<string, string[]>>({})
-  const [inviteLinksByInviteId, setInviteLinksByInviteId] = useState<Record<string, string>>({})
-  const [collabActivityByFileId, setCollabActivityByFileId] = useState<Record<string, string[]>>({})
+  const [virtualFoldersByProjectId, setVirtualFoldersByProjectId] = useState<
+    Record<string, string[]>
+  >({})
+  const [inviteLinksByInviteId, setInviteLinksByInviteId] = useState<
+    Record<string, string>
+  >({})
+  const [collabActivityByFileId, setCollabActivityByFileId] = useState<
+    Record<string, string[]>
+  >({})
   const collabRefreshTimerRef = useRef<number | null>(null)
   const autosaveTimeoutRef = useRef<number | null>(null)
   const leftPanelRef = usePanelRef()
   const rightPanelRef = usePanelRef()
 
-  const authRuntimeError = error ? 'Authentication failed. Please try again.' : null
+  const authRuntimeError = error
+    ? 'Authentication failed. Please try again.'
+    : null
 
   const startHostedAuth = async (
     mode: AuthTab,
@@ -172,7 +188,10 @@ function WorkspaceWithHostedAuth() {
         },
       })
     } catch (caughtError) {
-      const message = caughtError instanceof Error ? caughtError.message : 'Could not start login flow.'
+      const message =
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'Could not start login flow.'
       setAuthError(message)
       setAuthActionPending(false)
     }
@@ -221,7 +240,12 @@ function WorkspaceWithHostedAuth() {
   })
 
   const projectMembersQuery = useQuery({
-    queryKey: ['workspace', 'project-members', isAuthenticated, activeProjectId],
+    queryKey: [
+      'workspace',
+      'project-members',
+      isAuthenticated,
+      activeProjectId,
+    ],
     queryFn: async () => {
       const token = await getApiAccessToken()
 
@@ -244,24 +268,36 @@ function WorkspaceWithHostedAuth() {
 
       const email = user?.email?.trim() || undefined
       const fallbackFromEmail = email?.split('@')[0]?.trim() || undefined
-      const displayName = user?.name?.trim() || user?.nickname?.trim() || fallbackFromEmail
+      const displayName =
+        user?.name?.trim() || user?.nickname?.trim() || fallbackFromEmail
       if (!displayName) {
         return { updated: false }
       }
 
-      return updateMyProjectMemberProfile(activeProjectId, { displayName, email }, token)
+      return updateMyProjectMemberProfile(
+        activeProjectId,
+        { displayName, email },
+        token,
+      )
     },
     onSuccess: async (result) => {
       if (!result.updated) {
         return
       }
 
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-members'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'project-members'],
+      })
     },
   })
 
   const activeInvitesQuery = useQuery({
-    queryKey: ['workspace', 'project-invites', isAuthenticated, activeProjectId],
+    queryKey: [
+      'workspace',
+      'project-invites',
+      isAuthenticated,
+      activeProjectId,
+    ],
     queryFn: async () => {
       const token = await getApiAccessToken()
 
@@ -274,123 +310,154 @@ function WorkspaceWithHostedAuth() {
     enabled: isAuthenticated && activeProjectId !== null,
   })
 
-  const upsertFileInCache = useCallback((incomingFile: FileDto) => {
-    queryClient.setQueryData<FileDto[]>(
-      ['workspace', 'files', true, incomingFile.projectId],
-      (previous) => {
-        const current = previous ?? []
-        const exists = current.some((file) => file.id === incomingFile.id)
+  const upsertFileInCache = useCallback(
+    (incomingFile: FileDto) => {
+      queryClient.setQueryData<FileDto[]>(
+        ['workspace', 'files', true, incomingFile.projectId],
+        (previous) => {
+          const current = previous ?? []
+          const exists = current.some((file) => file.id === incomingFile.id)
 
-        const next = exists
-          ? current.map((file) => (file.id === incomingFile.id ? incomingFile : file))
-          : [incomingFile, ...current]
+          const next = exists
+            ? current.map((file) =>
+                file.id === incomingFile.id ? incomingFile : file,
+              )
+            : [incomingFile, ...current]
 
-        return [...next].sort((left, right) => {
-          return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+          return [...next].sort((left, right) => {
+            return (
+              new Date(right.updatedAt).getTime() -
+              new Date(left.updatedAt).getTime()
+            )
+          })
+        },
+      )
+    },
+    [queryClient],
+  )
+
+  const onCollabFileCreated = useCallback(
+    (payload: CollabFileCreatedPayload) => {
+      upsertFileInCache({
+        ...payload,
+        content: '',
+        ownerSubject: null,
+      })
+    },
+    [upsertFileInCache],
+  )
+
+  const onCollabFileUpdated = useCallback(
+    (payload: CollabFileUpdatedPayload) => {
+      queryClient
+        .invalidateQueries({
+          queryKey: ['workspace', 'files', true, payload.projectId],
         })
-      },
-    )
-  }, [queryClient])
+        .catch(() => undefined)
+    },
+    [queryClient],
+  )
 
-  const onCollabFileCreated = useCallback((payload: CollabFileCreatedPayload) => {
-    upsertFileInCache({
-      ...payload,
-      content: '',
-      ownerSubject: null,
-    })
-  }, [upsertFileInCache])
+  const onCollabFileDeleted = useCallback(
+    (payload: CollabFileDeletedPayload) => {
+      queryClient.setQueryData<FileDto[]>(
+        ['workspace', 'files', true, payload.projectId],
+        (previous) => (previous ?? []).filter((file) => file.id !== payload.id),
+      )
 
-  const onCollabFileUpdated = useCallback((payload: CollabFileUpdatedPayload) => {
-    queryClient.invalidateQueries({
-      queryKey: ['workspace', 'files', true, payload.projectId],
-    }).catch(() => undefined)
-  }, [queryClient])
-
-  const onCollabFileDeleted = useCallback((payload: CollabFileDeletedPayload) => {
-    queryClient.setQueryData<FileDto[]>(
-      ['workspace', 'files', true, payload.projectId],
-      (previous) => (previous ?? []).filter((file) => file.id !== payload.id),
-    )
-
-    setOpenFileIds((previous) => previous.filter((fileId) => fileId !== payload.id))
-    setDraftsByFileId((previous) => {
-      if (!(payload.id in previous)) {
-        return previous
-      }
-
-      const next = { ...previous }
-      delete next[payload.id]
-      return next
-    })
-
-    setCollabDirtyByFileId((previous) => {
-      if (!(payload.id in previous)) {
-        return previous
-      }
-
-      const next = { ...previous }
-      delete next[payload.id]
-      return next
-    })
-
-    setActiveFileId((previous) => (previous === payload.id ? null : previous))
-  }, [queryClient])
-
-  const onCollabDirtyStateChanged = useCallback((payload: CollabDocDirtyStatePayload) => {
-    setCollabDirtyByFileId((previous) => {
-      if (payload.isDirty) {
-        if (previous[payload.fileId]) {
+      setOpenFileIds((previous) =>
+        previous.filter((fileId) => fileId !== payload.id),
+      )
+      setDraftsByFileId((previous) => {
+        if (!(payload.id in previous)) {
           return previous
         }
 
-        return {
-          ...previous,
-          [payload.fileId]: true,
-        }
-      }
-
-      if (!(payload.fileId in previous)) {
-        return previous
-      }
-
-      const next = { ...previous }
-      delete next[payload.fileId]
-      return next
-    })
-
-    if (!payload.isDirty) {
-      queryClient.invalidateQueries({
-        queryKey: ['workspace', 'files', true, payload.projectId],
-      }).catch(() => {
-        return undefined
-      })
-    }
-  }, [queryClient])
-
-  const onProjectActivityChanged = useCallback((payload: CollabProjectActivityPayload) => {
-    setCollabActivityByFileId((previous) => {
-      const next = { ...previous }
-
-      Object.keys(next).forEach((fileId) => {
-        const filtered = next[fileId].filter((subject) => subject !== payload.subject)
-        if (filtered.length === 0) {
-          delete next[fileId]
-          return
-        }
-
-        next[fileId] = filtered
+        const next = { ...previous }
+        delete next[payload.id]
+        return next
       })
 
-      if (!payload.cleared && payload.fileId) {
-        const existing = next[payload.fileId] ?? []
-        if (!existing.includes(payload.subject)) {
-          next[payload.fileId] = [...existing, payload.subject]
+      setCollabDirtyByFileId((previous) => {
+        if (!(payload.id in previous)) {
+          return previous
         }
-      }
 
-      return next
-    })
-  }, [])
+        const next = { ...previous }
+        delete next[payload.id]
+        return next
+      })
+
+      setActiveFileId((previous) => (previous === payload.id ? null : previous))
+    },
+    [queryClient],
+  )
+
+  const onCollabDirtyStateChanged = useCallback(
+    (payload: CollabDocDirtyStatePayload) => {
+      setCollabDirtyByFileId((previous) => {
+        if (payload.isDirty) {
+          if (previous[payload.fileId]) {
+            return previous
+          }
+
+          return {
+            ...previous,
+            [payload.fileId]: true,
+          }
+        }
+
+        if (!(payload.fileId in previous)) {
+          return previous
+        }
+
+        const next = { ...previous }
+        delete next[payload.fileId]
+        return next
+      })
+
+      if (!payload.isDirty) {
+        queryClient
+          .invalidateQueries({
+            queryKey: ['workspace', 'files', true, payload.projectId],
+          })
+          .catch(() => {
+            return undefined
+          })
+      }
+    },
+    [queryClient],
+  )
+
+  const onProjectActivityChanged = useCallback(
+    (payload: CollabProjectActivityPayload) => {
+      setCollabActivityByFileId((previous) => {
+        const next = { ...previous }
+
+        Object.keys(next).forEach((fileId) => {
+          const filtered = next[fileId].filter(
+            (subject) => subject !== payload.subject,
+          )
+          if (filtered.length === 0) {
+            delete next[fileId]
+            return
+          }
+
+          next[fileId] = filtered
+        })
+
+        if (!payload.cleared && payload.fileId) {
+          const existing = next[payload.fileId] ?? []
+          if (!existing.includes(payload.subject)) {
+            next[payload.fileId] = [...existing, payload.subject]
+          }
+        }
+
+        return next
+      })
+    },
+    [],
+  )
 
   const createFileMutation = useMutation({
     mutationFn: async (path: string) => {
@@ -419,7 +486,9 @@ function WorkspaceWithHostedAuth() {
       success(`File created: ${createdFile.path.split('/').pop()}`)
       setActiveFileId(createdFile.id)
       setOpenFileIds((previous) =>
-        previous.includes(createdFile.id) ? previous : [...previous, createdFile.id],
+        previous.includes(createdFile.id)
+          ? previous
+          : [...previous, createdFile.id],
       )
       setDraftsByFileId((previous) => {
         const next = { ...previous }
@@ -502,7 +571,9 @@ function WorkspaceWithHostedAuth() {
         })
       }
 
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'folders'],
+      })
       success('Folder created')
     },
     onError: (error) => {
@@ -522,7 +593,14 @@ function WorkspaceWithHostedAuth() {
         throw new Error('Authentication token is required to rename folders.')
       }
 
-      return renameFolder({ projectId: activeProjectId, fromPath: input.fromPath, toPath: input.toPath }, token)
+      return renameFolder(
+        {
+          projectId: activeProjectId,
+          fromPath: input.fromPath,
+          toPath: input.toPath,
+        },
+        token,
+      )
     },
     onSuccess: async (_result, input) => {
       if (activeProjectId) {
@@ -548,7 +626,9 @@ function WorkspaceWithHostedAuth() {
       }
 
       await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'folders'],
+      })
       success('Folder renamed')
     },
     onError: (error) => {
@@ -592,18 +672,101 @@ function WorkspaceWithHostedAuth() {
             return false
           }
 
-          return !(file.path === folderPath || file.path.startsWith(`${folderPath}/`))
+          return !(
+            file.path === folderPath || file.path.startsWith(`${folderPath}/`)
+          )
         })
 
         return next
       })
 
       await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'folders'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'folders'],
+      })
       success('Folder deleted')
     },
     onError: (error) => {
       toastError(`Could not delete folder: ${error.message}`)
+    },
+  })
+
+  const importFilesMutation = useMutation({
+    mutationFn: async (input: {
+      entries: ImportFileEntry[]
+      targetFolderPath: string | null
+      conflictStrategy?: 'skip' | 'overwrite' | 'fail'
+    }) => {
+      const token = await getApiAccessToken()
+
+      if (!activeProjectId) {
+        throw new Error('Select a project before importing files.')
+      }
+
+      if (!token) {
+        throw new Error('Authentication token is required to import files.')
+      }
+
+      const payload = await buildImportPayload(input.entries, {
+        targetPrefix: input.targetFolderPath,
+      })
+
+      if (payload.files.length === 0) {
+        throw new Error('No text files to import from the selected source.')
+      }
+
+      const chunks = chunkImportFiles(payload.files)
+      const aggregated = {
+        created: [] as Awaited<ReturnType<typeof importFiles>>['created'],
+        updated: [] as Awaited<ReturnType<typeof importFiles>>['updated'],
+        skipped: [] as Awaited<ReturnType<typeof importFiles>>['skipped'],
+      }
+
+      for (const filesChunk of chunks) {
+        const result = await importFiles(
+          {
+            projectId: activeProjectId,
+            files: filesChunk,
+            conflictStrategy: input.conflictStrategy ?? 'skip',
+          },
+          token,
+        )
+
+        aggregated.created.push(...result.created)
+        aggregated.updated.push(...result.updated)
+        aggregated.skipped.push(...result.skipped)
+      }
+
+      return {
+        ...aggregated,
+        skippedByClient: payload.skippedCount,
+      }
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ['workspace', 'files'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'folders'],
+      })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'projects'],
+      })
+
+      const totalSkipped = result.skipped.length + result.skippedByClient
+      const importedCount = result.created.length + result.updated.length
+
+      if (importedCount < 1) {
+        success(
+          `Import complete. Skipped ${totalSkipped} file${totalSkipped === 1 ? '' : 's'}.`,
+        )
+        return
+      }
+
+      success(
+        `Imported ${importedCount} file${importedCount === 1 ? '' : 's'}${totalSkipped > 0 ? `, skipped ${totalSkipped}` : ''}.`,
+      )
+    },
+    onError: (error) => {
+      toastError(`Could not import files: ${error.message}`)
     },
   })
 
@@ -623,7 +786,7 @@ function WorkspaceWithHostedAuth() {
       markSaved(updated.projectId, updated.id)
       setDraftsByFileId((previous) => {
         const latestDraft = previous[updated.id]
-        if (latestDraft !== undefined && latestDraft !== updated.content) {
+        if (latestDraft && latestDraft !== updated.content) {
           return previous
         }
 
@@ -649,18 +812,21 @@ function WorkspaceWithHostedAuth() {
     autosaveTimeoutRef.current = null
   }, [])
 
-  const triggerSave = useCallback((fileId: string, content: string) => {
-    clearAutosaveTimeout()
+  const triggerSave = useCallback(
+    (fileId: string, content: string) => {
+      clearAutosaveTimeout()
 
-    if (saveFileMutation.isPending) {
-      return
-    }
+      if (saveFileMutation.isPending) {
+        return
+      }
 
-    void saveFileMutation.mutateAsync({
-      fileId,
-      content,
-    })
-  }, [clearAutosaveTimeout, saveFileMutation])
+      void saveFileMutation.mutateAsync({
+        fileId,
+        content,
+      })
+    },
+    [clearAutosaveTimeout, saveFileMutation],
+  )
 
   const files = filesQuery.data ?? []
   const activeFile = files.find((file) => file.id === activeFileId) ?? null
@@ -668,12 +834,15 @@ function WorkspaceWithHostedAuth() {
     .map((fileId) => files.find((file) => file.id === fileId))
     .filter((file): file is FileDto => file !== undefined)
   const editorValue = activeFile
-    ? draftsByFileId[activeFile.id] ?? activeFile.content
+    ? (draftsByFileId[activeFile.id] ?? activeFile.content)
     : ''
   const localIsDirty = activeFile
-    ? (draftsByFileId[activeFile.id] ?? activeFile.content) !== activeFile.content
+    ? (draftsByFileId[activeFile.id] ?? activeFile.content) !==
+      activeFile.content
     : false
-  const isDirty = activeFile ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id]) : false
+  const isDirty = activeFile
+    ? localIsDirty || Boolean(collabDirtyByFileId[activeFile.id])
+    : false
   const {
     queuedTerminalCommand,
     runCurrentFile,
@@ -714,12 +883,14 @@ function WorkspaceWithHostedAuth() {
     triggerSave,
   ])
 
-  const selectedProject = projectsQuery.data?.find((project) => project.id === activeProjectId) ?? null
+  const selectedProject =
+    projectsQuery.data?.find((project) => project.id === activeProjectId) ??
+    null
 
   const dirtyFileIds = files
     .filter((file) => {
       const draftValue = draftsByFileId[file.id]
-      const locallyDirty = draftValue !== undefined ? draftValue !== file.content : false
+      const locallyDirty = draftValue ? draftValue !== file.content : false
       return locallyDirty || Boolean(collabDirtyByFileId[file.id])
     })
     .map((file) => file.id)
@@ -729,7 +900,9 @@ function WorkspaceWithHostedAuth() {
       return []
     }
 
-    const backendFolders = (foldersQuery.data ?? []).map((folder) => folder.path)
+    const backendFolders = (foldersQuery.data ?? []).map(
+      (folder) => folder.path,
+    )
     const localFolders = virtualFoldersByProjectId[activeProjectId] ?? []
 
     return [...new Set([...backendFolders, ...localFolders])]
@@ -742,9 +915,10 @@ function WorkspaceWithHostedAuth() {
     const mapped = apiMembers.map((member) => {
       const isYou = currentSubject !== null && member.subject === currentSubject
       const email = member.email?.trim() || 'Not available'
-      const fallbackFromEmail = email !== 'Not available'
-        ? (email.split('@')[0]?.trim() || undefined)
-        : undefined
+      const fallbackFromEmail =
+        email !== 'Not available'
+          ? email.split('@')[0]?.trim() || undefined
+          : undefined
 
       return {
         id: member.subject,
@@ -759,15 +933,21 @@ function WorkspaceWithHostedAuth() {
   }, [projectMembersQuery.data, user])
 
   const collaboratorNameBySubject = useMemo(() => {
-    return collabMembers.reduce<Record<string, string>>((accumulator, member) => {
-      accumulator[member.id] = member.name
-      return accumulator
-    }, {})
+    return collabMembers.reduce<Record<string, string>>(
+      (accumulator, member) => {
+        accumulator[member.id] = member.name
+        return accumulator
+      },
+      {},
+    )
   }, [collabMembers])
 
-  const resolveCollaboratorName = useCallback((subject: string) => {
-    return collaboratorNameBySubject[subject] ?? 'Collaborator'
-  }, [collaboratorNameBySubject])
+  const resolveCollaboratorName = useCallback(
+    (subject: string) => {
+      return collaboratorNameBySubject[subject] ?? 'Collaborator'
+    },
+    [collaboratorNameBySubject],
+  )
 
   const { collabState, onEditorMount, markSaved } = useCollabDoc({
     projectId: activeProjectId,
@@ -781,20 +961,21 @@ function WorkspaceWithHostedAuth() {
   })
 
   const collaboratorInitials = useMemo(() => {
-    return collabMembers
-      .slice(0, 3)
-      .map((member) => {
-        const words = member.name.split(/\s+/).filter((word) => word.length > 0)
-        if (words.length === 0) {
-          return member.name.slice(0, 2).toUpperCase()
-        }
+    return collabMembers.slice(0, 3).map((member) => {
+      const words = member.name.split(/\s+/).filter((word) => word.length > 0)
+      if (words.length === 0) {
+        return member.name.slice(0, 2).toUpperCase()
+      }
 
-        if (words.length === 1) {
-          return words[0].slice(0, 2).toUpperCase()
-        }
+      if (words.length === 1) {
+        return words[0].slice(0, 2).toUpperCase()
+      }
 
-        return `${words[0][0] ?? ''}${words[1][0] ?? ''}`.toUpperCase()
-      })
+      const firstInitial = words[0][0]
+      const secondInitial = words[1][0]
+
+      return `${firstInitial}${secondInitial}`.toUpperCase()
+    })
   }, [collabMembers])
 
   const collabActivityOutlineByFileId = useMemo(() => {
@@ -871,7 +1052,9 @@ function WorkspaceWithHostedAuth() {
         }
       })
 
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-invites'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'project-invites'],
+      })
 
       try {
         await navigator.clipboard.writeText(inviteLink)
@@ -910,7 +1093,9 @@ function WorkspaceWithHostedAuth() {
         return next
       })
 
-      await queryClient.invalidateQueries({ queryKey: ['workspace', 'project-invites'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['workspace', 'project-invites'],
+      })
       success('Invite link invalidated')
     },
     onError: (error) => {
@@ -947,7 +1132,9 @@ function WorkspaceWithHostedAuth() {
       return
     }
 
-    const stillExists = projectsQuery.data.some((project) => project.id === activeProjectId)
+    const stillExists = projectsQuery.data.some(
+      (project) => project.id === activeProjectId,
+    )
     if (!stillExists) {
       setActiveProjectId(projectsQuery.data[0].id)
     }
@@ -988,7 +1175,9 @@ function WorkspaceWithHostedAuth() {
 
       const firstFileId = filesQuery.data[0].id
       setActiveFileId(firstFileId)
-      setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
+      setOpenFileIds((previous) =>
+        previous.includes(firstFileId) ? previous : [...previous, firstFileId],
+      )
       return
     }
 
@@ -996,7 +1185,9 @@ function WorkspaceWithHostedAuth() {
     if (!stillExists) {
       const firstFileId = filesQuery.data[0].id
       setActiveFileId(firstFileId)
-      setOpenFileIds((previous) => (previous.includes(firstFileId) ? previous : [...previous, firstFileId]))
+      setOpenFileIds((previous) =>
+        previous.includes(firstFileId) ? previous : [...previous, firstFileId],
+      )
     }
   }, [activeFileId, filesQuery.data, hasClosedAllTabs, isAuthenticated])
 
@@ -1039,7 +1230,9 @@ function WorkspaceWithHostedAuth() {
 
       if (shortcut === 'toggle-terminal') {
         event.preventDefault()
-        setCenterView((current) => (current === 'editor' ? 'terminal' : 'editor'))
+        setCenterView((current) =>
+          current === 'editor' ? 'terminal' : 'editor',
+        )
         return
       }
 
@@ -1066,7 +1259,14 @@ function WorkspaceWithHostedAuth() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [activeFile, editorValue, isAuthenticated, localIsDirty, saveFileMutation.isPending, triggerSave])
+  }, [
+    activeFile,
+    editorValue,
+    isAuthenticated,
+    localIsDirty,
+    saveFileMutation.isPending,
+    triggerSave,
+  ])
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -1154,7 +1354,7 @@ function WorkspaceWithHostedAuth() {
 
       if (activeFileId === fileId) {
         const closedIndex = previous.indexOf(fileId)
-        const fallbackId = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null
+        const fallbackId = next[Math.max(0, closedIndex - 1)] || null
         setActiveFileId(fallbackId)
       }
 
@@ -1215,7 +1415,8 @@ function WorkspaceWithHostedAuth() {
         <div
           className={cn(
             'relative flex min-h-0 flex-1 flex-col overflow-hidden',
-            isLocked && 'pointer-events-none select-none [transform:scale(0.998)] [filter:blur(12px)_saturate(0.86)]'
+            isLocked &&
+              'pointer-events-none select-none [transform:scale(0.998)] [filter:blur(12px)_saturate(0.86)]',
           )}
           {...lockedContentProps}
         >
@@ -1227,7 +1428,7 @@ function WorkspaceWithHostedAuth() {
                 aria-label="Back to projects"
                 className={cn(
                   workspaceControlButtonClass,
-                  'inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors'
+                  'inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
                 )}
                 title="Back to projects"
               >
@@ -1261,19 +1462,23 @@ function WorkspaceWithHostedAuth() {
                   type="button"
                   onClick={() => setCenterView('editor')}
                   className={cn(
-                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
-                    centerView === 'editor' 
-                      ? "text-white" 
-                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                    'relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10',
+                    centerView === 'editor'
+                      ? 'text-white'
+                      : 'text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]',
                   )}
                 >
                   <Code size={14} />
                   <span>Editor</span>
                   {centerView === 'editor' && (
-                    <motion.div 
+                    <motion.div
                       layoutId="workspace-view-toggle"
                       className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 300,
+                        damping: 30,
+                      }}
                     />
                   )}
                 </button>
@@ -1281,19 +1486,23 @@ function WorkspaceWithHostedAuth() {
                   type="button"
                   onClick={() => setCenterView('terminal')}
                   className={cn(
-                    "relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10",
-                    centerView === 'terminal' 
-                      ? "text-white" 
-                      : "text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+                    'relative px-4 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-all z-10',
+                    centerView === 'terminal'
+                      ? 'text-white'
+                      : 'text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]',
                   )}
                 >
                   <TerminalIcon size={14} />
                   <span>Terminal</span>
                   {centerView === 'terminal' && (
-                    <motion.div 
+                    <motion.div
                       layoutId="workspace-view-toggle"
                       className="absolute inset-0 bg-[var(--lagoon)] rounded-lg -z-10 shadow-md"
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 300,
+                        damping: 30,
+                      }}
                     />
                   )}
                 </button>
@@ -1306,7 +1515,8 @@ function WorkspaceWithHostedAuth() {
                   <GitBranch size={11} /> main
                 </span>
                 <span className={workspaceHudChipClass}>
-                  <Activity size={11} /> {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
+                  <Activity size={11} />{' '}
+                  {dirtyFileCount === 0 ? 'Clean' : `${dirtyFileCount} Unsaved`}
                 </span>
               </div>
 
@@ -1319,7 +1529,10 @@ function WorkspaceWithHostedAuth() {
                 <button
                   type="button"
                   aria-label="Search"
-                  className={cn(workspaceControlButtonClass, 'rounded-md p-1.5 transition-colors')}
+                  className={cn(
+                    workspaceControlButtonClass,
+                    'rounded-md p-1.5 transition-colors',
+                  )}
                   title="Search"
                 >
                   <Search size={14} />
@@ -1327,16 +1540,21 @@ function WorkspaceWithHostedAuth() {
                 <button
                   type="button"
                   aria-label="Notifications"
-                  className={cn(workspaceControlButtonClass, 'rounded-md p-1.5 transition-colors')}
+                  className={cn(
+                    workspaceControlButtonClass,
+                    'rounded-md p-1.5 transition-colors',
+                  )}
                   title="Notifications"
                 >
                   <Bell size={14} />
                 </button>
                 <div className="w-[1px] h-4 bg-[var(--line)]" />
-                <ProfileButton 
+                <ProfileButton
                   onLogout={() => {
-                    void logout({ logoutParams: { returnTo: window.location.origin } })
-                  }} 
+                    void logout({
+                      logoutParams: { returnTo: window.location.origin },
+                    })
+                  }}
                 />
               </div>
             </div>
@@ -1345,7 +1563,7 @@ function WorkspaceWithHostedAuth() {
           <FileTabs
             tabs={openTabs.map((file) => {
               const draftValue = draftsByFileId[file.id]
-              const localDirty = draftValue !== undefined ? draftValue !== file.content : false
+              const localDirty = draftValue ? draftValue !== file.content : false
               const dirty = localDirty || Boolean(collabDirtyByFileId[file.id])
 
               return {
@@ -1358,10 +1576,10 @@ function WorkspaceWithHostedAuth() {
             onSelectTab={openFileById}
             onCloseTab={closeTabById}
             onCloseOthers={closeOthers}
-  onCloseAll={closeAll}
-  collaborators={collaboratorInitials}
-  onOpenCollaboration={() => setBottomDrawerTab('collab')}
-/>
+            onCloseAll={closeAll}
+            collaborators={collaboratorInitials}
+            onOpenCollaboration={() => setBottomDrawerTab('collab')}
+          />
 
           <Group
             id="workspace-layout-panels"
@@ -1371,8 +1589,10 @@ function WorkspaceWithHostedAuth() {
             onLayoutChanged={(nextLayout) => {
               const nextLeftSize = nextLayout['left-sidebar'] ?? 0
               const nextRightSize = nextLayout['right-sidebar'] ?? 0
-              const isLeftCollapsedNext = nextLeftSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
-              const isRightCollapsedNext = nextRightSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
+              const isLeftCollapsedNext =
+                nextLeftSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
+              const isRightCollapsedNext =
+                nextRightSize <= SIDEBAR_LAYOUT.collapseThresholdPercent
 
               if (isLeftSidebarCollapsed !== isLeftCollapsedNext) {
                 setIsLeftSidebarCollapsed(isLeftCollapsedNext)
@@ -1437,6 +1657,13 @@ function WorkspaceWithHostedAuth() {
                 onDeleteFolder={async (path) => {
                   await deleteFolderMutation.mutateAsync(path)
                 }}
+                onDropExternalFiles={async (entries, targetFolderPath) => {
+                  await importFilesMutation.mutateAsync({
+                    entries,
+                    targetFolderPath,
+                    conflictStrategy: 'skip',
+                  })
+                }}
                 onClose={() => setIsLeftSidebarCollapsed(true)}
               />
             </Panel>
@@ -1448,63 +1675,66 @@ function WorkspaceWithHostedAuth() {
             </Separator>
 
             {/* Central Editor/Terminal Panel */}
-            <Panel id="main-editor" className="relative flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)] [background:linear-gradient(160deg,color-mix(in_oklab,var(--surface)_66%,transparent_34%)_0%,color-mix(in_oklab,var(--surface-strong)_52%,transparent_48%)_100%)] before:pointer-events-none before:absolute before:inset-0 before:opacity-[0.18] before:[background:radial-gradient(circle_at_16%_14%,color-mix(in_oklab,var(--lagoon)_34%,transparent),transparent_30%),radial-gradient(circle_at_86%_18%,color-mix(in_oklab,var(--palm)_30%,transparent),transparent_34%)]">
-                <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
-                  {/* Sidebar Toggle Handle for Left */}
-                   {isLeftSidebarCollapsed ? (
-                    <button
-                     type="button"
-                     aria-label="Open files panel"
-                     onClick={() => setIsLeftSidebarCollapsed(false)}
-                     className="absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border border-l-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
-                     title="Open files panel"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                   ) : null}
+            <Panel
+              id="main-editor"
+              className="relative flex min-h-0 min-w-0 flex-col bg-[rgba(var(--bg-rgb),0.2)] [background:linear-gradient(160deg,color-mix(in_oklab,var(--surface)_66%,transparent_34%)_0%,color-mix(in_oklab,var(--surface-strong)_52%,transparent_48%)_100%)] before:pointer-events-none before:absolute before:inset-0 before:opacity-[0.18] before:[background:radial-gradient(circle_at_16%_14%,color-mix(in_oklab,var(--lagoon)_34%,transparent),transparent_30%),radial-gradient(circle_at_86%_18%,color-mix(in_oklab,var(--palm)_30%,transparent),transparent_34%)]"
+            >
+              <div className="relative flex-1 flex min-h-0 min-w-0 flex-col">
+                {/* Sidebar Toggle Handle for Left */}
+                {isLeftSidebarCollapsed ? (
+                  <button
+                    type="button"
+                    aria-label="Open files panel"
+                    onClick={() => setIsLeftSidebarCollapsed(false)}
+                    className="absolute left-0 top-1/2 z-30 -translate-y-1/2 rounded-r-xl border border-l-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
+                    title="Open files panel"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                ) : null}
 
-                  {/* Sidebar Toggle Handle for Right */}
-                   {!isRightSidebarOpen ? (
-                    <button
-                     type="button"
-                     aria-label="Open assistant panel"
-                     onClick={() => setIsRightSidebarOpen(true)}
-                     className="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border border-r-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
-                     title="Open assistant panel"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                   ) : null}
+                {/* Sidebar Toggle Handle for Right */}
+                {!isRightSidebarOpen ? (
+                  <button
+                    type="button"
+                    aria-label="Open assistant panel"
+                    onClick={() => setIsRightSidebarOpen(true)}
+                    className="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl border border-r-0 border-[color-mix(in_oklab,var(--line)_46%,var(--lagoon-deep)_54%)] bg-[color-mix(in_oklab,var(--surface-strong)_95%,var(--bg-base)_5%)] px-2 py-5 text-[var(--sea-ink)] shadow-[inset_0_1px_0_color-mix(in_oklab,var(--inset-glint)_88%,transparent),0_10px_22px_rgba(7,20,26,0.2)] transition-colors"
+                    title="Open assistant panel"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                ) : null}
 
-                  {centerView === 'editor' ? (
-                    <EditorPane
-                      file={activeFile}
-                      initialValue={editorValue}
-                      isDirty={isDirty}
-                      saveError={saveError}
-                      collabState={collabState}
-                      onEditorMount={onEditorMount}
-                      onChange={(nextValue) => {
-                        if (!activeFile) {
-                          return
+                {centerView === 'editor' ? (
+                  <EditorPane
+                    file={activeFile}
+                    initialValue={editorValue}
+                    isDirty={isDirty}
+                    saveError={saveError}
+                    collabState={collabState}
+                    onEditorMount={onEditorMount}
+                    onChange={(nextValue) => {
+                      if (!activeFile) {
+                        return
+                      }
+
+                      setDraftsByFileId((previous) => {
+                        return {
+                          ...previous,
+                          [activeFile.id]: nextValue,
                         }
-
-                        setDraftsByFileId((previous) => {
-                          return {
-                            ...previous,
-                            [activeFile.id]: nextValue,
-                          }
-                        })
-                      }}
-                    />
-                  ) : (
-                    <TerminalPane
-                      projectId={activeProjectId}
-                      queuedCommand={queuedTerminalCommand}
-                      onQueuedCommandSent={clearQueuedTerminalCommand}
-                    />
-                  )}
-               </div>
+                      })
+                    }}
+                  />
+                ) : (
+                  <TerminalPane
+                    projectId={activeProjectId}
+                    queuedCommand={queuedTerminalCommand}
+                    onQueuedCommandSent={clearQueuedTerminalCommand}
+                  />
+                )}
+              </div>
             </Panel>
 
             {/* Right Sidebar Panel */}
@@ -1529,12 +1759,14 @@ function WorkspaceWithHostedAuth() {
                 onToggle={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
                 activeTab={rightSidebarTab}
                 setActiveTab={setRightSidebarTab}
-                activeFileContext={activeFile
-                  ? {
-                      path: activeFile.path,
-                      content: editorValue,
-                    }
-                  : null}
+                activeFileContext={
+                  activeFile
+                    ? {
+                        path: activeFile.path,
+                        content: editorValue,
+                      }
+                    : null
+                }
                 getAccessToken={getApiAccessToken}
               />
             </Panel>

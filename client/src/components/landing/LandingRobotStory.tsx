@@ -39,7 +39,11 @@ function normalizeWheelDelta(event: WheelEvent) {
   return event.deltaY
 }
 
-export function shouldRelockIntro(isLocked: boolean, isAtTop: boolean, delta: number) {
+export function shouldRelockIntro(
+  isLocked: boolean,
+  isAtTop: boolean,
+  delta: number,
+) {
   return !isLocked && isAtTop && delta < 0
 }
 
@@ -55,7 +59,9 @@ export function shouldUnlockIntro(progress: number) {
   return progress >= INTRO_UNLOCK_PROGRESS
 }
 
-export function resolveLandingActionVariant(state: LandingActionState): LandingActionVariant {
+export function resolveLandingActionVariant(
+  state: LandingActionState,
+): LandingActionVariant {
   if (!state.isConfigured) {
     return 'guest'
   }
@@ -329,7 +335,9 @@ export default function LandingRobotStory() {
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'ArrowUp' || event.key === 'PageUp') {
-        if (shouldRelockIntro(isLockedRef.current, isAtTop(), -KEYBOARD_DELTA)) {
+        if (
+          shouldRelockIntro(isLockedRef.current, isAtTop(), -KEYBOARD_DELTA)
+        ) {
           event.preventDefault()
           lockIntro()
           queueDelta(-KEYBOARD_DELTA)
@@ -347,7 +355,11 @@ export default function LandingRobotStory() {
         return
       }
 
-      if (event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === ' ') {
+      if (
+        event.key === 'ArrowDown' ||
+        event.key === 'PageDown' ||
+        event.key === ' '
+      ) {
         event.preventDefault()
         queueDelta(KEYBOARD_DELTA)
         return
@@ -377,7 +389,10 @@ export default function LandingRobotStory() {
     }
   }, [isReducedMotion])
 
-  const timeline = useMemo(() => deriveLandingTimeline(resolveVisualProgress(progress)), [progress])
+  const timeline = useMemo(
+    () => deriveLandingTimeline(resolveVisualProgress(progress)),
+    [progress],
+  )
   const isHeroInteractive = timeline.heroOpacity > 0.24
   const isPhilosophyInteractive = timeline.philosophyOpacity > 0.24
   const isScopeInteractive = timeline.scopeOpacity > 0.24
@@ -405,10 +420,17 @@ export default function LandingRobotStory() {
           style={{
             transform: `translate3d(${timeline.robotX}%, 0, 0)`,
             opacity: timeline.robotOpacity,
-            transition: isReducedMotion ? 'none' : 'transform 70ms linear, opacity 120ms linear',
+            transition: isReducedMotion
+              ? 'none'
+              : 'transform 70ms linear, opacity 120ms linear',
           }}
         >
-          <InteractiveRobot className="h-full w-full" section={activeSection} zoom={timeline.robotZoom} shouldAnimate={!isReducedMotion} />
+          <InteractiveRobot
+            className="h-full w-full"
+            section={activeSection}
+            zoom={timeline.robotZoom}
+            shouldAnimate={!isReducedMotion}
+          />
         </div>
 
         <section
@@ -429,16 +451,22 @@ export default function LandingRobotStory() {
               transition: isReducedMotion ? 'none' : 'transform 80ms linear',
             }}
           >
-            <article className={`${isReducedMotion ? '' : 'animate-[rise-in_700ms_cubic-bezier(0.16,1,0.3,1)_both] '}w-[min(700px,100%)] rounded-[1.2rem] border border-[color-mix(in_oklab,var(--line)_74%,var(--lagoon)_26%)] bg-[linear-gradient(165deg,color-mix(in_oklab,var(--surface-strong)_96%,white_4%),var(--surface))] p-5 text-center shadow-[inset_0_1px_0_var(--inset-glint),0_22px_42px_rgba(8,22,27,0.24)] backdrop-blur-[6px]`.trim()}>
+            <article
+              className={`${isReducedMotion ? '' : 'animate-[rise-in_700ms_cubic-bezier(0.16,1,0.3,1)_both] '}w-[min(700px,100%)] rounded-[1.2rem] border border-[color-mix(in_oklab,var(--line)_74%,var(--lagoon)_26%)] bg-[linear-gradient(165deg,color-mix(in_oklab,var(--surface-strong)_96%,white_4%),var(--surface))] p-5 text-center shadow-[inset_0_1px_0_var(--inset-glint),0_22px_42px_rgba(8,22,27,0.24)] backdrop-blur-[6px]`.trim()}
+            >
               <p className="inline-flex items-center gap-1.5 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1 text-[0.67rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">
                 <Sparkles size={14} aria-hidden="true" />
                 Whobee takes the lead
               </p>
-              <h1 id="landing-title" className="m-0 mt-3 font-[Fraunces,Georgia,serif] text-[clamp(2rem,5vw,3.7rem)] leading-[1.02] text-[var(--sea-ink)]">
+              <h1
+                id="landing-title"
+                className="m-0 mt-3 font-[Fraunces,Georgia,serif] text-[clamp(2rem,5vw,3.7rem)] leading-[1.02] text-[var(--sea-ink)]"
+              >
                 Meet Whobee, the mascot guiding your team from idea to shipping.
               </h1>
               <p className="m-0 mt-3 text-sm leading-7 text-[var(--sea-ink-soft)] sm:text-base">
-                Scroll through a continuous story where Whobee keeps planning, coding, and teamwork in one playful flow.
+                Scroll through a continuous story where Whobee keeps planning,
+                coding, and teamwork in one playful flow.
               </p>
               <p className="m-0 mt-4 inline-flex items-center gap-2 text-xs font-bold uppercase tracking-[0.09em] text-[var(--kicker)]">
                 <ArrowDown size={16} aria-hidden="true" />
@@ -466,28 +494,42 @@ export default function LandingRobotStory() {
               transition: isReducedMotion ? 'none' : 'transform 90ms linear',
             }}
           >
-            <article className="max-w-[540px] rounded-[1.2rem] border border-[color-mix(in_oklab,var(--line)_74%,var(--lagoon)_26%)] bg-[linear-gradient(165deg,color-mix(in_oklab,var(--surface-strong)_96%,white_4%),var(--surface))] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_42px_rgba(8,22,27,0.24)] backdrop-blur-[6px]" id="features">
-              <p className={`inline-flex items-center gap-1.5 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1 text-[0.67rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)] ${!isReducedMotion && timeline.philosophyOpacity > 0.05 ? 'animate-[rise-in_700ms_cubic-bezier(0.16,1,0.3,1)_both]' : ''}`.trim()}>Philosophy</p>
-              <h2 id="landing-philosophy-title" className="m-0 mt-3 font-[Fraunces,Georgia,serif] text-[clamp(1.7rem,3.8vw,2.65rem)] leading-[1.08] text-[var(--sea-ink)]">
+            <article
+              className="max-w-[540px] rounded-[1.2rem] border border-[color-mix(in_oklab,var(--line)_74%,var(--lagoon)_26%)] bg-[linear-gradient(165deg,color-mix(in_oklab,var(--surface-strong)_96%,white_4%),var(--surface))] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_42px_rgba(8,22,27,0.24)] backdrop-blur-[6px]"
+              id="features"
+            >
+              <p
+                className={`inline-flex items-center gap-1.5 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1 text-[0.67rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)] ${!isReducedMotion && timeline.philosophyOpacity > 0.05 ? 'animate-[rise-in_700ms_cubic-bezier(0.16,1,0.3,1)_both]' : ''}`.trim()}
+              >
+                Philosophy
+              </p>
+              <h2
+                id="landing-philosophy-title"
+                className="m-0 mt-3 font-[Fraunces,Georgia,serif] text-[clamp(1.7rem,3.8vw,2.65rem)] leading-[1.08] text-[var(--sea-ink)]"
+              >
                 Whobee keeps the whole team in the same story.
               </h2>
               <div className="mt-4 grid gap-3">
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.34)] p-3">
                   <h3 className="m-0">Understand quickly</h3>
                   <p className="m-0 mt-1 text-sm leading-6 text-[var(--sea-ink-soft)]">
-                    Every section explains what the product is doing now, without forcing visitors to decode technical jargon first.
+                    Every section explains what the product is doing now,
+                    without forcing visitors to decode technical jargon first.
                   </p>
                 </div>
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.34)] p-3">
                   <h3 className="m-0">Stay playful, stay useful</h3>
                   <p className="m-0 mt-1 text-sm leading-6 text-[var(--sea-ink-soft)]">
-                    Whobee keeps momentum high while still grounding the story in real collaboration and delivery outcomes.
+                    Whobee keeps momentum high while still grounding the story
+                    in real collaboration and delivery outcomes.
                   </p>
                 </div>
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.34)] p-3">
                   <h3 className="m-0">Move from curious to ready</h3>
                   <p className="m-0 mt-1 text-sm leading-6 text-[var(--sea-ink-soft)]">
-                    The narrative starts with clarity, then naturally shifts into conversion when visitors know what they are signing up for.
+                    The narrative starts with clarity, then naturally shifts
+                    into conversion when visitors know what they are signing up
+                    for.
                   </p>
                 </div>
               </div>
@@ -514,21 +556,33 @@ export default function LandingRobotStory() {
             }}
           >
             <article className="w-[min(640px,100%)] rounded-[1.2rem] border border-[color-mix(in_oklab,var(--line)_74%,var(--lagoon)_26%)] bg-[linear-gradient(165deg,color-mix(in_oklab,var(--surface-strong)_96%,white_4%),var(--surface))] p-5 shadow-[inset_0_1px_0_var(--inset-glint),0_22px_42px_rgba(8,22,27,0.24)] backdrop-blur-[6px]">
-              <p className="inline-flex items-center gap-1.5 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1 text-[0.67rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">Scope and direction</p>
-              <h2 id="landing-scope-title" className="m-0 mt-3 font-[Fraunces,Georgia,serif] text-[clamp(1.6rem,3.8vw,2.55rem)] leading-[1.08] text-[var(--sea-ink)]">
-                Built for mixed teams today, stretching toward a bigger collaborative future.
+              <p className="inline-flex items-center gap-1.5 rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1 text-[0.67rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">
+                Scope and direction
+              </p>
+              <h2
+                id="landing-scope-title"
+                className="m-0 mt-3 font-[Fraunces,Georgia,serif] text-[clamp(1.6rem,3.8vw,2.55rem)] leading-[1.08] text-[var(--sea-ink)]"
+              >
+                Built for mixed teams today, stretching toward a bigger
+                collaborative future.
               </h2>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.34)] p-3">
-                  <p className="m-0 text-[0.64rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">What works now</p>
+                  <p className="m-0 text-[0.64rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    What works now
+                  </p>
                   <ul className="m-0 mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-[var(--sea-ink-soft)]">
                     <li>Projects hub and direct editor entry.</li>
                     <li>Auth0 hosted authentication with safe return flow.</li>
-                    <li>Shared workspace foundation for coding collaboration.</li>
+                    <li>
+                      Shared workspace foundation for coding collaboration.
+                    </li>
                   </ul>
                 </div>
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.34)] p-3">
-                  <p className="m-0 text-[0.64rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">What is next</p>
+                  <p className="m-0 text-[0.64rem] font-bold uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    What is next
+                  </p>
                   <ul className="m-0 mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-[var(--sea-ink-soft)]">
                     <li>Richer AI-assisted build loops in context.</li>
                     <li>Deeper real-time collaboration moments.</li>
@@ -538,7 +592,8 @@ export default function LandingRobotStory() {
               </div>
 
               <p className="m-0 mt-5 text-sm leading-7 text-[var(--sea-ink-soft)] sm:text-base">
-                Continue where your team works best. New visitors can sign up in seconds, and returning builders can jump straight into projects.
+                Continue where your team works best. New visitors can sign up in
+                seconds, and returning builders can jump straight into projects.
               </p>
               <LandingPrimaryActions isInteractive={isScopeInteractive} />
             </article>

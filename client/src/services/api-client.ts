@@ -48,14 +48,18 @@ export async function apiRequest<T>(
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   })
 
-  const payload = (await response.json().catch(() => null)) as ApiResponse<T> | null
+  const payload = (await response
+    .json()
+    .catch(() => null)) as ApiResponse<T> | null
 
   if (!payload) {
     throw new Error('Server returned an invalid response')
   }
 
   if (!response.ok || !payload.ok) {
-    const message = payload.ok ? 'Request failed' : (payload.error?.message ?? 'Request failed')
+    const message = payload.ok
+      ? 'Request failed'
+      : (payload.error?.message ?? 'Request failed')
     throw new Error(message)
   }
 

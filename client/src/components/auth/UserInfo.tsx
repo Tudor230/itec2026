@@ -33,19 +33,29 @@ function AuthenticatedUserInfo({ compact = false, onLogout }: UserInfoProps) {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button className={cn(
-          "flex items-center gap-2 p-1 pr-2 rounded-full border border-[var(--line)] bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(0,0,0,0.05)] transition-all outline-none",
-          compact ? "h-8" : "h-10"
-        )}>
+        <button
+          className={cn(
+            'flex items-center gap-2 p-1 pr-2 rounded-full border border-[var(--line)] bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(0,0,0,0.05)] transition-all outline-none',
+            compact ? 'h-8' : 'h-10',
+          )}
+        >
           {user.picture ? (
             <img
               src={user.picture}
               alt={displayName}
-              className={cn("rounded-full object-cover", compact ? "h-6 w-6" : "h-8 w-8")}
+              className={cn(
+                'rounded-full object-cover',
+                compact ? 'h-6 w-6' : 'h-8 w-8',
+              )}
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className={cn("rounded-full bg-[var(--lagoon)] flex items-center justify-center text-white font-bold", compact ? "h-6 w-6 text-[10px]" : "h-8 w-8 text-xs")}>
+            <div
+              className={cn(
+                'rounded-full bg-[var(--lagoon)] flex items-center justify-center text-white font-bold',
+                compact ? 'h-6 w-6 text-[10px]' : 'h-8 w-8 text-xs',
+              )}
+            >
               {displayName.charAt(0).toUpperCase()}
             </div>
           )}
@@ -65,12 +75,19 @@ function AuthenticatedUserInfo({ compact = false, onLogout }: UserInfoProps) {
           align="end"
         >
           <div className="px-3 py-2 border-b border-[var(--line)] mb-1">
-            <p className="text-xs font-extrabold text-[var(--sea-ink)] truncate">{displayName}</p>
-            <p className="text-[10px] text-[var(--sea-ink-soft)] truncate">{email}</p>
+            <p className="text-xs font-extrabold text-[var(--sea-ink)] truncate">
+              {displayName}
+            </p>
+            <p className="text-[10px] text-[var(--sea-ink-soft)] truncate">
+              {email}
+            </p>
             {roles.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1">
                 {roles.map((role) => (
-                  <span key={role} className="text-[8px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full bg-[rgba(var(--lagoon-rgb),0.1)] text-[var(--lagoon-deep)]">
+                  <span
+                    key={role}
+                    className="text-[8px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full bg-[rgba(var(--lagoon-rgb),0.1)] text-[var(--lagoon-deep)]"
+                  >
                     {role}
                   </span>
                 ))}
@@ -87,7 +104,7 @@ function AuthenticatedUserInfo({ compact = false, onLogout }: UserInfoProps) {
               Account Info
             </Link>
           </DropdownMenu.Item>
-          
+
           <DropdownMenu.Item asChild>
             <Link
               to="/profile/settings"
@@ -110,7 +127,7 @@ function AuthenticatedUserInfo({ compact = false, onLogout }: UserInfoProps) {
 
           <DropdownMenu.Separator className="h-[1px] bg-[var(--line)] my-1" />
 
-          <DropdownMenu.Item 
+          <DropdownMenu.Item
             onClick={handleLogout}
             className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg outline-none cursor-pointer transition-colors"
           >

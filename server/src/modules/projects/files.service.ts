@@ -1,5 +1,5 @@
 import type { ActorContext } from '../auth/actor-context.js'
-import type { FileInput } from './file.types.js'
+import type { FileInput, ImportFilesInput, ImportFilesResult } from './file.types.js'
 import { FilesRepository } from './files.repository.js'
 
 export class FilesService {
@@ -23,6 +23,10 @@ export class FilesService {
 
   createFromSync(input: FileInput, ownerSubject: string | null = null) {
     return this.repository.createFromSync(input, ownerSubject)
+  }
+
+  importFiles(actor: ActorContext, input: ImportFilesInput): Promise<ImportFilesResult> {
+    return this.repository.importFiles(actor, input)
   }
 
   update(

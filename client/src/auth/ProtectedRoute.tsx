@@ -1,5 +1,6 @@
 import { useAuth0 } from '@auth0/auth0-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState  } from 'react'
+import type {ReactNode} from 'react';
 import { useAuthRuntime } from './AuthProvider'
 import AuthSetupNotice from '../components/auth/AuthSetupNotice'
 import { auth0Config } from '../lib/auth0-config'
@@ -29,7 +30,8 @@ function ProtectedRouteContent({
   requiredRoles = [],
   match = 'all',
 }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading, loginWithRedirect, error, user } = useAuth0()
+  const { isAuthenticated, isLoading, loginWithRedirect, error, user } =
+    useAuth0()
   const [loginStarted, setLoginStarted] = useState(false)
 
   useEffect(() => {

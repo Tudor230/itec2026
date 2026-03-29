@@ -51,3 +51,16 @@ export const deleteFolderSchema = z.object({
   projectId: z.string().trim().min(1),
   path: folderPathSchema,
 })
+
+const importFileSchema = z.object({
+  path: z.string().trim().min(1).max(256).refine((value) => {
+    return !value.includes('..') && !value.startsWith('/') && !value.startsWith('\\')
+  }, { message: 'Invalid file path' }),
+  content: z.string().max(500_000),
+})
+
+export const importFilesSchema = z.object({
+  projectId: z.string().trim().min(1),
+  files: z.array(importFileSchema).min(1).max(300),
+  conflictStrategy: z.enum(['skip', 'overwrite', 'fail']).default('skip'),
+})

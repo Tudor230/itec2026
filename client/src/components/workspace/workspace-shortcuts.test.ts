@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { getWorkspaceShortcut } from './workspace-shortcuts'
 
-function keyboardEventLike(overrides: Partial<{
-  ctrlKey: boolean
-  metaKey: boolean
-  key: string
-  code: string
-  target: EventTarget | null
-}> = {}) {
+function keyboardEventLike(
+  overrides: Partial<{
+    ctrlKey: boolean
+    metaKey: boolean
+    key: string
+    code: string
+    target: EventTarget | null
+  }> = {},
+) {
   return {
     ctrlKey: false,
     metaKey: false,
@@ -56,7 +58,10 @@ describe('getWorkspaceShortcut', () => {
       keyboardEventLike({
         ctrlKey: true,
         key: 'p',
-        target: { tagName: 'INPUT', isContentEditable: false } as unknown as EventTarget,
+        target: {
+          tagName: 'INPUT',
+          isContentEditable: false,
+        } as unknown as EventTarget,
       }),
     )
 

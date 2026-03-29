@@ -2,17 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import type { editor as MonacoEditorTypes } from 'monaco-editor'
 import {
-  CollabClient,
-  type CollabDocCursorPayload,
-  type CollabDocDirtyStatePayload,
-  type CollabFileCreatedPayload,
-  type CollabFileDeletedPayload,
-  type CollabFileUpdatedPayload,
-  type CollabProjectActivityPayload,
-  type WatchProjectCallbacks,
+  CollabClient
+  
+  
+  
+  
+  
+  
+  
 } from '../lib/collab-client'
+import type {CollabDocCursorPayload, CollabDocDirtyStatePayload, CollabFileCreatedPayload, CollabFileDeletedPayload, CollabFileUpdatedPayload, CollabProjectActivityPayload, WatchProjectCallbacks} from '../lib/collab-client';
 import { auth0Config } from '../lib/auth0-config'
-import { getCollaboratorClassSuffix, getCollaboratorColor } from '../components/workspace/collab-colors'
+import {
+  getCollaboratorClassSuffix,
+  getCollaboratorColor,
+} from '../components/workspace/collab-colors'
 
 interface CollabDocState {
   connectionState: 'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
@@ -66,11 +70,21 @@ export function useCollabDoc({
   const bindingRef = useRef<MonacoBindingInstance | null>(null)
   const sessionDestroyRef = useRef<(() => void) | null>(null)
   const projectWatchDestroyRef = useRef<(() => void) | null>(null)
-  const remoteCursorEntriesRef = useRef<Map<string, CollabDocCursorPayload>>(new Map())
+  const remoteCursorEntriesRef = useRef<Map<string, CollabDocCursorPayload>>(
+    new Map(),
+  )
   const remoteCursorDecorationIdsRef = useRef<string[]>([])
-  const cursorStylesByClassRef = useRef<Map<string, HTMLStyleElement>>(new Map())
-  const cursorWidgetsBySocketIdRef = useRef<Map<string, RemoteCursorWidget>>(new Map())
-  const bindingTargetsRef = useRef<CollabDocModelBinding>({ editor: null, model: null, monaco: null })
+  const cursorStylesByClassRef = useRef<Map<string, HTMLStyleElement>>(
+    new Map(),
+  )
+  const cursorWidgetsBySocketIdRef = useRef<Map<string, RemoteCursorWidget>>(
+    new Map(),
+  )
+  const bindingTargetsRef = useRef<CollabDocModelBinding>({
+    editor: null,
+    model: null,
+    monaco: null,
+  })
   const projectIdRef = useRef<string | null>(projectId)
   const fileIdRef = useRef<string | null>(fileId)
   const lastCursorSentAtRef = useRef(0)
@@ -112,90 +126,100 @@ export function useCollabDoc({
     const editor = bindingTargetsRef.current.editor
 
     if (editor && remoteCursorDecorationIdsRef.current.length > 0) {
-      remoteCursorDecorationIdsRef.current = editor.deltaDecorations(remoteCursorDecorationIdsRef.current, [])
+      remoteCursorDecorationIdsRef.current = editor.deltaDecorations(
+        remoteCursorDecorationIdsRef.current,
+        [],
+      )
     }
 
     cursorWidgetsBySocketIdRef.current.forEach((widget) => widget.dispose())
     cursorWidgetsBySocketIdRef.current.clear()
   }, [])
 
-  const ensureRemoteCursorWidget = useCallback((socketId: string, collaboratorName: string, color: string): RemoteCursorWidget => {
-    const existing = cursorWidgetsBySocketIdRef.current.get(socketId)
-    if (existing) {
-      return existing
-    }
-
-    const editor = bindingTargetsRef.current.editor
-    const monaco = bindingTargetsRef.current.monaco
-
-    if (!editor || !monaco) {
-      return {
-        update: () => undefined,
-        setLabel: () => undefined,
-        dispose: () => undefined,
+  const ensureRemoteCursorWidget = useCallback(
+    (
+      socketId: string,
+      collaboratorName: string,
+      color: string,
+    ): RemoteCursorWidget => {
+      const existing = cursorWidgetsBySocketIdRef.current.get(socketId)
+      if (existing) {
+        return existing
       }
-    }
 
-    const classSuffix = getCollaboratorClassSuffix(socketId)
-    const widgetId = `remote-cursor-widget-${socketId}`
-    const node = document.createElement('div')
-    node.className = `collab-remote-cursor-widget-${classSuffix}`
-    node.style.position = 'relative'
-    node.style.pointerEvents = 'none'
+      const editor = bindingTargetsRef.current.editor
+      const monaco = bindingTargetsRef.current.monaco
 
-    const caret = document.createElement('span')
-    caret.style.display = 'block'
-    caret.style.width = '2px'
-    caret.style.height = '1.2em'
-    caret.style.background = color
-    caret.style.boxShadow = `0 0 0 1px color-mix(in oklab, ${color} 40%, white 60%)`
-    caret.style.borderRadius = '2px'
-    node.appendChild(caret)
+      if (!editor || !monaco) {
+        return {
+          update: () => undefined,
+          setLabel: () => undefined,
+          dispose: () => undefined,
+        }
+      }
 
-    const labelNode = document.createElement('span')
-    labelNode.textContent = collaboratorName
-    labelNode.style.position = 'absolute'
-    labelNode.style.left = '3px'
-    labelNode.style.top = '-1.2em'
-    labelNode.style.fontSize = '9px'
-    labelNode.style.fontWeight = '700'
-    labelNode.style.padding = '0 4px'
-    labelNode.style.borderRadius = '6px'
-    labelNode.style.background = color
-    labelNode.style.color = '#ffffff'
-    labelNode.style.whiteSpace = 'nowrap'
-    node.appendChild(labelNode)
+      const classSuffix = getCollaboratorClassSuffix(socketId)
+      const widgetId = `remote-cursor-widget-${socketId}`
+      const node = document.createElement('div')
+      node.className = `collab-remote-cursor-widget-${classSuffix}`
+      node.style.position = 'relative'
+      node.style.pointerEvents = 'none'
 
-    const position = { lineNumber: 1, column: 1 }
+      const caret = document.createElement('span')
+      caret.style.display = 'block'
+      caret.style.width = '2px'
+      caret.style.height = '1.2em'
+      caret.style.background = color
+      caret.style.boxShadow = `0 0 0 1px color-mix(in oklab, ${color} 40%, white 60%)`
+      caret.style.borderRadius = '2px'
+      node.appendChild(caret)
 
-    const widget: MonacoEditorTypes.IContentWidget = {
-      getId: () => widgetId,
-      getDomNode: () => node,
-      getPosition: () => ({
-        position,
-        preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
-      }),
-    }
+      const labelNode = document.createElement('span')
+      labelNode.textContent = collaboratorName
+      labelNode.style.position = 'absolute'
+      labelNode.style.left = '3px'
+      labelNode.style.top = '-1.2em'
+      labelNode.style.fontSize = '9px'
+      labelNode.style.fontWeight = '700'
+      labelNode.style.padding = '0 4px'
+      labelNode.style.borderRadius = '6px'
+      labelNode.style.background = color
+      labelNode.style.color = '#ffffff'
+      labelNode.style.whiteSpace = 'nowrap'
+      node.appendChild(labelNode)
 
-    editor.addContentWidget(widget)
+      const position = { lineNumber: 1, column: 1 }
 
-    const wrapper: RemoteCursorWidget = {
-      update: (lineNumber, column) => {
-        position.lineNumber = Math.max(1, lineNumber)
-        position.column = Math.max(1, column)
-        editor.layoutContentWidget(widget)
-      },
-      setLabel: (label) => {
-        labelNode.textContent = label
-      },
-      dispose: () => {
-        editor.removeContentWidget(widget)
-      },
-    }
+      const widget: MonacoEditorTypes.IContentWidget = {
+        getId: () => widgetId,
+        getDomNode: () => node,
+        getPosition: () => ({
+          position,
+          preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
+        }),
+      }
 
-    cursorWidgetsBySocketIdRef.current.set(socketId, wrapper)
-    return wrapper
-  }, [])
+      editor.addContentWidget(widget)
+
+      const wrapper: RemoteCursorWidget = {
+        update: (lineNumber, column) => {
+          position.lineNumber = Math.max(1, lineNumber)
+          position.column = Math.max(1, column)
+          editor.layoutContentWidget(widget)
+        },
+        setLabel: (label) => {
+          labelNode.textContent = label
+        },
+        dispose: () => {
+          editor.removeContentWidget(widget)
+        },
+      }
+
+      cursorWidgetsBySocketIdRef.current.set(socketId, wrapper)
+      return wrapper
+    },
+    [],
+  )
 
   useEffect(() => {
     return () => {
@@ -230,9 +254,13 @@ export function useCollabDoc({
       return
     }
 
-    const activeEntries = [...remoteCursorEntriesRef.current.values()]
-      .filter((entry) => {
-        if (entry.projectId !== currentProjectId || entry.fileId !== currentFileId || entry.cleared) {
+    const activeEntries = [...remoteCursorEntriesRef.current.values()].filter(
+      (entry) => {
+        if (
+          entry.projectId !== currentProjectId ||
+          entry.fileId !== currentFileId ||
+          entry.cleared
+        ) {
           return false
         }
 
@@ -241,9 +269,12 @@ export function useCollabDoc({
         }
 
         return true
-      })
+      },
+    )
 
-    const activeSocketIds = new Set(activeEntries.map((entry) => entry.socketId))
+    const activeSocketIds = new Set(
+      activeEntries.map((entry) => entry.socketId),
+    )
     cursorWidgetsBySocketIdRef.current.forEach((widget, socketId) => {
       if (!activeSocketIds.has(socketId)) {
         widget.dispose()
@@ -271,34 +302,41 @@ export function useCollabDoc({
         cursorStylesByClassRef.current.set(styleKey, style)
       }
 
-      const displayLabel = resolveCollaboratorName?.(entry.subject) ?? 'Collaborator'
-      const widget = ensureRemoteCursorWidget(entry.socketId, displayLabel, color)
+      const displayLabel =
+        resolveCollaboratorName?.(entry.subject) ?? 'Collaborator'
+      const widget = ensureRemoteCursorWidget(
+        entry.socketId,
+        displayLabel,
+        color,
+      )
       widget.setLabel(displayLabel)
       widget.update(entry.lineNumber, entry.column)
 
       const hasSelection = Boolean(
-        entry.selectionStartLineNumber
-          && entry.selectionStartColumn
-          && entry.selectionEndLineNumber
-          && entry.selectionEndColumn,
+        entry.selectionStartLineNumber &&
+        entry.selectionStartColumn &&
+        entry.selectionEndLineNumber &&
+        entry.selectionEndColumn,
       )
 
       if (!hasSelection) {
         return []
       }
 
-      return [{
-        range: new monaco.Range(
-          entry.selectionStartLineNumber!,
-          entry.selectionStartColumn!,
-          entry.selectionEndLineNumber!,
-          entry.selectionEndColumn!,
-        ),
-        options: {
-          inlineClassName: selectionClassName,
-          hoverMessage: { value: entry.subject },
+      return [
+        {
+          range: new monaco.Range(
+            entry.selectionStartLineNumber!,
+            entry.selectionStartColumn!,
+            entry.selectionEndLineNumber!,
+            entry.selectionEndColumn!,
+          ),
+          options: {
+            inlineClassName: selectionClassName,
+            hoverMessage: { value: entry.subject },
+          },
         },
-      }]
+      ]
     })
 
     remoteCursorDecorationIdsRef.current = editor.deltaDecorations(
@@ -333,7 +371,14 @@ export function useCollabDoc({
         applyRemoteCursorDecorations()
       },
     }
-  }, [applyRemoteCursorDecorations, onDirtyStateChanged, onFileCreated, onFileDeleted, onFileUpdated, onProjectActivityChanged])
+  }, [
+    applyRemoteCursorDecorations,
+    onDirtyStateChanged,
+    onFileCreated,
+    onFileDeleted,
+    onFileUpdated,
+    onProjectActivityChanged,
+  ])
 
   useEffect(() => {
     if (projectWatchDestroyRef.current) {
@@ -347,16 +392,19 @@ export function useCollabDoc({
 
     let cancelled = false
 
-    void collabClient.watchProject(projectId, watchCallbacks).then((destroyWatch) => {
-      if (cancelled) {
-        destroyWatch()
-        return
-      }
+    void collabClient
+      .watchProject(projectId, watchCallbacks)
+      .then((destroyWatch) => {
+        if (cancelled) {
+          destroyWatch()
+          return
+        }
 
-      projectWatchDestroyRef.current = destroyWatch
-    }).catch(() => {
-      projectWatchDestroyRef.current = null
-    })
+        projectWatchDestroyRef.current = destroyWatch
+      })
+      .catch(() => {
+        projectWatchDestroyRef.current = null
+      })
 
     return () => {
       cancelled = true
@@ -440,7 +488,11 @@ export function useCollabDoc({
         }
 
         const yText = session.doc.getText('content')
-        const binding = new module.MonacoBinding(yText, model, new Set([editor])) as MonacoBindingInstance
+        const binding = new module.MonacoBinding(
+          yText,
+          model,
+          new Set([editor]),
+        ) as MonacoBindingInstance
         bindingRef.current = binding
         sessionDestroyRef.current = session.destroy
       })
@@ -451,7 +503,10 @@ export function useCollabDoc({
 
         setState({
           connectionState: 'error',
-          message: error instanceof Error ? error.message : 'Could not join collaboration session',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Could not join collaboration session',
         })
       })
 
@@ -471,7 +526,15 @@ export function useCollabDoc({
         bindingRef.current = null
       }
     }
-  }, [bindingTargets.editor, bindingTargets.model, bindingTargets.monaco, clearRemoteCursorVisuals, collabClient, fileId, projectId])
+  }, [
+    bindingTargets.editor,
+    bindingTargets.model,
+    bindingTargets.monaco,
+    clearRemoteCursorVisuals,
+    collabClient,
+    fileId,
+    projectId,
+  ])
 
   useEffect(() => {
     const editor = bindingTargets.editor
@@ -519,7 +582,10 @@ export function useCollabDoc({
     }
   }, [clearRemoteCursorVisuals])
 
-  function onEditorMount(editor: MonacoEditorTypes.IStandaloneCodeEditor, monaco: typeof import('monaco-editor')) {
+  function onEditorMount(
+    editor: MonacoEditorTypes.IStandaloneCodeEditor,
+    monaco: typeof import('monaco-editor'),
+  ) {
     setBindingTargets({
       editor,
       model: editor.getModel(),

@@ -24,7 +24,11 @@ function formatSubject(subject: string | null) {
   return short || subject
 }
 
-export default function TerminalPane({ projectId, queuedCommand, onQueuedCommandSent }: TerminalPaneProps) {
+export default function TerminalPane({
+  projectId,
+  queuedCommand,
+  onQueuedCommandSent,
+}: TerminalPaneProps) {
   const {
     terminals,
     currentSubject,
@@ -65,7 +69,11 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
       lastWrittenCountRef.current = 0
     }
 
-    for (let index = lastWrittenCountRef.current; index < output.length; index += 1) {
+    for (
+      let index = lastWrittenCountRef.current;
+      index < output.length;
+      index += 1
+    ) {
       term.write(output[index].chunk)
     }
 
@@ -73,7 +81,11 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
   }, [])
 
   const isOwnerOfActiveTerminal = useMemo(() => {
-    return Boolean(activeOwnerSubject && currentSubject && activeOwnerSubject === currentSubject)
+    return Boolean(
+      activeOwnerSubject &&
+      currentSubject &&
+      activeOwnerSubject === currentSubject,
+    )
   }, [activeOwnerSubject, currentSubject])
 
   const canWriteToActiveTerminal = useMemo(() => {
@@ -81,15 +93,18 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
       return false
     }
 
-    return activeOwnerSubject === currentSubject || activeTerminalState.activeControllerSubject === currentSubject
+    return (
+      activeOwnerSubject === currentSubject ||
+      activeTerminalState.activeControllerSubject === currentSubject
+    )
   }, [activeOwnerSubject, activeTerminalState, currentSubject])
 
   const canRequestAccess = Boolean(
-    activeOwnerSubject
-    && currentSubject
-    && activeOwnerSubject !== currentSubject
-    && !canWriteToActiveTerminal
-    && activeRequestStatus !== 'pending',
+    activeOwnerSubject &&
+    currentSubject &&
+    activeOwnerSubject !== currentSubject &&
+    !canWriteToActiveTerminal &&
+    activeRequestStatus !== 'pending',
   )
 
   const pendingRequests = activeTerminalState?.pendingRequests ?? []
@@ -113,10 +128,20 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
       const xtermModule = await import('@xterm/xterm')
       const addonModule = await import('@xterm/addon-fit')
 
-      const TerminalCtor = (xtermModule as { Terminal?: new (...args: any[]) => any }).Terminal
-        ?? (xtermModule as { default?: { Terminal?: new (...args: any[]) => any } }).default?.Terminal
-      const FitAddonCtor = (addonModule as { FitAddon?: new (...args: any[]) => any }).FitAddon
-        ?? (addonModule as { default?: { FitAddon?: new (...args: any[]) => any } }).default?.FitAddon
+      const TerminalCtor =
+        (xtermModule as { Terminal?: new (...args: any[]) => any }).Terminal ??
+        (
+          xtermModule as {
+            default?: { Terminal?: new (...args: any[]) => any }
+          }
+        ).default?.Terminal
+      const FitAddonCtor =
+        (addonModule as { FitAddon?: new (...args: any[]) => any }).FitAddon ??
+        (
+          addonModule as {
+            default?: { FitAddon?: new (...args: any[]) => any }
+          }
+        ).default?.FitAddon
 
       if (!TerminalCtor || !FitAddonCtor || cancelled) {
         return
@@ -188,26 +213,38 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
       cancelled = true
       cleanup?.()
     }
-  }, [activeOwnerSubject, activeTerminalState?.isSessionOpen, canWriteToActiveTerminal, replayBufferedOutput])
+  }, [
+    activeOwnerSubject,
+    activeTerminalState?.isSessionOpen,
+    canWriteToActiveTerminal,
+    replayBufferedOutput,
+  ])
 
   useEffect(() => {
     replayBufferedOutput()
   }, [activeOutput, replayBufferedOutput])
 
   useEffect(() => {
-    if (!shouldSendQueuedCommand({
-      queuedCommand,
-      lastExecutedCommandId: lastExecutedQueuedCommandIdRef.current,
-      canWriteToActiveTerminal,
-      isSessionOpen: Boolean(activeTerminalState?.isSessionOpen),
-    })) {
+    if (
+      !shouldSendQueuedCommand({
+        queuedCommand,
+        lastExecutedCommandId: lastExecutedQueuedCommandIdRef.current,
+        canWriteToActiveTerminal,
+        isSessionOpen: Boolean(activeTerminalState?.isSessionOpen),
+      })
+    ) {
       return
     }
 
     sendInputRef.current(`${queuedCommand.command}\n`)
     lastExecutedQueuedCommandIdRef.current = queuedCommand.id
     onQueuedCommandSent?.(queuedCommand.id)
-  }, [activeTerminalState?.isSessionOpen, canWriteToActiveTerminal, onQueuedCommandSent, queuedCommand])
+  }, [
+    activeTerminalState?.isSessionOpen,
+    canWriteToActiveTerminal,
+    onQueuedCommandSent,
+    queuedCommand,
+  ])
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-[rgba(7,16,20,0.92)] text-[#d2f3ee]">
@@ -232,7 +269,9 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
 
       <div className="flex items-center gap-2 overflow-x-auto border-b border-[rgba(130,225,212,0.1)] px-4 py-2">
         {terminals.length === 0 ? (
-          <span className="text-xs text-[#89b7b1]">No collaborators online yet.</span>
+          <span className="text-xs text-[#89b7b1]">
+            No collaborators online yet.
+          </span>
         ) : (
           terminals.map((terminal) => {
             const active = terminal.ownerSubject === activeOwnerSubject
@@ -250,7 +289,9 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
                 )}
               >
                 {mine ? 'You' : formatSubject(terminal.ownerSubject)}
-                {terminal.pendingRequestCount > 0 ? ` (${terminal.pendingRequestCount})` : ''}
+                {terminal.pendingRequestCount > 0
+                  ? ` (${terminal.pendingRequestCount})`
+                  : ''}
               </button>
             )
           })
@@ -278,11 +319,16 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
             <span className="text-[#d4d19a]">Request pending</span>
           ) : null}
 
-          {!isOwnerOfActiveTerminal && (activeRequestStatus === 'rejected' || activeRequestStatus === 'revoked') ? (
-            <span className="text-[#db9b9b]">Request {activeRequestStatus}</span>
+          {!isOwnerOfActiveTerminal &&
+          (activeRequestStatus === 'rejected' ||
+            activeRequestStatus === 'revoked') ? (
+            <span className="text-[#db9b9b]">
+              Request {activeRequestStatus}
+            </span>
           ) : null}
 
-          {isOwnerOfActiveTerminal && activeTerminalState?.activeControllerSubject !== currentSubject ? (
+          {isOwnerOfActiveTerminal &&
+          activeTerminalState?.activeControllerSubject !== currentSubject ? (
             <button
               type="button"
               onClick={revokeControl}
@@ -326,11 +372,16 @@ export default function TerminalPane({ projectId, queuedCommand, onQueuedCommand
       ) : null}
 
       <div className="min-h-0 flex-1 px-4 py-3">
-        <div ref={xtermContainerRef} className="h-full w-full rounded-md border border-[rgba(130,225,212,0.16)]" />
+        <div
+          ref={xtermContainerRef}
+          className="h-full w-full rounded-md border border-[rgba(130,225,212,0.16)]"
+        />
       </div>
 
       {message ? (
-        <p className="m-0 border-t border-[rgba(130,225,212,0.18)] px-4 py-2 text-xs text-[#f2b7b7]">{message}</p>
+        <p className="m-0 border-t border-[rgba(130,225,212,0.18)] px-4 py-2 text-xs text-[#f2b7b7]">
+          {message}
+        </p>
       ) : null}
     </section>
   )

@@ -533,6 +533,101 @@ describe('files router', () => {
     assert.equal(deletedEvents[0]?.id, createdPayload.data.id)
   })
 
+  it('imports files with skip conflict strategy', async () => {
+    const ownerSubject = 'auth0|import-skip-user'
+    const token = createJwt(ownerSubject, 'jwt-import-skip')
+    const projectId = 'project-import-skip'
+    seedProject?.(projectId, ownerSubject)
+
+    const existingCreated = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/existing.ts',
+        content: 'const value = 1',
+      }),
+    })
+    const existingPayload = await existingCreated.json()
+
+    const imported = await fetch(`${baseUrl}/api/files/import`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        conflictStrategy: 'skip',
+        files: [
+          {
+            path: 'src/existing.ts',
+            content: 'const value = 2',
+          },
+          {
+            path: 'src/new.ts',
+            content: 'export const next = true',
+          },
+        ],
+      }),
+    })
+    const importedPayload = await imported.json()
+
+    const existingAfter = await fetch(`${baseUrl}/api/files/${existingPayload.data.id}`, {
+      headers: authHeaders(token),
+    })
+    const existingAfterPayload = await existingAfter.json()
+
+    assert.equal(imported.status, 201)
+    assert.equal(importedPayload.data.created.length, 1)
+    assert.equal(importedPayload.data.updated.length, 0)
+    assert.equal(importedPayload.data.skipped.length, 1)
+    assert.equal(importedPayload.data.skipped[0].path, 'src/existing.ts')
+    assert.equal(existingAfterPayload.data.content, 'const value = 1')
+  })
+
+  it('imports files with overwrite conflict strategy', async () => {
+    const ownerSubject = 'auth0|import-overwrite-user'
+    const token = createJwt(ownerSubject, 'jwt-import-overwrite')
+    const projectId = 'project-import-overwrite'
+    seedProject?.(projectId, ownerSubject)
+
+    const existingCreated = await fetch(`${baseUrl}/api/files`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        path: 'src/existing.ts',
+        content: 'const value = 1',
+      }),
+    })
+    const existingPayload = await existingCreated.json()
+
+    const imported = await fetch(`${baseUrl}/api/files/import`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        projectId,
+        conflictStrategy: 'overwrite',
+        files: [
+          {
+            path: 'src/existing.ts',
+            content: 'const value = 99',
+          },
+        ],
+      }),
+    })
+    const importedPayload = await imported.json()
+
+    const existingAfter = await fetch(`${baseUrl}/api/files/${existingPayload.data.id}`, {
+      headers: authHeaders(token),
+    })
+    const existingAfterPayload = await existingAfter.json()
+
+    assert.equal(imported.status, 201)
+    assert.equal(importedPayload.data.created.length, 0)
+    assert.equal(importedPayload.data.updated.length, 1)
+    assert.equal(importedPayload.data.skipped.length, 0)
+    assert.equal(existingAfterPayload.data.content, 'const value = 99')
+  })
+
   it('isolates file access by subject owner', async () => {
     const ownerSubject = 'auth0|owner-isolated'
     const ownerToken = createJwt(ownerSubject, 'jwt-owner-2')

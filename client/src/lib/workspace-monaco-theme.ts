@@ -10,7 +10,10 @@ export function getMonacoThemeForPreset(preset: ThemePresetId) {
   return `itec-${preset}`
 }
 
-function defineOneMonacoTheme(monaco: typeof import('monaco-editor'), preset: ThemePresetId) {
+function defineOneMonacoTheme(
+  monaco: typeof import('monaco-editor'),
+  preset: ThemePresetId,
+) {
   if (isDefined.has(preset)) {
     return
   }

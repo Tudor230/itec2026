@@ -10,7 +10,9 @@ export interface FileTreeNode {
 }
 
 function insertPath(root: FileTreeNode, file: FileDto) {
-  const segments = file.path.split('/').filter((segment) => segment.trim().length > 0)
+  const segments = file.path
+    .split('/')
+    .filter((segment) => segment.trim().length > 0)
 
   if (segments.length === 0) {
     return
@@ -46,7 +48,9 @@ function insertPath(root: FileTreeNode, file: FileDto) {
 }
 
 function insertFolderPath(root: FileTreeNode, folderPath: string) {
-  const segments = folderPath.split('/').filter((segment) => segment.trim().length > 0)
+  const segments = folderPath
+    .split('/')
+    .filter((segment) => segment.trim().length > 0)
 
   if (segments.length === 0) {
     return
@@ -95,7 +99,10 @@ function sortTree(node: FileTreeNode): FileTreeNode {
   }
 }
 
-export function buildFileTree(files: FileDto[], virtualFolders: string[] = []): FileTreeNode {
+export function buildFileTree(
+  files: FileDto[],
+  virtualFolders: string[] = [],
+): FileTreeNode {
   const root: FileTreeNode = {
     id: 'root',
     name: 'root',
@@ -115,7 +122,10 @@ export function buildFileTree(files: FileDto[], virtualFolders: string[] = []): 
   return sortTree(root)
 }
 
-export function filterFileTree(node: FileTreeNode, query: string): FileTreeNode | null {
+export function filterFileTree(
+  node: FileTreeNode,
+  query: string,
+): FileTreeNode | null {
   if (query.trim().length === 0) {
     return node
   }

@@ -48,7 +48,9 @@ describe('WorkspaceAuthOverlay', () => {
       />,
     )
 
-    expect(screen.queryByRole('button', { name: 'Hide context panel' })).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Hide context panel' }),
+    ).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Show context panel' }))
     expect(onOpenInfo).toHaveBeenCalledTimes(1)
   })
@@ -74,13 +76,19 @@ describe('WorkspaceAuthOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Log in$/ }))
     expect(onChangeTab).toHaveBeenCalledWith('login')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create account with Auth0' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create account with Auth0' }),
+    )
     expect(onStartAuth).toHaveBeenCalledWith('register')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Continue with Google' }),
+    )
     expect(onStartAuth).toHaveBeenCalledWith('register', 'google-oauth2')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue with GitHub' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Continue with GitHub' }),
+    )
     expect(onStartAuth).toHaveBeenCalledWith('register', 'github')
   })
 })

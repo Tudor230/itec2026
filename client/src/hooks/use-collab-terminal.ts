@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
 import {
-  CollabClient,
-  type CollabTerminalAccessDecisionPayload,
-  type CollabTerminalAccessRequestedPayload,
-  type CollabTerminalDescriptor,
-  type CollabTerminalOutputPayload,
-  type CollabTerminalStatePayload,
+  CollabClient
+  
+  
+  
+  
+  
 } from '../lib/collab-client'
+import type {CollabTerminalAccessDecisionPayload, CollabTerminalAccessRequestedPayload, CollabTerminalDescriptor, CollabTerminalOutputPayload, CollabTerminalStatePayload} from '../lib/collab-client';
 import { auth0Config } from '../lib/auth0-config'
 
-type AccessRequestStatus = 'idle' | 'pending' | 'approved' | 'rejected' | 'revoked'
+type AccessRequestStatus =
+  | 'idle'
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'revoked'
 
 interface UseCollabTerminalParams {
   projectId: string | null
@@ -41,14 +47,24 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
   const { getAccessTokenSilently } = useAuth0()
   const watchDestroyRef = useRef<(() => void) | null>(null)
 
-  const [connectionState, setConnectionState] = useState<'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'>('idle')
+  const [connectionState, setConnectionState] = useState<
+    'idle' | 'connecting' | 'synced' | 'disconnected' | 'error'
+  >('idle')
   const [message, setMessage] = useState<string | null>(null)
   const [currentSubject, setCurrentSubject] = useState<string | null>(null)
   const [terminals, setTerminals] = useState<CollabTerminalDescriptor[]>([])
-  const [activeOwnerSubject, setActiveOwnerSubject] = useState<string | null>(null)
-  const [statesByOwner, setStatesByOwner] = useState<Record<string, CollabTerminalStatePayload>>({})
-  const [outputsByOwner, setOutputsByOwner] = useState<Record<string, CollabTerminalOutputPayload[]>>({})
-  const [requestStatusByOwner, setRequestStatusByOwner] = useState<Record<string, AccessRequestStatus>>({})
+  const [activeOwnerSubject, setActiveOwnerSubject] = useState<string | null>(
+    null,
+  )
+  const [statesByOwner, setStatesByOwner] = useState<
+    Record<string, CollabTerminalStatePayload>
+  >({})
+  const [outputsByOwner, setOutputsByOwner] = useState<
+    Record<string, CollabTerminalOutputPayload[]>
+  >({})
+  const [requestStatusByOwner, setRequestStatusByOwner] = useState<
+    Record<string, AccessRequestStatus>
+  >({})
 
   const collabClient = useMemo(() => {
     return new CollabClient({
@@ -103,127 +119,143 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
 
     let cancelled = false
 
-    void collabClient.watchTerminals(projectId, {
-      onTerminalList: (payload) => {
+    void collabClient
+      .watchTerminals(projectId, {
+        onTerminalList: (payload) => {
+          if (cancelled) {
+            return
+          }
+
+          syncCurrentSubject()
+          const sorted = [...payload.terminals].sort((left, right) => {
+            return left.ownerSubject.localeCompare(right.ownerSubject)
+          })
+          setTerminals(sorted)
+          setActiveOwnerSubject((previous) => {
+            if (
+              previous &&
+              sorted.some((candidate) => candidate.ownerSubject === previous)
+            ) {
+              return previous
+            }
+
+            const mine = sorted.find(
+              (candidate) =>
+                candidate.ownerSubject === collabClient.getCurrentSubject(),
+            )
+            if (mine) {
+              return mine.ownerSubject
+            }
+
+            return sorted[0]?.ownerSubject ?? null
+          })
+        },
+        onTerminalState: (payload) => {
+          if (cancelled) {
+            return
+          }
+
+          const subject = syncCurrentSubject()
+          setStatesByOwner((previous) => {
+            return {
+              ...previous,
+              [payload.ownerSubject]: payload,
+            }
+          })
+
+          if (subject && payload.activeControllerSubject === subject) {
+            setRequestStatusByOwner((previous) => {
+              if (previous[payload.ownerSubject] === 'approved') {
+                return previous
+              }
+
+              return {
+                ...previous,
+                [payload.ownerSubject]: 'approved',
+              }
+            })
+          }
+        },
+        onTerminalOutput: (payload) => {
+          if (cancelled) {
+            return
+          }
+
+          setOutputsByOwner((previous) => appendOutput(previous, payload))
+        },
+        onTerminalAccessRequested: (
+          payload: CollabTerminalAccessRequestedPayload,
+        ) => {
+          if (cancelled) {
+            return
+          }
+
+          setStatesByOwner((previous) => {
+            const existing = previous[payload.ownerSubject]
+            if (!existing) {
+              return previous
+            }
+
+            const alreadyExists = existing.pendingRequests.some((candidate) => {
+              return candidate.requesterSubject === payload.requesterSubject
+            })
+
+            const pendingRequests = alreadyExists
+              ? existing.pendingRequests
+              : [
+                  ...existing.pendingRequests,
+                  {
+                    requesterSubject: payload.requesterSubject,
+                    requestedAt: payload.requestedAt,
+                  },
+                ]
+
+            return {
+              ...previous,
+              [payload.ownerSubject]: {
+                ...existing,
+                pendingRequests,
+              },
+            }
+          })
+        },
+        onTerminalAccessDecision: (
+          payload: CollabTerminalAccessDecisionPayload,
+        ) => {
+          if (cancelled) {
+            return
+          }
+
+          const subject = syncCurrentSubject()
+          if (subject && payload.requesterSubject === subject) {
+            setRequestStatusByOwner((previous) => {
+              return {
+                ...previous,
+                [payload.ownerSubject]: payload.status,
+              }
+            })
+          }
+        },
+        onError: (nextMessage) => {
+          if (cancelled) {
+            return
+          }
+
+          setMessage(nextMessage)
+        },
+      })
+      .then((destroyWatch) => {
         if (cancelled) {
+          destroyWatch()
           return
         }
 
         syncCurrentSubject()
-        const sorted = [...payload.terminals].sort((left, right) => {
-          return left.ownerSubject.localeCompare(right.ownerSubject)
-        })
-        setTerminals(sorted)
-        setActiveOwnerSubject((previous) => {
-          if (previous && sorted.some((candidate) => candidate.ownerSubject === previous)) {
-            return previous
-          }
-
-          const mine = sorted.find((candidate) => candidate.ownerSubject === collabClient.getCurrentSubject())
-          if (mine) {
-            return mine.ownerSubject
-          }
-
-          return sorted[0]?.ownerSubject ?? null
-        })
-      },
-      onTerminalState: (payload) => {
-        if (cancelled) {
-          return
-        }
-
-        const subject = syncCurrentSubject()
-        setStatesByOwner((previous) => {
-          return {
-            ...previous,
-            [payload.ownerSubject]: payload,
-          }
-        })
-
-        if (subject && payload.activeControllerSubject === subject) {
-          setRequestStatusByOwner((previous) => {
-            if (previous[payload.ownerSubject] === 'approved') {
-              return previous
-            }
-
-            return {
-              ...previous,
-              [payload.ownerSubject]: 'approved',
-            }
-          })
-        }
-      },
-      onTerminalOutput: (payload) => {
-        if (cancelled) {
-          return
-        }
-
-        setOutputsByOwner((previous) => appendOutput(previous, payload))
-      },
-      onTerminalAccessRequested: (payload: CollabTerminalAccessRequestedPayload) => {
-        if (cancelled) {
-          return
-        }
-
-        setStatesByOwner((previous) => {
-          const existing = previous[payload.ownerSubject]
-          if (!existing) {
-            return previous
-          }
-
-          const alreadyExists = existing.pendingRequests.some((candidate) => {
-            return candidate.requesterSubject === payload.requesterSubject
-          })
-
-          const pendingRequests = alreadyExists
-            ? existing.pendingRequests
-            : [...existing.pendingRequests, {
-                requesterSubject: payload.requesterSubject,
-                requestedAt: payload.requestedAt,
-              }]
-
-          return {
-            ...previous,
-            [payload.ownerSubject]: {
-              ...existing,
-              pendingRequests,
-            },
-          }
-        })
-      },
-      onTerminalAccessDecision: (payload: CollabTerminalAccessDecisionPayload) => {
-        if (cancelled) {
-          return
-        }
-
-        const subject = syncCurrentSubject()
-        if (subject && payload.requesterSubject === subject) {
-          setRequestStatusByOwner((previous) => {
-            return {
-              ...previous,
-              [payload.ownerSubject]: payload.status,
-            }
-          })
-        }
-      },
-      onError: (nextMessage) => {
-        if (cancelled) {
-          return
-        }
-
-        setMessage(nextMessage)
-      },
-    }).then((destroyWatch) => {
-      if (cancelled) {
-        destroyWatch()
-        return
-      }
-
-      syncCurrentSubject()
-      watchDestroyRef.current = destroyWatch
-    }).catch(() => {
-      watchDestroyRef.current = null
-    })
+        watchDestroyRef.current = destroyWatch
+      })
+      .catch(() => {
+        watchDestroyRef.current = null
+      })
 
     return () => {
       cancelled = true
@@ -247,18 +279,30 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
     }
   }, [activeOwnerSubject, collabClient, projectId])
 
-  const activeTerminalState = activeOwnerSubject ? (statesByOwner[activeOwnerSubject] ?? null) : null
-  const activeOutput = activeOwnerSubject ? (outputsByOwner[activeOwnerSubject] ?? []) : []
-  const activeRequestStatus = activeOwnerSubject ? (requestStatusByOwner[activeOwnerSubject] ?? 'idle') : 'idle'
+  const activeTerminalState = activeOwnerSubject
+    ? (statesByOwner[activeOwnerSubject] ?? null)
+    : null
+  const activeOutput = activeOwnerSubject
+    ? (outputsByOwner[activeOwnerSubject] ?? [])
+    : []
+  const activeRequestStatus = activeOwnerSubject
+    ? (requestStatusByOwner[activeOwnerSubject] ?? 'idle')
+    : 'idle'
   const canWriteToActiveTerminal = Boolean(
-    activeOwnerSubject
-      && currentSubject
-      && activeTerminalState
-      && (activeOwnerSubject === currentSubject || activeTerminalState.activeControllerSubject === currentSubject),
+    activeOwnerSubject &&
+    currentSubject &&
+    activeTerminalState &&
+    (activeOwnerSubject === currentSubject ||
+      activeTerminalState.activeControllerSubject === currentSubject),
   )
 
   useEffect(() => {
-    if (!projectId || !activeOwnerSubject || !activeTerminalState || !currentSubject) {
+    if (
+      !projectId ||
+      !activeOwnerSubject ||
+      !activeTerminalState ||
+      !currentSubject
+    ) {
       return
     }
 
@@ -274,7 +318,13 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
       cols: 120,
       rows: 36,
     })
-  }, [activeOwnerSubject, activeTerminalState, canWriteToActiveTerminal, collabClient, projectId])
+  }, [
+    activeOwnerSubject,
+    activeTerminalState,
+    canWriteToActiveTerminal,
+    collabClient,
+    projectId,
+  ])
 
   return {
     connectionState,
@@ -310,14 +360,20 @@ export function useCollabTerminal({ projectId }: UseCollabTerminalParams) {
         return
       }
 
-      void collabClient.resizeTerminal(projectId, activeOwnerSubject, { cols, rows })
+      void collabClient.resizeTerminal(projectId, activeOwnerSubject, {
+        cols,
+        rows,
+      })
     },
     openActiveTerminal: (cols: number, rows: number) => {
       if (!projectId || !activeOwnerSubject) {
         return
       }
 
-      void collabClient.openTerminal(projectId, activeOwnerSubject, { cols, rows })
+      void collabClient.openTerminal(projectId, activeOwnerSubject, {
+        cols,
+        rows,
+      })
     },
     requestAccess: () => {
       if (!projectId || !activeOwnerSubject) {

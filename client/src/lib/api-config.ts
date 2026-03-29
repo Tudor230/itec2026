@@ -5,5 +5,6 @@ function readEnvValue(value: string | undefined) {
 }
 
 export const apiConfig = {
-  baseUrl: readEnvValue(import.meta.env.VITE_API_BASE_URL) || DEFAULT_API_BASE_URL,
+  baseUrl:
+    readEnvValue(import.meta.env.VITE_API_BASE_URL) || DEFAULT_API_BASE_URL,
 }

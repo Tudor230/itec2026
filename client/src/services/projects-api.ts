@@ -22,6 +22,20 @@ export interface FolderDto {
   path: string
 }
 
+export interface ImportedFileInputDto {
+  path: string
+  content: string
+}
+
+export interface ImportFilesResultDto {
+  created: FileDto[]
+  updated: FileDto[]
+  skipped: Array<{
+    path: string
+    reason: 'already_exists'
+  }>
+}
+
 export interface ProjectInviteDto {
   id: string
   projectId: string
@@ -75,14 +89,19 @@ export function createProject(name: string, accessToken?: string | null) {
 
 export function listFiles(projectId: string, accessToken?: string | null) {
   const query = new URLSearchParams({ projectId })
-  return apiRequest<FileDto[]>(`/api/files?${query.toString()}`, { accessToken })
+  return apiRequest<FileDto[]>(`/api/files?${query.toString()}`, {
+    accessToken,
+  })
 }
 
-export function createFile(input: {
-  projectId: string
-  path: string
-  content: string
-}, accessToken?: string | null) {
+export function createFile(
+  input: {
+    projectId: string
+    path: string
+    content: string
+  },
+  accessToken?: string | null,
+) {
   return apiRequest<FileDto>('/api/files', {
     method: 'POST',
     body: input,
@@ -90,15 +109,30 @@ export function createFile(input: {
   })
 }
 
-export function updateFile(fileId: string, input: {
-  path?: string
-  content?: string
-}, accessToken?: string | null) {
+export function updateFile(
+  fileId: string,
+  input: {
+    path?: string
+    content?: string
+  },
+  accessToken?: string | null,
+) {
   return apiRequest<FileDto>(`/api/files/${fileId}`, {
     method: 'PATCH',
     body: input,
     accessToken,
   })
+}
+
+export interface ImportGithubProjectResultDto {
+  project: ProjectDto
+  importedFileCount: number
+  skippedFileCount: number
+  source: {
+    owner: string
+    repo: string
+    ref: string
+  }
 }
 
 export function deleteFile(fileId: string, accessToken?: string | null) {
@@ -110,10 +144,15 @@ export function deleteFile(fileId: string, accessToken?: string | null) {
 
 export function listFolders(projectId: string, accessToken?: string | null) {
   const query = new URLSearchParams({ projectId })
-  return apiRequest<FolderDto[]>(`/api/files/folders?${query.toString()}`, { accessToken })
+  return apiRequest<FolderDto[]>(`/api/files/folders?${query.toString()}`, {
+    accessToken,
+  })
 }
 
-export function createFolder(input: { projectId: string; path: string }, accessToken?: string | null) {
+export function createFolder(
+  input: { projectId: string; path: string },
+  accessToken?: string | null,
+) {
   return apiRequest<FolderDto>('/api/files/folders', {
     method: 'POST',
     body: input,
@@ -132,7 +171,10 @@ export function renameFolder(
   })
 }
 
-export function deleteFolder(input: { projectId: string; path: string }, accessToken?: string | null) {
+export function deleteFolder(
+  input: { projectId: string; path: string },
+  accessToken?: string | null,
+) {
   return apiRequest<{ deleted: boolean }>('/api/files/folders', {
     method: 'DELETE',
     body: input,
@@ -140,7 +182,29 @@ export function deleteFolder(input: { projectId: string; path: string }, accessT
   })
 }
 
-export function createProjectInvite(projectId: string, accessToken?: string | null) {
+export function importFiles(
+  input: {
+    projectId: string
+    files: ImportedFileInputDto[]
+    conflictStrategy?: 'skip' | 'overwrite' | 'fail'
+  },
+  accessToken?: string | null,
+) {
+  return apiRequest<ImportFilesResultDto>('/api/files/import', {
+    method: 'POST',
+    body: {
+      projectId: input.projectId,
+      files: input.files,
+      conflictStrategy: input.conflictStrategy ?? 'skip',
+    },
+    accessToken,
+  })
+}
+
+export function createProjectInvite(
+  projectId: string,
+  accessToken?: string | null,
+) {
   return apiRequest<ProjectInviteDto>(`/api/projects/${projectId}/invites`, {
     method: 'POST',
     body: {
@@ -150,7 +214,10 @@ export function createProjectInvite(projectId: string, accessToken?: string | nu
   })
 }
 
-export function listProjectMembers(projectId: string, accessToken?: string | null) {
+export function listProjectMembers(
+  projectId: string,
+  accessToken?: string | null,
+) {
   return apiRequest<ProjectMemberDto[]>(`/api/projects/${projectId}/members`, {
     accessToken,
   })
@@ -161,17 +228,26 @@ export function updateMyProjectMemberProfile(
   input: { displayName: string; email?: string },
   accessToken?: string | null,
 ) {
-  return apiRequest<{ updated: boolean }>(`/api/projects/${projectId}/members/me`, {
-    method: 'PATCH',
-    body: input,
-    accessToken,
-  })
+  return apiRequest<{ updated: boolean }>(
+    `/api/projects/${projectId}/members/me`,
+    {
+      method: 'PATCH',
+      body: input,
+      accessToken,
+    },
+  )
 }
 
-export function listProjectInvites(projectId: string, accessToken?: string | null) {
-  return apiRequest<ActiveProjectInviteDto[]>(`/api/projects/${projectId}/invites`, {
-    accessToken,
-  })
+export function listProjectInvites(
+  projectId: string,
+  accessToken?: string | null,
+) {
+  return apiRequest<ActiveProjectInviteDto[]>(
+    `/api/projects/${projectId}/invites`,
+    {
+      accessToken,
+    },
+  )
 }
 
 export function revokeProjectInvite(
@@ -179,11 +255,14 @@ export function revokeProjectInvite(
   input: { inviteId: string },
   accessToken?: string | null,
 ) {
-  return apiRequest<{ revoked: boolean }>(`/api/projects/${projectId}/invites`, {
-    method: 'DELETE',
-    body: input,
-    accessToken,
-  })
+  return apiRequest<{ revoked: boolean }>(
+    `/api/projects/${projectId}/invites`,
+    {
+      method: 'DELETE',
+      body: input,
+      accessToken,
+    },
+  )
 }
 
 export function removeProjectMember(
@@ -191,11 +270,28 @@ export function removeProjectMember(
   input: { subject: string },
   accessToken?: string | null,
 ) {
-  return apiRequest<{ removed: boolean }>(`/api/projects/${projectId}/members`, {
-    method: 'DELETE',
-    body: input,
-    accessToken,
-  })
+  return apiRequest<{ removed: boolean }>(
+    `/api/projects/${projectId}/members`,
+    {
+      method: 'DELETE',
+      body: input,
+      accessToken,
+    },
+  )
+}
+
+export function importProjectFromGithub(
+  input: { githubUrl: string; name?: string },
+  accessToken?: string | null,
+) {
+  return apiRequest<ImportGithubProjectResultDto>(
+    '/api/projects/import/github',
+    {
+      method: 'POST',
+      body: input,
+      accessToken,
+    },
+  )
 }
 
 export function getInvitePreview(token: string, accessToken?: string | null) {

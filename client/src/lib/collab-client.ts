@@ -1,4 +1,5 @@
-import { io, type Socket } from 'socket.io-client'
+import { io  } from 'socket.io-client'
+import type {Socket} from 'socket.io-client';
 import * as Y from 'yjs'
 import { apiConfig } from './api-config'
 
@@ -130,8 +131,12 @@ export type WatchTerminalCallbacks = {
   onTerminalList?: (payload: CollabTerminalListPayload) => void
   onTerminalState?: (payload: CollabTerminalStatePayload) => void
   onTerminalOutput?: (payload: CollabTerminalOutputPayload) => void
-  onTerminalAccessRequested?: (payload: CollabTerminalAccessRequestedPayload) => void
-  onTerminalAccessDecision?: (payload: CollabTerminalAccessDecisionPayload) => void
+  onTerminalAccessRequested?: (
+    payload: CollabTerminalAccessRequestedPayload,
+  ) => void
+  onTerminalAccessDecision?: (
+    payload: CollabTerminalAccessDecisionPayload,
+  ) => void
   onError?: (message: string) => void
 }
 
@@ -250,7 +255,10 @@ export class CollabClient {
 
       const onError = (error: unknown) => {
         cleanup()
-        this.onStatus?.({ state: 'error', message: 'Could not connect to collaboration server' })
+        this.onStatus?.({
+          state: 'error',
+          message: 'Could not connect to collaboration server',
+        })
         reject(error instanceof Error ? error : new Error(String(error)))
       }
 
@@ -267,7 +275,10 @@ export class CollabClient {
 
     socket.on('disconnect', () => {
       this.currentSubject = null
-      this.onStatus?.({ state: 'disconnected', message: 'Collaboration disconnected' })
+      this.onStatus?.({
+        state: 'disconnected',
+        message: 'Collaboration disconnected',
+      })
     })
 
     socket.on('connect', () => {
@@ -278,7 +289,10 @@ export class CollabClient {
     return socket
   }
 
-  async joinDocument(projectId: string, fileId: string): Promise<CollabDocSession> {
+  async joinDocument(
+    projectId: string,
+    fileId: string,
+  ): Promise<CollabDocSession> {
     const socket = await this.connect()
 
     const doc = new Y.Doc()
@@ -292,7 +306,10 @@ export class CollabClient {
 
       const update = fromBase64(payload.update)
       if (!update) {
-        this.onStatus?.({ state: 'error', message: 'Invalid initial document state from server' })
+        this.onStatus?.({
+          state: 'error',
+          message: 'Invalid initial document state from server',
+        })
         return
       }
 
@@ -394,7 +411,10 @@ export class CollabClient {
     }
   }
 
-  async watchProject(projectId: string, callbacks: WatchProjectCallbacks): Promise<() => void> {
+  async watchProject(
+    projectId: string,
+    callbacks: WatchProjectCallbacks,
+  ): Promise<() => void> {
     const socket = await this.connect()
 
     const onFileCreated = (payload: CollabFileCreatedPayload) => {
@@ -437,7 +457,9 @@ export class CollabClient {
       callbacks.onDocCursorChanged?.(payload)
     }
 
-    const onProjectActivityChanged = (payload: CollabProjectActivityPayload) => {
+    const onProjectActivityChanged = (
+      payload: CollabProjectActivityPayload,
+    ) => {
       if (payload.projectId !== projectId) {
         return
       }
@@ -492,7 +514,10 @@ export class CollabClient {
     })
   }
 
-  async watchTerminals(projectId: string, callbacks: WatchTerminalCallbacks): Promise<() => void> {
+  async watchTerminals(
+    projectId: string,
+    callbacks: WatchTerminalCallbacks,
+  ): Promise<() => void> {
     const socket = await this.connect()
 
     const onTerminalList = (payload: CollabTerminalListPayload) => {
@@ -519,7 +544,9 @@ export class CollabClient {
       callbacks.onTerminalOutput?.(payload)
     }
 
-    const onTerminalAccessRequested = (payload: CollabTerminalAccessRequestedPayload) => {
+    const onTerminalAccessRequested = (
+      payload: CollabTerminalAccessRequestedPayload,
+    ) => {
       if (payload.projectId !== projectId) {
         return
       }
@@ -527,7 +554,9 @@ export class CollabClient {
       callbacks.onTerminalAccessRequested?.(payload)
     }
 
-    const onTerminalAccessDecision = (payload: CollabTerminalAccessDecisionPayload) => {
+    const onTerminalAccessDecision = (
+      payload: CollabTerminalAccessDecisionPayload,
+    ) => {
       if (payload.projectId !== projectId) {
         return
       }
@@ -576,7 +605,11 @@ export class CollabClient {
     })
   }
 
-  async sendTerminalInput(projectId: string, ownerSubject: string, input: string) {
+  async sendTerminalInput(
+    projectId: string,
+    ownerSubject: string,
+    input: string,
+  ) {
     const socket = await this.connect()
     socket.emit('collab:terminal:input', {
       projectId,
@@ -585,7 +618,11 @@ export class CollabClient {
     })
   }
 
-  async openTerminal(projectId: string, ownerSubject: string, size?: { cols: number; rows: number }) {
+  async openTerminal(
+    projectId: string,
+    ownerSubject: string,
+    size?: { cols: number; rows: number },
+  ) {
     const socket = await this.connect()
     socket.emit('collab:terminal:open', {
       projectId,
@@ -595,7 +632,11 @@ export class CollabClient {
     })
   }
 
-  async resizeTerminal(projectId: string, ownerSubject: string, size: { cols: number; rows: number }) {
+  async resizeTerminal(
+    projectId: string,
+    ownerSubject: string,
+    size: { cols: number; rows: number },
+  ) {
     const socket = await this.connect()
     socket.emit('collab:terminal:resize', {
       projectId,

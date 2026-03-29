@@ -14,7 +14,9 @@ function DashboardRedirect() {
 
   return (
     <main className="mx-auto w-full max-w-[1080px] px-4 py-12">
-      <p className="text-sm text-[var(--sea-ink-soft)]">Redirecting to projects...</p>
+      <p className="text-sm text-[var(--sea-ink-soft)]">
+        Redirecting to projects...
+      </p>
     </main>
   )
 }

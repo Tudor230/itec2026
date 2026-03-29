@@ -24,7 +24,9 @@ export default function AuthEntryCard({
 
   return (
     <div>
-      <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Authentication</p>
+      <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">
+        Authentication
+      </p>
       <h2 className="mb-4 text-2xl font-semibold text-[var(--sea-ink)]">
         {title}
       </h2>
@@ -62,7 +64,9 @@ export default function AuthEntryCard({
         </span>
       </button>
 
-      <p className="my-[0.8rem] text-center text-[0.72rem] uppercase tracking-[0.11em] text-[var(--sea-ink-soft)]">or use social login</p>
+      <p className="my-[0.8rem] text-center text-[0.72rem] uppercase tracking-[0.11em] text-[var(--sea-ink-soft)]">
+        or use social login
+      </p>
 
       <div className="grid gap-2 sm:grid-cols-2">
         <button
@@ -93,7 +97,10 @@ export default function AuthEntryCard({
       </button>
 
       {errorMessage ? (
-        <div className="mt-[0.7rem] inline-flex items-center gap-[0.45rem] rounded-xl border border-[color-mix(in_oklab,var(--line)_62%,#ff7373_38%)] bg-[color-mix(in_oklab,var(--surface)_72%,#ffe9e9_28%)] px-[0.7rem] py-[0.58rem] text-[0.82rem] text-[var(--sea-ink)] animate-in fade-in zoom-in-95 duration-200" role="alert">
+        <div
+          className="mt-[0.7rem] inline-flex items-center gap-[0.45rem] rounded-xl border border-[color-mix(in_oklab,var(--line)_62%,#ff7373_38%)] bg-[color-mix(in_oklab,var(--surface)_72%,#ffe9e9_28%)] px-[0.7rem] py-[0.58rem] text-[0.82rem] text-[var(--sea-ink)] animate-in fade-in zoom-in-95 duration-200"
+          role="alert"
+        >
           <AlertCircle size={15} />
           <span>{errorMessage}</span>
         </div>

@@ -22,3 +22,8 @@ export const updateProjectMemberProfileSchema = z.object({
   displayName: z.string().trim().min(1).max(120),
   email: z.string().trim().email().max(320).optional(),
 })
+
+export const importGithubProjectSchema = z.object({
+  githubUrl: z.string().trim().url().max(500),
+  name: z.string().trim().min(1).max(120).optional(),
+})

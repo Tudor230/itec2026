@@ -12,7 +12,8 @@ import {
   SiReadthedocs,
   SiTypescript,
 } from 'react-icons/si'
-import { FILE_ICON_KEYS, type FileIconKey } from './file-icon-map'
+import { FILE_ICON_KEYS  } from './file-icon-map'
+import type {FileIconKey} from './file-icon-map';
 
 export const FILE_ICON_COMPONENTS: Record<FileIconKey, IconType> = {
   SiC,
@@ -29,7 +30,9 @@ export const FILE_ICON_COMPONENTS: Record<FileIconKey, IconType> = {
   SiGitforwindows,
 }
 
-export function getFileIconComponent(iconKey: FileIconKey | null): IconType | null {
+export function getFileIconComponent(
+  iconKey: FileIconKey | null,
+): IconType | null {
   if (!iconKey) {
     return null
   }

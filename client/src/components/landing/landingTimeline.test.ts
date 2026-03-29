@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { clamp01, deriveLandingTimeline, easeOutCubic, lerp, nearestSnapPoint, segmentProgress } from './landingTimeline'
+import {
+  clamp01,
+  deriveLandingTimeline,
+  easeOutCubic,
+  lerp,
+  nearestSnapPoint,
+  segmentProgress,
+} from './landingTimeline'
 
 describe('landing timeline helpers', () => {
   it('clamps values between 0 and 1', () => {

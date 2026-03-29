@@ -6,7 +6,11 @@ interface RobotHeadProps {
   eyeStyle: CSSProperties
 }
 
-export function RobotHead({ transitioning, headStyle, eyeStyle }: RobotHeadProps) {
+export function RobotHead({
+  transitioning,
+  headStyle,
+  eyeStyle,
+}: RobotHeadProps) {
   return (
     <div
       className={`relative [width:clamp(210px,31vw,320px)] [aspect-ratio:1.64/1] [transform-style:preserve-3d] ${

@@ -4,19 +4,21 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
-  type ReactNode,
+  useState
+  
 } from 'react'
+import type {ReactNode} from 'react';
 import {
   applyThemePreset,
   getStoredThemePreset,
   persistThemePreset,
   resolveThemePreset,
   THEME_STORAGE_KEY,
-  THEME_PRESETS,
-  type ThemePreset,
-  type ThemePresetId,
+  THEME_PRESETS
+  
+  
 } from '../lib/theme'
+import type {ThemePreset, ThemePresetId} from '../lib/theme';
 
 interface ThemeContextValue {
   preset: ThemePresetId
@@ -27,7 +29,9 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null)
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [preset, setPresetState] = useState<ThemePresetId>(() => getStoredThemePreset())
+  const [preset, setPresetState] = useState<ThemePresetId>(() =>
+    getStoredThemePreset(),
+  )
 
   const setPreset = useCallback((nextPreset: ThemePresetId) => {
     setPresetState(resolveThemePreset(nextPreset))

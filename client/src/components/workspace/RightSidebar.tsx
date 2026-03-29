@@ -16,10 +16,11 @@ import {
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import {
-  requestAiEditCurrentFile,
-  type AiEditResponse,
-  type StructuredDiffLine,
+  requestAiEditCurrentFile
+  
+  
 } from '../../services/ai-api'
+import type {AiEditResponse, StructuredDiffLine} from '../../services/ai-api';
 import { workspaceHudChipClass } from './ui-classes'
 
 export type SidebarTab = 'ai' | 'history'
@@ -64,14 +65,27 @@ function toLanguageFromPath(path: string) {
 
 function DiffLine({ line }: { line: StructuredDiffLine }) {
   if (line.type === 'add') {
-    return <div className="font-mono text-[10px] text-emerald-700">+ {line.content}</div>
+    return (
+      <div className="font-mono text-[10px] text-emerald-700">
+        + {line.content}
+      </div>
+    )
   }
 
   if (line.type === 'remove') {
-    return <div className="font-mono text-[10px] text-rose-700">- {line.content}</div>
+    return (
+      <div className="font-mono text-[10px] text-rose-700">
+        - {line.content}
+      </div>
+    )
   }
 
-  return <div className="font-mono text-[10px] text-[var(--sea-ink-soft)]">  {line.content}</div>
+  return (
+    <div className="font-mono text-[10px] text-[var(--sea-ink-soft)]">
+      {' '}
+      {line.content}
+    </div>
+  )
 }
 
 export default function RightSidebar({
@@ -94,20 +108,53 @@ export default function RightSidebar({
   ])
 
   const quickActions = [
-    { label: 'Refactor', icon: Zap, prompt: 'Refactor this file for readability while preserving behavior.' },
-    { label: 'Explain', icon: Code2, prompt: 'Explain this file and suggest safe improvements.' },
-    { label: 'Fix Bug', icon: Bug, prompt: 'Find and fix likely bugs in this file.' },
-    { label: 'Tests', icon: TestTube, prompt: 'Suggest tests for this file and any missing edge cases.' },
+    {
+      label: 'Refactor',
+      icon: Zap,
+      prompt: 'Refactor this file for readability while preserving behavior.',
+    },
+    {
+      label: 'Explain',
+      icon: Code2,
+      prompt: 'Explain this file and suggest safe improvements.',
+    },
+    {
+      label: 'Fix Bug',
+      icon: Bug,
+      prompt: 'Find and fix likely bugs in this file.',
+    },
+    {
+      label: 'Tests',
+      icon: TestTube,
+      prompt: 'Suggest tests for this file and any missing edge cases.',
+    },
   ]
 
   const historyRows = [
-    { time: '2m ago', user: 'You', action: 'Refactored auth logic', type: 'commit' as const },
-    { time: '1h ago', user: 'Sarah', action: 'Fixed CSS grid issue', type: 'merge' as const },
-    { time: '3h ago', user: 'You', action: 'Initial project setup', type: 'commit' as const },
+    {
+      time: '2m ago',
+      user: 'You',
+      action: 'Refactored auth logic',
+      type: 'commit' as const,
+    },
+    {
+      time: '1h ago',
+      user: 'Sarah',
+      action: 'Fixed CSS grid issue',
+      type: 'merge' as const,
+    },
+    {
+      time: '3h ago',
+      user: 'You',
+      action: 'Initial project setup',
+      type: 'commit' as const,
+    },
   ]
 
   const canSend = useMemo(() => {
-    return chatInput.trim().length > 0 && activeFileContext !== null && !isSending
+    return (
+      chatInput.trim().length > 0 && activeFileContext !== null && !isSending
+    )
   }, [activeFileContext, chatInput, isSending])
 
   async function onSend() {
@@ -117,7 +164,8 @@ export default function RightSidebar({
     }
 
     const requestId = crypto.randomUUID()
-    const nextLanguage = activeFileContext.language ?? toLanguageFromPath(activeFileContext.path)
+    const nextLanguage =
+      activeFileContext.language ?? toLanguageFromPath(activeFileContext.path)
 
     console.log('[ai][sidebar] interaction:start', {
       requestId,
@@ -149,12 +197,15 @@ export default function RightSidebar({
         hasAccessToken: Boolean(accessToken),
       })
 
-      const aiResponse = await requestAiEditCurrentFile({
-        prompt: trimmedPrompt,
-        filePath: activeFileContext.path,
-        fileContent: activeFileContext.content,
-        language: nextLanguage,
-      }, accessToken)
+      const aiResponse = await requestAiEditCurrentFile(
+        {
+          prompt: trimmedPrompt,
+          filePath: activeFileContext.path,
+          fileContent: activeFileContext.content,
+          language: nextLanguage,
+        },
+        accessToken,
+      )
 
       console.log('[ai][sidebar] interaction:success', {
         requestId,
@@ -174,7 +225,8 @@ export default function RightSidebar({
         ]
       })
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Unknown AI request error'
+      const reason =
+        error instanceof Error ? error.message : 'Unknown AI request error'
       console.error('[ai][sidebar] interaction:error', {
         requestId,
         reason,
@@ -270,17 +322,19 @@ export default function RightSidebar({
                     <Bot size={18} />
                   </div>
                   <div>
-                    <h3 className="m-0 text-sm font-extrabold text-[var(--sea-ink)]">Pair AI</h3>
+                    <h3 className="m-0 text-sm font-extrabold text-[var(--sea-ink)]">
+                      Pair AI
+                    </h3>
                     <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
                       contextual assistant
                     </p>
                   </div>
                 </div>
 
-                    <span className={workspaceHudChipClass}>
-                      <Clock3 size={11} /> online
-                    </span>
-                  </div>
+                <span className={workspaceHudChipClass}>
+                  <Clock3 size={11} /> online
+                </span>
+              </div>
 
               <p className="m-0 text-xs text-[var(--sea-ink-soft)]">
                 {activeFileContext
@@ -302,7 +356,10 @@ export default function RightSidebar({
                   }}
                   className="group flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.36)] p-2 transition-all hover:border-[var(--lagoon)] hover:bg-[rgba(var(--lagoon-rgb),0.08)]"
                 >
-                  <action.icon size={12} className="text-[var(--sea-ink-soft)] group-hover:text-[var(--lagoon)]" />
+                  <action.icon
+                    size={12}
+                    className="text-[var(--sea-ink-soft)] group-hover:text-[var(--lagoon)]"
+                  />
                   <span className="text-[10px] font-bold text-[var(--sea-ink-soft)] group-hover:text-[var(--sea-ink)]">
                     {action.label}
                   </span>
@@ -314,7 +371,10 @@ export default function RightSidebar({
               {messages.map((message) => (
                 <div
                   key={message.id}
-                  className={cn('flex flex-col gap-1', message.role === 'user' ? 'items-end' : 'items-start')}
+                  className={cn(
+                    'flex flex-col gap-1',
+                    message.role === 'user' ? 'items-end' : 'items-start',
+                  )}
                 >
                   <div
                     className={cn(
@@ -331,20 +391,30 @@ export default function RightSidebar({
 
                     {message.aiResponse ? (
                       <div className="space-y-3">
-                        <div className="text-xs font-semibold text-[var(--sea-ink)]">{message.aiResponse.summary}</div>
+                        <div className="text-xs font-semibold text-[var(--sea-ink)]">
+                          {message.aiResponse.summary}
+                        </div>
 
                         <div className="space-y-2 rounded-lg border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.35)] p-2">
                           <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
-                            {message.aiResponse.diff.oldPath} {'->'} {message.aiResponse.diff.newPath}
+                            {message.aiResponse.diff.oldPath} {'->'}{' '}
+                            {message.aiResponse.diff.newPath}
                           </div>
                           {message.aiResponse.diff.hunks.map((hunk, index) => (
-                            <div key={`${message.id}-hunk-${index}`} className="rounded-md border border-[var(--line)] bg-white/30 p-2">
+                            <div
+                              key={`${message.id}-hunk-${index}`}
+                              className="rounded-md border border-[var(--line)] bg-white/30 p-2"
+                            >
                               <div className="mb-1 font-mono text-[10px] text-[var(--sea-ink-soft)]">
-                                @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
+                                @@ -{hunk.oldStart},{hunk.oldLines} +
+                                {hunk.newStart},{hunk.newLines} @@
                               </div>
                               <div className="space-y-[2px]">
                                 {hunk.lines.map((line, lineIndex) => (
-                                  <DiffLine key={`${message.id}-hunk-${index}-line-${lineIndex}`} line={line} />
+                                  <DiffLine
+                                    key={`${message.id}-hunk-${index}-line-${lineIndex}`}
+                                    line={line}
+                                  />
                                 ))}
                               </div>
                             </div>
@@ -362,11 +432,16 @@ export default function RightSidebar({
 
                         {message.aiResponse.warnings.length > 0 ? (
                           <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-2">
-                            {message.aiResponse.warnings.map((warning, warningIndex) => (
-                              <div key={`${message.id}-warning-${warningIndex}`} className="text-[10px] text-amber-800">
-                                {warning}
-                              </div>
-                            ))}
+                            {message.aiResponse.warnings.map(
+                              (warning, warningIndex) => (
+                                <div
+                                  key={`${message.id}-warning-${warningIndex}`}
+                                  className="text-[10px] text-amber-800"
+                                >
+                                  {warning}
+                                </div>
+                              ),
+                            )}
                           </div>
                         ) : null}
                       </div>
@@ -397,7 +472,9 @@ export default function RightSidebar({
               <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-[var(--kicker)]">
                 Session Chronicle
               </p>
-              <p className="m-0 mt-1 text-xs text-[var(--sea-ink-soft)]">Recent activity in this workspace.</p>
+              <p className="m-0 mt-1 text-xs text-[var(--sea-ink-soft)]">
+                Recent activity in this workspace.
+              </p>
             </div>
 
             <div className="relative space-y-8 pl-6 before:absolute before:bottom-2 before:left-2 before:top-2 before:w-[2px] before:bg-[var(--line)]">
@@ -413,11 +490,16 @@ export default function RightSidebar({
                   />
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-[var(--sea-ink)]">{item.user}</span>
-                      <span className="text-[9px] text-[var(--sea-ink-soft)]">{item.time}</span>
+                      <span className="text-[10px] font-bold text-[var(--sea-ink)]">
+                        {item.user}
+                      </span>
+                      <span className="text-[9px] text-[var(--sea-ink-soft)]">
+                        {item.time}
+                      </span>
                     </div>
                     <p className="cursor-pointer text-xs text-[var(--sea-ink-soft)] transition-colors group-hover:text-[var(--sea-ink)]">
-                      {item.action} <ChevronRight size={12} className="mb-[1px] inline" />
+                      {item.action}{' '}
+                      <ChevronRight size={12} className="mb-[1px] inline" />
                     </p>
                   </div>
                 </div>
@@ -433,7 +515,11 @@ export default function RightSidebar({
             <textarea
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              placeholder={activeFileContext ? 'Ask anything...' : 'Open a file to enable AI edits...'}
+              placeholder={
+                activeFileContext
+                  ? 'Ask anything...'
+                  : 'Open a file to enable AI edits...'
+              }
               className="min-h-[80px] w-full resize-none rounded-xl border border-[var(--line)] bg-[rgba(var(--bg-rgb),0.48)] px-3 py-2 pr-10 text-xs outline-none transition-colors focus:border-[var(--lagoon)]"
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') {
@@ -452,7 +538,11 @@ export default function RightSidebar({
                   return
                 }
 
-                if ((event.metaKey || event.ctrlKey) || (!event.metaKey && !event.ctrlKey)) {
+                if (
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  (!event.metaKey && !event.ctrlKey)
+                ) {
                   event.preventDefault()
                   void onSend()
                 }

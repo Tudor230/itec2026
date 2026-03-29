@@ -3,7 +3,13 @@ import type { ActorContext } from '../auth/actor-context.js'
 import { createId } from './id.js'
 import { createFileStorageKey, type FileBlobStore } from './file-blob-store.js'
 import { canEditProject, canReadProject } from './project-access.js'
-import type { FileInput, FileRecord, FolderRecord } from './file.types.js'
+import type {
+  FileInput,
+  FileRecord,
+  FolderRecord,
+  ImportFilesInput,
+  ImportFilesResult,
+} from './file.types.js'
 
 function toFileRecord(file: {
   id: string
@@ -286,6 +292,194 @@ export class FilesRepository {
     } catch (error) {
       await this.blobStore.remove(storageKey)
       throw error
+    }
+  }
+
+  async importFiles(actor: ActorContext, input: ImportFilesInput): Promise<ImportFilesResult> {
+    const ownerSubject = actor.subject
+
+    if (!ownerSubject) {
+      throw Object.assign(new Error('Authentication is required'), {
+        code: 'AUTH_REQUIRED',
+      })
+    }
+
+    const canImport = await canEditProject(this.prisma, actor, input.projectId)
+    if (!canImport) {
+      throw Object.assign(new Error('Project not found'), {
+        code: 'P2025',
+      })
+    }
+
+    const dedupedByPath = new Map<string, string>()
+    input.files.forEach((file) => {
+      dedupedByPath.set(file.path, file.content)
+    })
+
+    const existingFiles: Array<{
+      id: string
+      projectId: string
+      path: string
+      storageKey: string
+      contentHash: string
+      byteSize: number
+      ownerSubject: string | null
+      createdAt: Date
+      updatedAt: Date
+    }> = await this.prisma.file.findMany({
+      where: {
+        projectId: input.projectId,
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    })
+
+    const existingByPath = new Map(existingFiles.map((file) => [file.path, file]))
+
+    if (input.conflictStrategy === 'fail') {
+      const hasConflict = [...dedupedByPath.keys()].some((path) => existingByPath.has(path))
+      if (hasConflict) {
+        throw Object.assign(new Error('File path already exists'), {
+          code: 'P2002',
+        })
+      }
+    }
+
+    const created: FileRecord[] = []
+    const updated: FileRecord[] = []
+    const skipped: Array<{ path: string; reason: 'already_exists' }> = []
+
+    for (const [filePath, content] of dedupedByPath.entries()) {
+      const existing = existingByPath.get(filePath)
+
+      if (existing) {
+        if (input.conflictStrategy === 'skip') {
+          skipped.push({
+            path: filePath,
+            reason: 'already_exists',
+          })
+          continue
+        }
+
+        const previousContent = await this.blobStore.readText(existing.storageKey)
+        const previousHash = existing.contentHash
+        const previousSize = existing.byteSize
+
+        const blobResult = await this.blobStore.writeText(existing.storageKey, content)
+
+        try {
+          const result = await this.prisma.file.updateMany({
+            where: {
+              id: existing.id,
+            },
+            data: {
+              path: existing.path,
+              contentHash: blobResult.contentHash,
+              byteSize: blobResult.byteSize,
+            },
+          })
+
+          if (result.count === 0) {
+            throw Object.assign(new Error('File not found'), {
+              code: 'P2025',
+            })
+          }
+
+          const refreshed = await this.prisma.file.findFirst({
+            where: {
+              id: existing.id,
+            },
+            select: {
+              id: true,
+              projectId: true,
+              path: true,
+              storageKey: true,
+              contentHash: true,
+              byteSize: true,
+              ownerSubject: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          })
+
+          if (!refreshed) {
+            throw Object.assign(new Error('File not found'), {
+              code: 'P2025',
+            })
+          }
+
+          const updatedRecord = toFileRecord(refreshed, content)
+          updated.push(updatedRecord)
+          existingByPath.set(filePath, refreshed)
+        } catch (error) {
+          const rolledBackBlob = await this.blobStore.writeText(existing.storageKey, previousContent)
+          await this.prisma.file.updateMany({
+            where: {
+              id: existing.id,
+            },
+            data: {
+              contentHash: rolledBackBlob.contentHash || previousHash,
+              byteSize: rolledBackBlob.byteSize || previousSize,
+            },
+          })
+
+          throw error
+        }
+
+        continue
+      }
+
+      const id = createId()
+      const storageKey = createFileStorageKey(input.projectId, id)
+      const blobResult = await this.blobStore.writeText(storageKey, content)
+
+      try {
+        const file = await this.prisma.file.create({
+          data: {
+            id,
+            projectId: input.projectId,
+            path: filePath,
+            storageKey,
+            contentHash: blobResult.contentHash,
+            byteSize: blobResult.byteSize,
+            ownerSubject,
+          },
+          select: {
+            id: true,
+            projectId: true,
+            path: true,
+            storageKey: true,
+            contentHash: true,
+            byteSize: true,
+            ownerSubject: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        })
+
+        created.push(toFileRecord(file, content))
+        existingByPath.set(filePath, file)
+      } catch (error) {
+        await this.blobStore.remove(storageKey)
+
+        const dbLikeError = error as { code?: string }
+        if (dbLikeError.code === 'P2002' && input.conflictStrategy === 'skip') {
+          skipped.push({
+            path: filePath,
+            reason: 'already_exists',
+          })
+          continue
+        }
+
+        throw error
+      }
+    }
+
+    return {
+      created,
+      updated,
+      skipped,
     }
   }
 

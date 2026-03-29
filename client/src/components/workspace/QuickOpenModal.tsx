@@ -66,7 +66,12 @@ export default function QuickOpenModal({
         }}
       >
         <div className="mb-[0.5rem] flex items-center justify-between">
-          <p id="workspace-quick-open-title" className="m-0 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Quick Open</p>
+          <p
+            id="workspace-quick-open-title"
+            className="m-0 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]"
+          >
+            Quick Open
+          </p>
           <button
             type="button"
             onClick={onClose}

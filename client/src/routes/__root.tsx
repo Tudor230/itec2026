@@ -108,7 +108,8 @@ function AppFrame({ children }: { children: React.ReactNode }) {
     select: (state) => state.location.pathname,
   })
 
-  const hideGlobalChrome = pathname.startsWith('/workspace') || pathname.startsWith('/auth')
+  const hideGlobalChrome =
+    pathname.startsWith('/workspace') || pathname.startsWith('/auth')
 
   if (hideGlobalChrome) {
     return <>{children}</>

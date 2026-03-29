@@ -22,6 +22,7 @@ import { FilesService } from './modules/projects/files.service.js'
 import { ProjectWorkspaceSyncService } from './modules/projects/project-workspace-sync-service.js'
 import { createCollabServer } from './ws/collab-server.js'
 import { LocalFileBlobStore } from './modules/projects/file-blob-store.js'
+import { GithubPublicImporter } from './modules/projects/github-public-importer.js'
 
 async function bootstrap() {
   const filesStorageRoot = resolveFilesStorageRoot()
@@ -33,6 +34,7 @@ async function bootstrap() {
   const workspaceStore = new LocalProjectWorkspaceStore(workspaceRoot)
   const filesService = new FilesService(new FilesRepository(prisma, blobStore))
   const workspaceSyncService = new ProjectWorkspaceSyncService(filesService, workspaceStore)
+  const githubImporter = new GithubPublicImporter()
 
   const app = express()
   const server = createServer(app)
@@ -54,7 +56,12 @@ async function bootstrap() {
     })
   })
 
-  app.use('/api/projects', createProjectsRouter({ prisma }))
+  app.use('/api/projects', createProjectsRouter({
+    prisma,
+    filesService,
+    githubImporter,
+    workspaceSync: workspaceSyncService,
+  }))
   app.use('/api/files', createFilesRouter({
     prisma,
     blobStore,

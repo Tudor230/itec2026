@@ -12,6 +12,7 @@ import {
   createFileSchema,
   createFolderSchema,
   deleteFolderSchema,
+  importFilesSchema,
   renameFolderSchema,
   updateFileSchema,
 } from './file.schema.js'
@@ -161,6 +162,70 @@ export function createFilesRouter({
     response.status(201).json({
       ok: true,
       data: folder,
+    })
+  }))
+
+  router.post('/import', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = importFilesSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_FILE_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+
+    const runImport = async () => {
+      return service.importFiles(actor, {
+        projectId: parsed.data.projectId,
+        files: parsed.data.files,
+        conflictStrategy: parsed.data.conflictStrategy,
+      })
+    }
+
+    const imported = workspaceSync
+      ? await workspaceSync.runLocked(parsed.data.projectId, async () => {
+          const result = await runImport()
+
+          try {
+            const syncedFiles = [...result.created, ...result.updated]
+            for (const file of syncedFiles) {
+              await workspaceSync.applyApiCreateAlreadyLocked(file)
+            }
+          } catch (error) {
+            await workspaceSync.hydrateProjectWorkspace(parsed.data.projectId)
+            throw error
+          }
+
+          return result
+        })
+      : await runImport()
+
+    imported.created.forEach((file) => {
+      emitCollabFileCreated({
+        id: file.id,
+        projectId: file.projectId,
+        path: file.path,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+      })
+    })
+
+    imported.updated.forEach((file) => {
+      emitCollabFileUpdated({
+        id: file.id,
+        projectId: file.projectId,
+        path: file.path,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+      })
+    })
+
+    response.status(201).json({
+      ok: true,
+      data: imported,
     })
   }))
 

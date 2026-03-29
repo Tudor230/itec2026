@@ -22,16 +22,20 @@ interface FileTabsProps {
   onOpenCollaboration?: () => void
 }
 
-export default function FileTabs({ 
-  tabs, 
-  onSelectTab, 
+export default function FileTabs({
+  tabs,
+  onSelectTab,
   onCloseTab,
   onCloseOthers,
   onCloseAll,
   collaborators,
   onOpenCollaboration,
 }: FileTabsProps) {
-  const [menuState, setMenuState] = useState<{ tabId: string; left: number; top: number } | null>(null)
+  const [menuState, setMenuState] = useState<{
+    tabId: string
+    left: number
+    top: number
+  } | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const holdTimerRef = useRef<number | null>(null)
   const holdTriggeredTabIdRef = useRef<string | null>(null)
@@ -148,101 +152,125 @@ export default function FileTabs({
         />
 
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pr-2">
-        {tabs.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.28)] px-3 py-1 text-xs font-semibold text-[var(--sea-ink-soft)]">
-            No files opened
-          </div>
-        ) : tabs.map((tab) => {
-          const iconMeta = getFileIconMeta(tab.path)
-          const ResolvedIcon = getFileIconComponent(iconMeta.iconKey)
-          const isDefaultIcon = ResolvedIcon === null
-          const iconStyle = iconMeta.color ? { color: iconMeta.color } : undefined
-
-          return (
-            <div key={tab.id}>
-              <div
-                role="tab"
-                tabIndex={0}
-                aria-selected={tab.isActive}
-                className={cn(
-                  'group relative flex h-8 min-w-[128px] max-w-[260px] cursor-pointer select-none items-center rounded-lg border transition-all',
-                  tab.isActive
-                    ? 'border-[color-mix(in_oklab,var(--lagoon-deep)_40%,var(--line))] bg-[color-mix(in_oklab,var(--chip-bg)_72%,rgba(var(--lagoon-rgb),0.22)_28%)] text-[var(--sea-ink)] shadow-[0_8px_18px_rgba(8,22,28,0.16)]'
-                    : 'border-transparent bg-[rgba(var(--chip-bg-rgb),0.24)] text-[var(--sea-ink-soft)] hover:border-[color-mix(in_oklab,var(--line)_72%,transparent)] hover:bg-[rgba(var(--chip-bg-rgb),0.48)] hover:text-[var(--sea-ink)]'
-                )}
-                onClick={() => {
-                  closeMenu()
-                  onSelectTab(tab.id)
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  clearHoldState()
-                  openMenu(tab.id, event.currentTarget.getBoundingClientRect())
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    onSelectTab(tab.id)
-                    return
-                  }
-
-                  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
-                    event.preventDefault()
-                    clearHoldState()
-                    openMenu(tab.id, event.currentTarget.getBoundingClientRect())
-                  }
-                }}
-              >
-                <span className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg">
-                  {tab.isActive ? (
-                    <span className="absolute inset-x-0 top-0 h-[2px] bg-[linear-gradient(90deg,color-mix(in_oklab,var(--lagoon)_84%,white),color-mix(in_oklab,var(--lagoon-deep)_84%,white))]" />
-                  ) : null}
-                </span>
-
-                <span className="flex flex-1 items-center gap-2 px-2.5 text-left text-xs font-bold outline-none">
-                  <span
-                    className={cn(
-                      'grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border border-[color-mix(in_oklab,var(--line)_82%,transparent)] bg-[rgba(var(--chip-bg-rgb),0.65)]',
-                      isDefaultIcon ? 'text-[var(--sea-ink-soft)]' : undefined
-                    )}
-                  >
-                    {ResolvedIcon ? <ResolvedIcon size={11} style={iconStyle} /> : <FileText size={11} />}
-                  </span>
-                  <span className="truncate">{tab.path.split('/').pop()}</span>
-                  {tab.isDirty && (
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--lagoon)] shadow-[0_0_0_3px_rgba(var(--lagoon-rgb),0.18)]" />
-                  )}
-                </span>
-
-                <button
-                  type="button"
-                  onPointerDown={(event) => {
-                    event.stopPropagation()
-                    startCloseHold(tab.id, event.currentTarget.getBoundingClientRect())
-                  }}
-                  onPointerUp={(event) => {
-                    event.stopPropagation()
-                    clearHoldTimer()
-                  }}
-                  onPointerLeave={clearHoldTimer}
-                  onPointerCancel={clearHoldTimer}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    finishCloseClick(tab.id)
-                  }}
-                  className={cn(
-                    'mr-1 flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-all hover:bg-[rgba(0,0,0,0.08)]',
-                    'group-hover:opacity-100',
-                    tab.isActive && 'opacity-100'
-                  )}
-                  title="Close tab (hold for more)"
-                >
-                  <X size={12} />
-                </button>
-              </div>
+          {tabs.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.28)] px-3 py-1 text-xs font-semibold text-[var(--sea-ink-soft)]">
+              No files opened
             </div>
-          )
-        })}
+          ) : (
+            tabs.map((tab) => {
+              const iconMeta = getFileIconMeta(tab.path)
+              const ResolvedIcon = getFileIconComponent(iconMeta.iconKey)
+              const isDefaultIcon = ResolvedIcon === null
+              const iconStyle = iconMeta.color
+                ? { color: iconMeta.color }
+                : undefined
+
+              return (
+                <div key={tab.id}>
+                  <div
+                    role="tab"
+                    tabIndex={0}
+                    aria-selected={tab.isActive}
+                    className={cn(
+                      'group relative flex h-8 min-w-[128px] max-w-[260px] cursor-pointer select-none items-center rounded-lg border transition-all',
+                      tab.isActive
+                        ? 'border-[color-mix(in_oklab,var(--lagoon-deep)_40%,var(--line))] bg-[color-mix(in_oklab,var(--chip-bg)_72%,rgba(var(--lagoon-rgb),0.22)_28%)] text-[var(--sea-ink)] shadow-[0_8px_18px_rgba(8,22,28,0.16)]'
+                        : 'border-transparent bg-[rgba(var(--chip-bg-rgb),0.24)] text-[var(--sea-ink-soft)] hover:border-[color-mix(in_oklab,var(--line)_72%,transparent)] hover:bg-[rgba(var(--chip-bg-rgb),0.48)] hover:text-[var(--sea-ink)]',
+                    )}
+                    onClick={() => {
+                      closeMenu()
+                      onSelectTab(tab.id)
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      clearHoldState()
+                      openMenu(
+                        tab.id,
+                        event.currentTarget.getBoundingClientRect(),
+                      )
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onSelectTab(tab.id)
+                        return
+                      }
+
+                      if (
+                        (event.shiftKey && event.key === 'F10') ||
+                        event.key === 'ContextMenu'
+                      ) {
+                        event.preventDefault()
+                        clearHoldState()
+                        openMenu(
+                          tab.id,
+                          event.currentTarget.getBoundingClientRect(),
+                        )
+                      }
+                    }}
+                  >
+                    <span className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg">
+                      {tab.isActive ? (
+                        <span className="absolute inset-x-0 top-0 h-[2px] bg-[linear-gradient(90deg,color-mix(in_oklab,var(--lagoon)_84%,white),color-mix(in_oklab,var(--lagoon-deep)_84%,white))]" />
+                      ) : null}
+                    </span>
+
+                    <span className="flex flex-1 items-center gap-2 px-2.5 text-left text-xs font-bold outline-none">
+                      <span
+                        className={cn(
+                          'grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border border-[color-mix(in_oklab,var(--line)_82%,transparent)] bg-[rgba(var(--chip-bg-rgb),0.65)]',
+                          isDefaultIcon
+                            ? 'text-[var(--sea-ink-soft)]'
+                            : undefined,
+                        )}
+                      >
+                        {ResolvedIcon ? (
+                          <ResolvedIcon size={11} style={iconStyle} />
+                        ) : (
+                          <FileText size={11} />
+                        )}
+                      </span>
+                      <span className="truncate">
+                        {tab.path.split('/').pop()}
+                      </span>
+                      {tab.isDirty && (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--lagoon)] shadow-[0_0_0_3px_rgba(var(--lagoon-rgb),0.18)]" />
+                      )}
+                    </span>
+
+                    <button
+                      type="button"
+                      onPointerDown={(event) => {
+                        event.stopPropagation()
+                        startCloseHold(
+                          tab.id,
+                          event.currentTarget.getBoundingClientRect(),
+                        )
+                      }}
+                      onPointerUp={(event) => {
+                        event.stopPropagation()
+                        clearHoldTimer()
+                      }}
+                      onPointerLeave={clearHoldTimer}
+                      onPointerCancel={clearHoldTimer}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        finishCloseClick(tab.id)
+                      }}
+                      className={cn(
+                        'mr-1 flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-all hover:bg-[rgba(0,0,0,0.08)]',
+                        'group-hover:opacity-100',
+                        tab.isActive && 'opacity-100',
+                      )}
+                      title="Close tab (hold for more)"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })
+          )}
         </div>
 
         <button
@@ -253,7 +281,10 @@ export default function FileTabs({
         >
           <span className="mr-2">Collab</span>
           <span className="inline-flex -space-x-2 align-middle">
-            {(collaborators && collaborators.length > 0 ? collaborators : ['JD', 'AS'])
+            {(collaborators && collaborators.length > 0
+              ? collaborators
+              : ['JD', 'AS']
+            )
               .slice(0, 3)
               .map((initials) => (
                 <span

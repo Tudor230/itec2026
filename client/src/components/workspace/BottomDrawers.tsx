@@ -11,9 +11,10 @@ import {
   Minimize2,
   Clock3,
   Sparkles,
-  ShieldCheck,
-  type LucideIcon,
+  ShieldCheck
+  
 } from 'lucide-react'
+import type {LucideIcon} from 'lucide-react';
 import { cn } from '../../lib/utils'
 import { workspaceHudChipClass } from './ui-classes'
 
@@ -41,11 +42,36 @@ interface BottomDrawersProps {
   onInvalidateInviteLink?: (inviteId: string) => void
 }
 
-const DRAWER_ITEMS: { id: DrawerTab; label: string; subtitle: string; icon: LucideIcon }[] = [
-  { id: 'timeline', label: 'Timeline', subtitle: 'recent changes', icon: History },
-  { id: 'run', label: 'Run & Debug', subtitle: 'sandbox execution', icon: Play },
-  { id: 'env', label: 'Environment', subtitle: 'runtime variables', icon: Settings },
-  { id: 'collab', label: 'Collaboration', subtitle: 'team presence', icon: Users },
+const DRAWER_ITEMS: {
+  id: DrawerTab
+  label: string
+  subtitle: string
+  icon: LucideIcon
+}[] = [
+  {
+    id: 'timeline',
+    label: 'Timeline',
+    subtitle: 'recent changes',
+    icon: History,
+  },
+  {
+    id: 'run',
+    label: 'Run & Debug',
+    subtitle: 'sandbox execution',
+    icon: Play,
+  },
+  {
+    id: 'env',
+    label: 'Environment',
+    subtitle: 'runtime variables',
+    icon: Settings,
+  },
+  {
+    id: 'collab',
+    label: 'Collaboration',
+    subtitle: 'team presence',
+    icon: Users,
+  },
 ]
 
 export default function BottomDrawers({
@@ -58,7 +84,8 @@ export default function BottomDrawers({
   onCreateInviteLink,
   onInvalidateInviteLink,
 }: BottomDrawersProps) {
-  const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<DrawerTab | null>(null)
+  const [uncontrolledActiveTab, setUncontrolledActiveTab] =
+    useState<DrawerTab | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [height, setHeight] = useState(400)
   const isDragging = useRef(false)
@@ -140,7 +167,7 @@ export default function BottomDrawers({
                 'group relative flex h-8 items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 text-[11px] transition-colors',
                 isActive
                   ? 'z-30 -mb-px h-9 border-[color-mix(in_oklab,var(--chip-line)_70%,var(--line))] bg-[color-mix(in_oklab,var(--surface-strong)_94%,var(--bg-base)_6%)] text-[var(--sea-ink)] shadow-[0_-5px_14px_rgba(8,22,28,0.15)]'
-                  : 'z-10 border-[color-mix(in_oklab,var(--line)_72%,transparent)] bg-[color-mix(in_oklab,var(--surface-strong)_90%,var(--bg-base)_10%)] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]'
+                  : 'z-10 border-[color-mix(in_oklab,var(--line)_72%,transparent)] bg-[color-mix(in_oklab,var(--surface-strong)_90%,var(--bg-base)_10%)] text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]',
               )}
             >
               {isActive ? (
@@ -157,7 +184,7 @@ export default function BottomDrawers({
                   'grid h-4 w-4 shrink-0 place-items-center rounded-sm',
                   isActive
                     ? 'text-[var(--lagoon-deep)]'
-                    : 'text-[var(--sea-ink-soft)]'
+                    : 'text-[var(--sea-ink-soft)]',
                 )}
               >
                 <Icon size={12} />
@@ -181,7 +208,9 @@ export default function BottomDrawers({
         }}
         className={cn(
           'relative z-0 mx-0 mb-0 flex flex-col overflow-hidden rounded-t-xl rounded-b-none border-x border-t border-b-0 border-[var(--line)] bg-[color-mix(in_oklab,var(--surface)_88%,var(--bg-base))] pointer-events-auto backdrop-blur-md',
-          isResizing ? 'transition-none' : 'transition-all duration-[220ms] ease-out'
+          isResizing
+            ? 'transition-none'
+            : 'transition-all duration-[220ms] ease-out',
         )}
       >
         <div
@@ -199,7 +228,11 @@ export default function BottomDrawers({
         <div className="relative z-10 flex items-center justify-between border-b border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.22)] px-4 py-2">
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.62)] text-[var(--lagoon-deep)]">
-              {activeItem ? <activeItem.icon size={15} /> : <Sparkles size={15} />}
+              {activeItem ? (
+                <activeItem.icon size={15} />
+              ) : (
+                <Sparkles size={15} />
+              )}
             </div>
 
             <div className="min-w-0">
@@ -244,9 +277,21 @@ export default function BottomDrawers({
           {activeTab === 'timeline' && (
             <div className="space-y-3">
               {[
-                { label: 'Opened workspace', time: 'Just now', tone: 'bg-[rgba(var(--lagoon-rgb),0.14)] text-[var(--lagoon-deep)]' },
-                { label: 'Fetched latest files', time: '14 sec ago', tone: 'bg-[rgba(47,106,74,0.14)] text-[var(--kicker)]' },
-                { label: 'Synced project metadata', time: '1 min ago', tone: 'bg-[rgba(99,122,138,0.14)] text-[var(--sea-ink-soft)]' },
+                {
+                  label: 'Opened workspace',
+                  time: 'Just now',
+                  tone: 'bg-[rgba(var(--lagoon-rgb),0.14)] text-[var(--lagoon-deep)]',
+                },
+                {
+                  label: 'Fetched latest files',
+                  time: '14 sec ago',
+                  tone: 'bg-[rgba(47,106,74,0.14)] text-[var(--kicker)]',
+                },
+                {
+                  label: 'Synced project metadata',
+                  time: '1 min ago',
+                  tone: 'bg-[rgba(99,122,138,0.14)] text-[var(--sea-ink-soft)]',
+                },
               ].map((entry, index) => (
                 <article
                   key={entry.label}
@@ -255,10 +300,19 @@ export default function BottomDrawers({
                   <span className="absolute bottom-0 left-0 top-0 w-[3px] bg-[linear-gradient(180deg,var(--lagoon),var(--lagoon-deep))]" />
                   <div className="ml-2 flex items-start justify-between gap-3">
                     <div>
-                      <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">{entry.label}</p>
-                      <p className="m-0 mt-1 text-[11px] text-[var(--sea-ink-soft)]">Workspace event #{index + 1}</p>
+                      <p className="m-0 text-sm font-semibold text-[var(--sea-ink)]">
+                        {entry.label}
+                      </p>
+                      <p className="m-0 mt-1 text-[11px] text-[var(--sea-ink-soft)]">
+                        Workspace event #{index + 1}
+                      </p>
                     </div>
-                    <span className={cn('rounded-full px-2 py-1 text-[10px] font-bold', entry.tone)}>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-1 text-[10px] font-bold',
+                        entry.tone,
+                      )}
+                    >
                       {entry.time}
                     </span>
                   </div>
@@ -266,7 +320,8 @@ export default function BottomDrawers({
               ))}
 
               <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.24)] p-4 text-center text-xs text-[var(--sea-ink-soft)]">
-                Full timeline stream will appear here as executions and edits are connected.
+                Full timeline stream will appear here as executions and edits
+                are connected.
               </div>
             </div>
           )}
@@ -278,19 +333,31 @@ export default function BottomDrawers({
                   <Play size={20} />
                 </div>
                 <div>
-                  <p className="font-bold text-[var(--sea-ink)]">Ready to Run</p>
-                  <p className="text-xs text-[var(--sea-ink-soft)]">Click run to execute your project in the Docker sandbox.</p>
+                  <p className="font-bold text-[var(--sea-ink)]">
+                    Ready to Run
+                  </p>
+                  <p className="text-xs text-[var(--sea-ink-soft)]">
+                    Click run to execute your project in the Docker sandbox.
+                  </p>
                 </div>
               </div>
 
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Default target</p>
-                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">Docker sandbox</p>
+                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    Default target
+                  </p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">
+                    Docker sandbox
+                  </p>
                 </div>
                 <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.46)] p-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Permission</p>
-                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">Read + execute</p>
+                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    Permission
+                  </p>
+                  <p className="m-0 mt-1 text-sm font-semibold text-[var(--sea-ink)]">
+                    Read + execute
+                  </p>
                 </div>
               </div>
             </div>
@@ -298,7 +365,9 @@ export default function BottomDrawers({
 
           {activeTab === 'env' && (
             <div className="space-y-4">
-              <h3 className="text-sm font-bold text-[var(--sea-ink)]">Environment Variables</h3>
+              <h3 className="text-sm font-bold text-[var(--sea-ink)]">
+                Environment Variables
+              </h3>
               <div className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-3 text-[11px] text-[var(--sea-ink-soft)]">
                 Keys are scoped to this workspace session.
               </div>
@@ -337,7 +406,9 @@ export default function BottomDrawers({
               </div>
 
               <section className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-4">
-                <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Participants</p>
+                <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
+                  Participants
+                </p>
                 <div className="mt-3 overflow-hidden rounded-lg border border-[var(--line)]">
                   <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] px-3 py-2 text-[10px] font-black uppercase tracking-[0.08em] text-[var(--sea-ink-soft)]">
                     <span>Name</span>
@@ -345,25 +416,40 @@ export default function BottomDrawers({
                     <span>Role</span>
                   </div>
                   {collabMembers.length === 0 ? (
-                    <div className="px-3 py-3 text-xs text-[var(--sea-ink-soft)]">No participants available.</div>
-                  ) : collabMembers.map((member) => (
-                    <div key={member.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[color-mix(in_oklab,var(--line)_70%,transparent)] px-3 py-2 text-xs last:border-b-0">
-                      <span className="truncate font-semibold text-[var(--sea-ink)]">
-                        {member.name}
-                        {member.isYou ? (
-                          <span className="ml-2 rounded-full bg-[rgba(var(--lagoon-rgb),0.16)] px-2 py-[2px] text-[10px] font-black uppercase tracking-[0.08em] text-[var(--lagoon-deep)]">You</span>
-                        ) : null}
-                      </span>
-                      <span className="truncate text-[var(--sea-ink-soft)]">{member.email}</span>
-                      <span className="text-[var(--sea-ink-soft)]">{member.role ?? 'editor'}</span>
+                    <div className="px-3 py-3 text-xs text-[var(--sea-ink-soft)]">
+                      No participants available.
                     </div>
-                  ))}
+                  ) : (
+                    collabMembers.map((member) => (
+                      <div
+                        key={member.id}
+                        className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-[color-mix(in_oklab,var(--line)_70%,transparent)] px-3 py-2 text-xs last:border-b-0"
+                      >
+                        <span className="truncate font-semibold text-[var(--sea-ink)]">
+                          {member.name}
+                          {member.isYou ? (
+                            <span className="ml-2 rounded-full bg-[rgba(var(--lagoon-rgb),0.16)] px-2 py-[2px] text-[10px] font-black uppercase tracking-[0.08em] text-[var(--lagoon-deep)]">
+                              You
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="truncate text-[var(--sea-ink-soft)]">
+                          {member.email}
+                        </span>
+                        <span className="text-[var(--sea-ink-soft)]">
+                          {member.role ?? 'editor'}
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </section>
 
               <section className="rounded-xl border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.42)] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">Active invite links</p>
+                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-[var(--kicker)]">
+                    Active invite links
+                  </p>
                   <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(var(--lagoon-rgb),0.14)] px-2 py-1 text-[10px] font-bold text-[var(--lagoon-deep)]">
                     <Link2 size={12} /> {activeInviteLinks.length}
                   </span>
@@ -376,12 +462,20 @@ export default function BottomDrawers({
                 ) : (
                   <div className="mt-3 space-y-2">
                     {activeInviteLinks.map((invite) => (
-                      <article key={invite.id} className="rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] px-3 py-2">
+                      <article
+                        key={invite.id}
+                        className="rounded-lg border border-[var(--line)] bg-[rgba(var(--chip-bg-rgb),0.5)] px-3 py-2"
+                      >
                         <p className="m-0 truncate text-[11px] font-semibold text-[var(--sea-ink)]">
-                          {invite.hasLink ? invite.url : 'Invite link available only at creation time'}
+                          {invite.hasLink
+                            ? invite.url
+                            : 'Invite link available only at creation time'}
                         </p>
                         <div className="mt-2 flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[var(--sea-ink-soft)]">Expires {new Date(invite.expiresAt).toLocaleString()}</span>
+                          <span className="text-[10px] text-[var(--sea-ink-soft)]">
+                            Expires{' '}
+                            {new Date(invite.expiresAt).toLocaleString()}
+                          </span>
                           <button
                             type="button"
                             onClick={() => onInvalidateInviteLink?.(invite.id)}

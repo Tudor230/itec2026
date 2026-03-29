@@ -28,14 +28,17 @@ export default function LandingDeferredAuthCta() {
         isVisible ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
       }`}
     >
-      <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">Ready to enter iTECify?</p>
+      <p className="mb-2 text-[0.69rem] font-bold uppercase tracking-[0.16em] text-[var(--kicker)]">
+        Ready to enter iTECify?
+      </p>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="max-w-2xl">
           <h2 className="m-0 text-2xl font-semibold text-[var(--sea-ink)]">
             Sign in to open your projects and launch the editor in one click.
           </h2>
           <p className="mb-0 mt-2 text-sm leading-7 text-[var(--sea-ink-soft)]">
-            Authentication now lands you in Projects, where you can pick exactly what to open next.
+            Authentication now lands you in Projects, where you can pick exactly
+            what to open next.
           </p>
         </div>
 

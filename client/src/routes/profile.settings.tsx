@@ -20,7 +20,8 @@ function ProfileSettingsRoute() {
               <MonitorCog size={15} /> Workspace Defaults
             </p>
             <p className="m-0 mt-2 text-xs text-[var(--sea-ink-soft)]">
-              Editor, assistant, and panel layout settings are inherited from your current workspace.
+              Editor, assistant, and panel layout settings are inherited from
+              your current workspace.
             </p>
           </article>
 
@@ -29,7 +30,8 @@ function ProfileSettingsRoute() {
               <Bell size={15} /> Notifications
             </p>
             <p className="m-0 mt-2 text-xs text-[var(--sea-ink-soft)]">
-              Notification channels are currently managed globally and will be configurable here.
+              Notification channels are currently managed globally and will be
+              configurable here.
             </p>
           </article>
         </section>
@@ -39,7 +41,8 @@ function ProfileSettingsRoute() {
             <ShieldCheck size={15} /> Security
           </p>
           <p className="m-0 mt-2 text-xs text-[var(--sea-ink-soft)]">
-            Account authentication and session policies are enforced through Auth0 and your organization setup.
+            Account authentication and session policies are enforced through
+            Auth0 and your organization setup.
           </p>
         </section>
       </ProfilePageFrame>

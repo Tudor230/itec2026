@@ -6,16 +6,34 @@ import { requireTokenPresent } from '../auth/require-token-present.middleware.js
 import {
   createProjectInviteSchema,
   createProjectSchema,
+  importGithubProjectSchema,
   revokeProjectInviteSchema,
   updateProjectMemberProfileSchema,
   updateProjectSchema,
 } from './project.schema.js'
 import { ProjectsRepository } from './projects.repository.js'
 import { ProjectsService } from './projects.service.js'
+import type { FilesService } from './files.service.js'
+import type { ProjectWorkspaceSyncService } from './project-workspace-sync-service.js'
+import type { GithubPublicImporter } from './github-public-importer.js'
 
-export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
+export function createProjectsRouter({
+  prisma,
+  filesService,
+  githubImporter,
+  workspaceSync,
+}: {
+  prisma: PrismaClient
+  filesService?: FilesService
+  githubImporter?: GithubPublicImporter
+  workspaceSync?: ProjectWorkspaceSyncService
+}) {
   const router = Router()
-  const service = new ProjectsService(new ProjectsRepository(prisma))
+  const service = new ProjectsService(new ProjectsRepository(prisma), {
+    filesService,
+    githubImporter,
+    workspaceSync,
+  })
 
   router.get('/', requireTokenPresent, asyncHandler(async (request, response) => {
     const actor = actorFromRequest(request)
@@ -62,6 +80,67 @@ export function createProjectsRouter({ prisma }: { prisma: PrismaClient }) {
       ok: true,
       data: project,
     })
+  }))
+
+  router.post('/import/github', requireTokenPresent, asyncHandler(async (request, response) => {
+    const parsed = importGithubProjectSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({
+        ok: false,
+        error: { message: parsed.error.message, code: 'INVALID_PROJECT_INPUT' },
+      })
+      return
+    }
+
+    const actor = actorFromRequest(request)
+
+    try {
+      const imported = await service.importFromGithubPublic(actor, parsed.data)
+      response.status(201).json({
+        ok: true,
+        data: imported,
+      })
+    } catch (error) {
+      const errorLike = error as { code?: string }
+
+      if (errorLike.code === 'GITHUB_IMPORT_INVALID_URL') {
+        response.status(400).json({
+          ok: false,
+          error: { message: 'Invalid GitHub repository URL', code: 'GITHUB_IMPORT_INVALID_URL' },
+        })
+        return
+      }
+
+      if (
+        errorLike.code === 'GITHUB_REPO_NOT_FOUND'
+        || errorLike.code === 'GITHUB_IMPORT_EMPTY'
+        || errorLike.code === 'GITHUB_IMPORT_TOO_LARGE'
+        || errorLike.code === 'GITHUB_IMPORT_RATE_LIMITED'
+        || errorLike.code === 'GITHUB_IMPORT_FAILED'
+      ) {
+        response.status(400).json({
+          ok: false,
+          error: {
+            message: error instanceof Error ? error.message : 'GitHub import failed',
+            code: errorLike.code,
+          },
+        })
+        return
+      }
+
+      if (errorLike.code === 'GITHUB_IMPORT_TIMEOUT') {
+        response.status(504).json({
+          ok: false,
+          error: {
+            message: error instanceof Error ? error.message : 'GitHub import timed out',
+            code: errorLike.code,
+          },
+        })
+        return
+      }
+
+      throw error
+    }
   }))
 
   router.patch('/:projectId', requireTokenPresent, asyncHandler(async (request, response) => {
