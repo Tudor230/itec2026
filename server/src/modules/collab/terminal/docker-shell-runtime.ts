@@ -23,6 +23,29 @@ export class DockerShellRuntime implements TerminalRuntime {
 
   private emitOutput: ((chunk: RuntimeOutputChunk) => void) | null = null
 
+  isSessionOpen() {
+    return this.interactiveSession !== null
+  }
+
+  private emitSafely(chunk: RuntimeOutputChunk) {
+    try {
+      this.emitOutput?.(chunk)
+    } catch {
+      // Keep terminal runtime stable even if downstream callback throws.
+    }
+  }
+
+  private markSessionClosed() {
+    this.interactiveSession = null
+    this.outputDecoder = null
+    this.emitOutput = null
+  }
+
+  private isSessionClosedError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.toLowerCase().includes('terminal session is not open')
+  }
+
   constructor(
     private readonly sandboxManager: DockerSandboxManager,
     private readonly projectId: string,
@@ -61,6 +84,7 @@ export class DockerShellRuntime implements TerminalRuntime {
       TERM: process.env.COLLAB_TERMINAL_TERM?.trim() || 'xterm-256color',
       LANG: process.env.COLLAB_TERMINAL_LANG?.trim() || 'C.UTF-8',
       LC_ALL: process.env.COLLAB_TERMINAL_LC_ALL?.trim() || 'C.UTF-8',
+      PS1: process.env.COLLAB_TERMINAL_PS1?.trim() || '$PWD $ ',
     }
 
     try {
@@ -80,7 +104,7 @@ export class DockerShellRuntime implements TerminalRuntime {
               return
             }
 
-            this.emitOutput?.(makeChunk('stdout', decoded))
+            this.emitSafely(makeChunk('stdout', decoded))
           },
         },
       )
@@ -105,7 +129,14 @@ export class DockerShellRuntime implements TerminalRuntime {
       throw new Error('Terminal session is not open')
     }
 
-    await this.interactiveSession.write(input)
+    try {
+      await this.interactiveSession.write(input)
+    } catch (error) {
+      if (this.isSessionClosedError(error)) {
+        this.markSessionClosed()
+      }
+      throw error
+    }
   }
 
   async resizeSession(
@@ -122,7 +153,14 @@ export class DockerShellRuntime implements TerminalRuntime {
       throw new Error('Terminal session is not open')
     }
 
-    await this.interactiveSession.resize(size)
+    try {
+      await this.interactiveSession.resize(size)
+    } catch (error) {
+      if (this.isSessionClosedError(error)) {
+        this.markSessionClosed()
+      }
+      throw error
+    }
   }
 
   async closeSession(
@@ -140,19 +178,22 @@ export class DockerShellRuntime implements TerminalRuntime {
 
     const flushed = this.outputDecoder?.decode() ?? ''
     if (flushed) {
-      this.emitOutput?.(makeChunk('stdout', flushed))
+      this.emitSafely(makeChunk('stdout', flushed))
     }
 
-    await this.interactiveSession.close()
-    this.interactiveSession = null
-    this.outputDecoder = null
-    this.emitOutput = null
+    try {
+      await this.interactiveSession.close()
+    } catch (error) {
+      if (!this.isSessionClosedError(error)) {
+        throw error
+      }
+    } finally {
+      this.markSessionClosed()
+    }
   }
 
   dispose() {
-    this.outputDecoder = null
-    this.emitOutput = null
-    this.interactiveSession = null
+    this.markSessionClosed()
     void this.sandboxManager.disposeSandbox(this.projectId, this.ownerSubject)
   }
 }
